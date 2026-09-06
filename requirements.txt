@@ -1,0 +1,10 @@
+fastapi>=0.128,<0.129
+uvicorn[standard]>=0.48,<0.49
+SQLAlchemy>=2.0.50,<2.1
+alembic>=1.18,<2
+pydantic>=2.13,<3
+pydantic-settings>=2.14,<3
+python-multipart>=0.0.29,<1
+email-validator>=2.3,<3
+itsdangerous>=2.2,<3
+psycopg[binary]>=3.2,<4

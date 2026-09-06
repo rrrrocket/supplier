@@ -1,0 +1,284 @@
+from __future__ import annotations
+
+import secrets
+from datetime import datetime, timezone
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
+
+from app.api.deps import CurrentUser, DbSession
+from app.core.security import hash_password
+from app.models.entities import (
+    OfferStatus,
+    Organization,
+    OrganizationType,
+    Product,
+    SupplierApplication,
+    SupplierOffer,
+    SupplierProfile,
+    SupplierStatus,
+    User,
+    UserRole,
+)
+from app.schemas.admin import (
+    ApplicationAdminView,
+    ApplicationApprovalResponse,
+    ApplicationReviewRequest,
+    SupplierAdminView,
+)
+from app.services.events import record_event
+from app.services.scoring import calculate_profile_completion
+
+
+router = APIRouter(prefix="/admin", tags=["平台管理"])
+
+
+def require_platform_admin(user: CurrentUser) -> User:
+    if user.role != UserRole.PLATFORM_ADMIN.value:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要平台管理员权限")
+    return user
+
+
+PlatformAdmin = Annotated[User, Depends(require_platform_admin)]
+
+
+def application_view(item: SupplierApplication) -> ApplicationAdminView:
+    return ApplicationAdminView(
+        id=item.id,
+        application_no=item.application_no,
+        company_name=item.company_name,
+        unified_social_credit_code=item.unified_social_credit_code,
+        company_type=item.company_type,
+        province=item.province,
+        city=item.city,
+        contact_name=item.contact_name,
+        phone=item.phone,
+        email=item.email,
+        categories=item.categories,
+        cooperation_modes=item.cooperation_modes,
+        annual_revenue_range=item.annual_revenue_range,
+        supports_dropshipping=item.supports_dropshipping,
+        supports_oem=item.supports_oem,
+        has_export_experience=item.has_export_experience,
+        message=item.message,
+        status=item.status,
+        review_notes=item.review_notes,
+        approved_organization_id=item.approved_organization_id,
+        created_at=item.created_at,
+        reviewed_at=item.reviewed_at,
+    )
+
+
+def generate_org_code(application: SupplierApplication) -> str:
+    return f"SUP-{application.application_no.rsplit('-', 1)[-1]}"
+
+
+def generate_temporary_password() -> str:
+    return f"M1-{secrets.token_urlsafe(8)}-A9"
+
+
+def normalize_supplier_type(company_type: str) -> str:
+    mapping = {
+        "生产工厂": "FACTORY",
+        "工贸一体": "FACTORY_TRADER",
+        "品牌方": "BRAND",
+        "贸易商/经销商": "TRADER",
+        "贸易商": "TRADER",
+        "经销商": "TRADER",
+    }
+    return mapping.get(company_type.strip(), "OTHER")
+
+
+@router.get("/applications", response_model=list[ApplicationAdminView])
+def list_applications(
+    db: DbSession,
+    _: PlatformAdmin,
+    application_status: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=200, ge=1, le=1000),
+) -> list[ApplicationAdminView]:
+    stmt = select(SupplierApplication).order_by(SupplierApplication.created_at.desc()).limit(limit)
+    if application_status:
+        stmt = stmt.where(SupplierApplication.status == application_status.upper())
+    return [application_view(item) for item in db.scalars(stmt).all()]
+
+
+@router.post(
+    "/applications/{application_id}/approve",
+    response_model=ApplicationApprovalResponse,
+)
+def approve_application(
+    application_id: str,
+    payload: ApplicationReviewRequest,
+    db: DbSession,
+    admin: PlatformAdmin,
+) -> ApplicationApprovalResponse:
+    application = db.get(SupplierApplication, application_id)
+    if application is None:
+        raise HTTPException(status_code=404, detail="申请不存在")
+    if application.status != SupplierStatus.PENDING.value:
+        raise HTTPException(status_code=409, detail="只有待审核申请可以通过")
+
+    existing_user = db.scalar(
+        select(User).where(func.lower(User.email) == application.email.lower())
+    )
+    if existing_user is not None:
+        raise HTTPException(status_code=409, detail="该邮箱已经关联现有账号")
+
+    organization_code = generate_org_code(application)
+    if db.scalar(select(Organization).where(Organization.code == organization_code)):
+        organization_code = f"{organization_code}-{secrets.token_hex(2).upper()}"
+
+    organization = Organization(
+        code=organization_code,
+        name=application.company_name,
+        organization_type=OrganizationType.SUPPLIER.value,
+    )
+    db.add(organization)
+    db.flush()
+
+    profile = SupplierProfile(
+        organization_id=organization.id,
+        legal_name=application.company_name,
+        unified_social_credit_code=application.unified_social_credit_code,
+        supplier_type=normalize_supplier_type(application.company_type),
+        province=application.province,
+        city=application.city,
+        contact_name=application.contact_name,
+        contact_phone=application.phone,
+        contact_email=application.email,
+        categories=application.categories,
+        cooperation_modes=application.cooperation_modes,
+        supports_dropshipping=application.supports_dropshipping,
+        supports_oem=application.supports_oem,
+        has_export_experience=application.has_export_experience,
+        status=SupplierStatus.APPROVED.value,
+    )
+    profile.profile_completion = calculate_profile_completion(profile)
+    db.add(profile)
+
+    temporary_password = generate_temporary_password()
+    supplier_user = User(
+        organization_id=organization.id,
+        email=application.email.lower(),
+        name=application.contact_name,
+        role=UserRole.SUPPLIER_ADMIN.value,
+        password_hash=hash_password(temporary_password),
+    )
+    db.add(supplier_user)
+    db.flush()
+
+    application.status = SupplierStatus.APPROVED.value
+    application.review_notes = (payload.notes or "").strip() or None
+    application.approved_organization_id = organization.id
+    application.reviewed_by_user_id = admin.id
+    application.reviewed_at = datetime.now(timezone.utc)
+
+    record_event(
+        db,
+        event_type="SUPPLIER_APPLICATION_APPROVED",
+        entity_type="SupplierApplication",
+        entity_id=application.id,
+        organization_id=organization.id,
+        actor_type="USER",
+        actor_id=admin.id,
+        payload={
+            "application_no": application.application_no,
+            "organization_code": organization.code,
+            "login_email": supplier_user.email,
+        },
+    )
+    db.commit()
+    return ApplicationApprovalResponse(
+        application_id=application.id,
+        application_no=application.application_no,
+        status=application.status,
+        organization_id=organization.id,
+        organization_code=organization.code,
+        login_email=supplier_user.email,
+        temporary_password=temporary_password,
+        message="供应商组织与管理员账号已创建。临时密码只在本次响应中显示。",
+    )
+
+
+@router.post("/applications/{application_id}/reject", response_model=ApplicationAdminView)
+def reject_application(
+    application_id: str,
+    payload: ApplicationReviewRequest,
+    db: DbSession,
+    admin: PlatformAdmin,
+) -> ApplicationAdminView:
+    application = db.get(SupplierApplication, application_id)
+    if application is None:
+        raise HTTPException(status_code=404, detail="申请不存在")
+    if application.status != SupplierStatus.PENDING.value:
+        raise HTTPException(status_code=409, detail="只有待审核申请可以驳回")
+
+    application.status = SupplierStatus.REJECTED.value
+    application.review_notes = (payload.notes or "").strip() or "暂不符合当前接入条件"
+    application.reviewed_by_user_id = admin.id
+    application.reviewed_at = datetime.now(timezone.utc)
+    record_event(
+        db,
+        event_type="SUPPLIER_APPLICATION_REJECTED",
+        entity_type="SupplierApplication",
+        entity_id=application.id,
+        organization_id=None,
+        actor_type="USER",
+        actor_id=admin.id,
+        payload={"application_no": application.application_no},
+    )
+    db.commit()
+    db.refresh(application)
+    return application_view(application)
+
+
+@router.get("/suppliers", response_model=list[SupplierAdminView])
+def list_suppliers(db: DbSession, _: PlatformAdmin) -> list[SupplierAdminView]:
+    product_counts = (
+        select(
+            Product.created_by_organization_id.label("organization_id"),
+            func.count(Product.id).label("product_count"),
+        )
+        .group_by(Product.created_by_organization_id)
+        .subquery()
+    )
+    offer_counts = (
+        select(
+            SupplierOffer.organization_id.label("organization_id"),
+            func.count(SupplierOffer.id).label("offer_count"),
+        )
+        .where(SupplierOffer.status == OfferStatus.ACTIVE.value)
+        .group_by(SupplierOffer.organization_id)
+        .subquery()
+    )
+    rows = db.execute(
+        select(
+            Organization,
+            SupplierProfile,
+            func.coalesce(product_counts.c.product_count, 0),
+            func.coalesce(offer_counts.c.offer_count, 0),
+        )
+        .join(SupplierProfile, SupplierProfile.organization_id == Organization.id)
+        .outerjoin(product_counts, product_counts.c.organization_id == Organization.id)
+        .outerjoin(offer_counts, offer_counts.c.organization_id == Organization.id)
+        .where(Organization.organization_type == OrganizationType.SUPPLIER.value)
+        .order_by(Organization.created_at.desc())
+    ).all()
+
+    return [
+        SupplierAdminView(
+            organization_id=organization.id,
+            organization_code=organization.code,
+            organization_name=organization.name,
+            legal_name=profile.legal_name,
+            status=profile.status,
+            profile_completion=profile.profile_completion,
+            contact_name=profile.contact_name,
+            contact_email=profile.contact_email,
+            product_count=int(product_count),
+            active_offer_count=int(offer_count),
+            created_at=organization.created_at,
+        )
+        for organization, profile, product_count, offer_count in rows
+    ]

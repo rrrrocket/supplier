@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="申请加入 Matrix One 中国供应网络。">
+  <title>供应商入驻申请 · Matrix One</title>
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/common.js" defer></script>
+  <script src="/assets/apply.js" defer></script>
+</head>
+<body class="apply-body">
+  <header class="apply-header">
+    <div class="container apply-header-inner">
+      <a class="brand" href="/"><img src="/assets/logo.svg" alt=""><span class="brand-copy"><span class="brand-name">Matrix One</span><span class="brand-sub">中国供应网络</span></span></a>
+      <a class="btn btn-ghost" href="/login">已有账号，去登录</a>
+    </div>
+  </header>
+
+  <main class="apply-layout">
+    <aside class="apply-aside">
+      <h1>申请加入中国供应网络</h1>
+      <p>请先提交真实企业与供货能力信息。入驻申请本身不代表自动通过，后续合作范围将基于产品、履约和市场验证共同确定。</p>
+      <div class="step-list">
+        <div class="step-item active"><span class="step-bullet">1</span><span class="step-copy"><strong>企业信息</strong><span>主体、所在地与联系人</span></span></div>
+        <div class="step-item"><span class="step-bullet">2</span><span class="step-copy"><strong>供应能力</strong><span>主营类目与履约方式</span></span></div>
+        <div class="step-item"><span class="step-bullet">3</span><span class="step-copy"><strong>合作意向</strong><span>选择适合的分发模式</span></span></div>
+        <div class="step-item"><span class="step-bullet">4</span><span class="step-copy"><strong>确认提交</strong><span>检查信息并提交审核</span></span></div>
+      </div>
+    </aside>
+
+    <section class="apply-card">
+      <form id="supplier-application-form">
+        <div class="apply-step active" data-step="0">
+          <header class="apply-card-head"><h2>企业基础信息</h2><p>用于确认合作主体和后续联系，请填写真实信息。</p></header>
+          <div class="apply-card-body">
+            <div class="form-grid">
+              <label class="form-group full"><span class="form-label">企业名称 *</span><input class="input" name="company_name" minlength="2" maxlength="240" required placeholder="营业执照上的企业全称"></label>
+              <label class="form-group full"><span class="form-label">统一社会信用代码</span><input class="input" name="unified_social_credit_code" maxlength="40" placeholder="可在后续资质审核阶段补充"></label>
+              <label class="form-group"><span class="form-label">企业类型 *</span><select class="select" name="company_type" required><option value="">请选择</option><option value="生产工厂">生产工厂</option><option value="工贸一体">工贸一体</option><option value="品牌方">品牌方</option><option value="贸易商/经销商">贸易商/经销商</option><option value="其他">其他</option></select></label>
+              <label class="form-group"><span class="form-label">年销售规模</span><select class="select" name="annual_revenue_range"><option value="">暂不填写</option><option value="500万元以下">500万元以下</option><option value="500万–3000万元">500万–3000万元</option><option value="3000万–1亿元">3000万–1亿元</option><option value="1亿元以上">1亿元以上</option></select></label>
+              <label class="form-group"><span class="form-label">省份 *</span><input class="input" name="province" maxlength="80" required placeholder="例如：广东省"></label>
+              <label class="form-group"><span class="form-label">城市 *</span><input class="input" name="city" maxlength="80" required placeholder="例如：深圳市"></label>
+              <label class="form-group"><span class="form-label">联系人 *</span><input class="input" name="contact_name" minlength="2" maxlength="100" required></label>
+              <label class="form-group"><span class="form-label">联系电话 *</span><input class="input" name="phone" minlength="6" maxlength="60" required></label>
+              <label class="form-group full"><span class="form-label">联系邮箱 *</span><input class="input" type="email" name="email" maxlength="255" required placeholder="用于接收审核与合作通知"></label>
+            </div>
+          </div>
+        </div>
+
+        <div class="apply-step" data-step="1">
+          <header class="apply-card-head"><h2>供应能力</h2><p>请选择主要类目，并说明能够稳定提供的履约能力。</p></header>
+          <div class="apply-card-body">
+            <div class="form-group">
+              <span class="form-label">主营类目 *（可多选）</span>
+              <div class="checkbox-grid">
+                <label class="option-card"><input type="checkbox" name="categories" value="工业自动化"><span class="option-card-content"><strong>工业自动化</strong><span>传感器、仪表、电气、MRO</span></span></label>
+                <label class="option-card"><input type="checkbox" name="categories" value="汽摩用品"><span class="option-card-content"><strong>汽摩用品</strong><span>装备、配件、工具和改装件</span></span></label>
+                <label class="option-card"><input type="checkbox" name="categories" value="模型玩具"><span class="option-card-content"><strong>模型玩具</strong><span>拼装模型、航空模型、收藏品</span></span></label>
+                <label class="option-card"><input type="checkbox" name="categories" value="户外用品"><span class="option-card-content"><strong>户外用品</strong><span>露营、渔具、装备和工具</span></span></label>
+                <label class="option-card"><input type="checkbox" name="categories" value="美妆个护"><span class="option-card-content"><strong>美妆个护</strong><span>化妆品、护理和美容工具</span></span></label>
+                <label class="option-card"><input type="checkbox" name="categories" value="其他类目"><span class="option-card-content"><strong>其他类目</strong><span>在备注中补充具体产品范围</span></span></label>
+              </div>
+            </div>
+            <div class="stack" style="margin-top:24px">
+              <label class="checkbox-row"><input type="checkbox" name="supports_dropshipping"><span><strong>支持一件代发</strong><br><span class="muted">能够按订单从国内仓库直接发货。</span></span></label>
+              <label class="checkbox-row"><input type="checkbox" name="supports_oem"><span><strong>支持 OEM / 定制</strong><br><span class="muted">能够进行品牌、包装、规格或小批量定制。</span></span></label>
+              <label class="checkbox-row"><input type="checkbox" name="has_export_experience"><span><strong>已有出口经验</strong><br><span class="muted">曾通过外贸、跨境平台或海外经销渠道出货。</span></span></label>
+            </div>
+          </div>
+        </div>
+
+        <div class="apply-step" data-step="2">
+          <header class="apply-card-head"><h2>合作意向</h2><p>可同时选择多种模式。最终模式将根据商品和市场测试结果确认。</p></header>
+          <div class="apply-card-body">
+            <div class="form-group">
+              <span class="form-label">希望开展的合作方式 *</span>
+              <div class="checkbox-grid">
+                <label class="option-card"><input type="checkbox" name="cooperation_modes" value="自营采购"><span class="option-card-content"><strong>自营采购</strong><span>由 Matrix One 采购，并负责海外销售。</span></span></label>
+                <label class="option-card"><input type="checkbox" name="cooperation_modes" value="一件代发/寄售"><span class="option-card-content"><strong>一件代发 / 寄售</strong><span>供应商保留库存，按实际订单履约。</span></span></label>
+                <label class="option-card"><input type="checkbox" name="cooperation_modes" value="联营代运营"><span class="option-card-content"><strong>联营代运营</strong><span>平台负责海外运营，按约定方式分成。</span></span></label>
+                <label class="option-card"><input type="checkbox" name="cooperation_modes" value="B2B外贸"><span class="option-card-content"><strong>ToB 外贸</strong><span>参与海外 RFQ、采购项目与经销商供货。</span></span></label>
+              </div>
+            </div>
+            <label class="form-group" style="margin-top:24px"><span class="form-label">补充说明</span><textarea class="textarea" name="message" maxlength="2000" placeholder="可说明核心产品、价格优势、产能、认证、现有出口市场或希望优先合作的商品。"></textarea></label>
+          </div>
+        </div>
+
+        <div class="apply-step" data-step="3">
+          <header class="apply-card-head"><h2>确认申请信息</h2><p>请核对以下信息。提交后平台将据此进行首轮合作评估。</p></header>
+          <div class="apply-card-body">
+            <div id="review-grid" class="review-grid"></div>
+            <label class="checkbox-row" style="margin-top:20px"><input type="checkbox" name="consent" required><span>我确认以上信息真实，并同意平台为入驻审核和合作评估处理所提交的数据。</span></label>
+          </div>
+        </div>
+
+        <div id="application-success" class="success-state hidden">
+          <span class="success-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4 10-10"/></svg></span>
+          <h2>入驻申请已提交</h2>
+          <p>平台将根据企业主体、商品能力和合作模式进行审核。请保存申请编号，后续沟通将使用你填写的联系方式。</p>
+          <div id="application-no" class="application-no"></div>
+          <a class="btn btn-primary" href="/">返回平台首页</a>
+        </div>
+
+        <footer id="application-actions" class="dialog-actions">
+          <span id="application-message" class="form-message" style="margin-right:auto"></span>
+          <button id="step-back" class="btn btn-secondary hidden" type="button">上一步</button>
+          <button id="step-next" class="btn btn-primary" type="button">下一步</button>
+          <button id="application-submit" class="btn btn-primary hidden" type="submit">提交入驻申请</button>
+        </footer>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

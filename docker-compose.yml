@@ -1,0 +1,34 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: supplier
+      POSTGRES_USER: supplier
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - supplier_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U supplier -d supplier"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      APP_URL: https://supplier.matrix-one.tech
+      DATABASE_URL: postgresql+psycopg://supplier:${POSTGRES_PASSWORD:-change-me}@db:5432/supplier
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
+      SEED_DEMO_DATA: "false"
+      ALLOWED_HOSTS: supplier.matrix-one.tech
+    ports:
+      - "127.0.0.1:8000:8000"
+
+volumes:
+  supplier_postgres:

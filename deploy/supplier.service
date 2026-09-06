@@ -1,0 +1,17 @@
+[Unit]
+Description=Matrix One Supplier Network
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/matrix-one/supplier
+EnvironmentFile=/opt/matrix-one/supplier/.env
+ExecStartPre=/opt/matrix-one/supplier/.venv/bin/alembic upgrade head
+ExecStart=/opt/matrix-one/supplier/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=always
+RestartSec=3
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target

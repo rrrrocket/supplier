@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>供应网络管理 · Matrix One</title>
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/common.js" defer></script>
+  <script src="/assets/admin.js" defer></script>
+</head>
+<body class="app-body">
+  <div class="app-shell">
+    <aside id="sidebar" class="sidebar admin-sidebar">
+      <a class="brand" href="#applications">
+        <img src="/assets/logo.svg" alt="">
+        <span class="brand-copy"><span class="brand-name">Matrix One</span><span class="brand-sub">供应网络管理</span></span>
+      </a>
+      <nav class="sidebar-nav" aria-label="平台管理导航">
+        <span class="nav-section-label">供应商接入</span>
+        <button class="nav-item active" data-route="applications" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 7V5a4 4 0 0 1 8 0v2"/><rect x="4" y="7" width="16" height="13" rx="2"/><path d="M8 12h8M8 16h5"/></svg>
+          入驻申请<span id="pending-nav-badge" class="nav-badge">0</span>
+        </button>
+        <button class="nav-item" data-route="suppliers" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V8l8-4 8 4v12"/><path d="M8 20v-6h8v6M8 10h.01M12 10h.01M16 10h.01"/></svg>
+          入驻供应商
+        </button>
+
+        <span class="nav-section-label">平台底座</span>
+        <button class="nav-item" data-route="system" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/></svg>
+          系统架构
+        </button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="supplier-mini">
+          <strong>中国供应网络</strong>
+          <span>平台管理端 · v0.1</span>
+        </div>
+      </div>
+    </aside>
+
+    <section class="app-main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button id="mobile-menu" class="icon-btn mobile-menu" type="button" aria-label="打开导航">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          </button>
+          <div><div id="page-title" class="page-title">入驻申请</div><div id="breadcrumb" class="breadcrumb">中国供应网络 / 平台管理</div></div>
+        </div>
+        <div class="topbar-actions">
+          <a class="icon-btn" href="/api/docs" target="_blank" aria-label="打开 API 文档">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v14H4z"/><path d="M8 9h8M8 13h5"/></svg>
+          </a>
+          <button id="logout-button" class="icon-btn" type="button" aria-label="退出登录">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 4H5v16h5M14 8l4 4-4 4M8 12h10"/></svg>
+          </button>
+          <div class="user-menu"><span class="user-avatar" style="background:linear-gradient(145deg,#6938ef,#9b8afb)">管</span><span class="user-copy"><strong id="user-name">加载中</strong><span>平台管理员</span></span></div>
+        </div>
+      </header>
+
+      <main class="app-content">
+        <section class="app-view active" data-view="applications">
+          <div class="view-heading">
+            <div><h1>供应商入驻申请</h1><p>审核企业基础信息和合作能力；通过后自动建立独立组织与供应商管理员账号。</p></div>
+            <div class="view-actions"><a class="btn btn-secondary" href="/apply" target="_blank">查看申请入口</a><button id="refresh-applications" class="btn btn-primary" type="button">刷新数据</button></div>
+          </div>
+          <div id="admin-metrics" class="admin-metric-grid"></div>
+          <section class="data-card">
+            <div class="toolbar">
+              <div class="toolbar-left">
+                <label class="search-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="applications-search" class="input" placeholder="搜索企业、联系人、邮箱或申请编号"></label>
+                <select id="applications-status" class="select" aria-label="申请状态">
+                  <option value="">全部状态</option>
+                  <option value="PENDING">待审核</option>
+                  <option value="APPROVED">已通过</option>
+                  <option value="REJECTED">已驳回</option>
+                </select>
+              </div>
+              <div class="toolbar-right"><span class="muted" style="font-size:11px">账号密码仅在审核通过时显示一次</span></div>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>申请企业</th><th>类型 / 地区</th><th>联系人</th><th>产品与合作能力</th><th>申请时间</th><th>状态</th><th></th></tr></thead>
+                <tbody id="applications-tbody"><tr><td colspan="7" class="table-empty">正在加载…</td></tr></tbody>
+              </table>
+            </div>
+            <footer class="table-footer"><span id="applications-count">共 0 条</span><span>Application → Organization → Supplier Profile → User</span></footer>
+          </section>
+        </section>
+
+        <section class="app-view" data-view="suppliers">
+          <div class="view-heading">
+            <div><h1>入驻供应商</h1><p>观察已接入组织的资料完整度、商品沉淀和有效报价数量。</p></div>
+            <div class="view-actions"><button id="refresh-suppliers" class="btn btn-primary" type="button">刷新数据</button></div>
+          </div>
+          <section class="data-card">
+            <div class="toolbar">
+              <div class="toolbar-left"><label class="search-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="suppliers-search" class="input" placeholder="搜索企业、编码、联系人或邮箱"></label></div>
+              <div class="toolbar-right"><span class="badge badge-approved">组织数据隔离已启用</span></div>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>供应商组织</th><th>联系人</th><th>资料完整度</th><th>商品数</th><th>有效报价</th><th>状态</th><th>接入时间</th></tr></thead>
+                <tbody id="suppliers-tbody"><tr><td colspan="7" class="table-empty">正在加载…</td></tr></tbody>
+              </table>
+            </div>
+            <footer class="table-footer"><span id="suppliers-count">共 0 家</span><span>下一阶段：履约、质量与合作贡献评分</span></footer>
+          </section>
+        </section>
+
+        <section class="app-view" data-view="system">
+          <div class="view-heading">
+            <div><h1>系统架构与边界</h1><p>当前版本先形成可靠的供给数据入口，后续通过 API 与现有 ERP 共享 Product、Offer 和 Inventory。</p></div>
+          </div>
+          <div class="admin-system-grid">
+            <section class="panel"><header class="panel-head"><div><h2>当前已落地</h2><p>v0.1 可运行闭环</p></div></header><div class="panel-body stack">
+              <div class="system-layer"><strong>供应商接入</strong><span>公开申请、平台审核、组织创建、管理员账号、企业资料维护。</span></div>
+              <div class="system-layer"><strong>供给主数据</strong><span>Product 与 Supplier Offer 解耦，独立记录 SKU、价格、MOQ、库存、交期和履约模式。</span></div>
+              <div class="system-layer"><strong>可追溯执行</strong><span>登录、商品、报价、导入、资料和审核动作写入 Event Log。</span></div>
+              <div class="system-layer"><strong>多组织隔离</strong><span>供应商只可读写自己 organization_id 下的业务数据。</span></div>
+            </div></section>
+            <section class="panel"><header class="panel-head"><div><h2>下一阶段</h2><p>首批真实供应商试点</p></div></header><div class="panel-body stack">
+              <div class="system-layer"><strong>资质与文件</strong><span>营业执照、认证、测试报告、有效期、对象存储与审核状态。</span></div>
+              <div class="system-layer"><strong>类目数据规范</strong><span>类目属性模板、必填规格、单位统一和商品实体匹配。</span></div>
+              <div class="system-layer"><strong>ERP 数据同步</strong><span>Outbox / Webhook 将供应报价、库存和履约事件送入现有 ERP。</span></div>
+              <div class="system-layer"><strong>供应商表现</strong><span>从真实订单沉淀准时率、缺货率、质量、售后和贡献毛利。</span></div>
+            </div></section>
+          </div>
+          <section class="panel" style="margin-top:16px"><header class="panel-head"><div><h2>核心数据流</h2><p>平台与 AI 模型可替换，真实供给事实必须长期沉淀。</p></div></header><div class="panel-body"><div class="quote-box" style="margin-top:0">Supplier Application → Organization → Supplier Profile → Product → Supplier Offer → Inventory Snapshot → ERP / Global Distribution → Transaction Outcome</div></div></section>
+        </section>
+      </main>
+    </section>
+  </div>
+
+  <dialog id="application-review-dialog">
+    <header class="dialog-head">
+      <div><h2 id="review-dialog-title">审核供应商申请</h2><p id="review-dialog-subtitle">核验企业信息并决定是否建立供应商组织。</p></div>
+      <button class="icon-btn" type="button" data-close-review aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+    </header>
+    <div class="dialog-body">
+      <div id="application-detail" class="application-detail"></div>
+      <label id="review-notes-group" class="form-group" style="margin-top:18px"><span class="form-label">审核备注</span><textarea id="review-notes" class="textarea" maxlength="2000" placeholder="可记录审核意见；驳回时建议填写具体原因。"></textarea></label>
+      <div id="approval-credentials" class="credential-box hidden" style="margin-top:18px"></div>
+    </div>
+    <footer class="dialog-actions review-actions">
+      <button id="reject-application" class="btn btn-danger" type="button">驳回申请</button>
+      <div class="row"><button class="btn btn-secondary" type="button" data-close-review>关闭</button><button id="approve-application" class="btn btn-primary" type="button">通过并创建账号</button></div>
+    </footer>
+  </dialog>
+</body>
+</html>

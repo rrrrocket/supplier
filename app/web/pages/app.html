@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>供应商工作台 · Matrix One</title>
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/common.js" defer></script>
+  <script src="/assets/app.js" defer></script>
+</head>
+<body class="app-body">
+  <div class="app-shell">
+    <aside id="sidebar" class="sidebar">
+      <a class="brand" href="#dashboard"><img src="/assets/logo.svg" alt=""><span class="brand-copy"><span class="brand-name">Matrix One</span><span class="brand-sub">供应商工作台</span></span></a>
+      <nav class="sidebar-nav" aria-label="供应商工作台导航">
+        <span class="nav-section-label">供应网络</span>
+        <button class="nav-item active" data-route="dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>供应概览</button>
+        <button class="nav-item" data-route="products"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 8 9 5 9-5M3 13l9 5 9-5"/></svg>商品主数据</button>
+        <button class="nav-item" data-route="offers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>供应报价</button>
+        <button class="nav-item" data-route="imports"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 14v5h14v-5"/></svg>批量导入</button>
+        <button class="nav-item" data-route="documents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>资质文件<span class="nav-badge">规划中</span></button>
+
+        <span class="nav-section-label">全球分发</span>
+        <button class="nav-item" data-route="orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18l-1 13H4L3 7Z"/><path d="M8 7a4 4 0 0 1 8 0"/></svg>分发订单<span class="nav-badge">规划中</span></button>
+        <button class="nav-item" data-route="settlements"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M8 15h3"/></svg>结算管理<span class="nav-badge">规划中</span></button>
+
+        <span class="nav-section-label">账号与企业</span>
+        <button class="nav-item" data-route="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>企业资料</button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="supplier-mini"><strong id="supplier-name-mini">正在加载…</strong><span>供应商组织 · 演示环境</span></div>
+      </div>
+    </aside>
+
+    <section class="app-main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button id="mobile-menu" class="icon-btn mobile-menu" type="button" aria-label="打开导航"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+          <div><div id="page-title" class="page-title">供应概览</div><div id="breadcrumb" class="breadcrumb">中国供应网络 / 工作台</div></div>
+        </div>
+        <div class="topbar-actions">
+          <a class="icon-btn" href="/api/docs" target="_blank" aria-label="打开 API 文档"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v14H4z"/><path d="M8 9h8M8 13h5"/></svg></a>
+          <button id="logout-button" class="icon-btn" type="button" aria-label="退出登录"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 4H5v16h5M14 8l4 4-4 4M8 12h10"/></svg></button>
+          <div class="user-menu"><span id="user-avatar" class="user-avatar">供</span><span class="user-copy"><strong id="user-name">加载中</strong><span id="user-role">供应商管理员</span></span></div>
+        </div>
+      </header>
+
+      <main class="app-content">
+        <section class="app-view active" data-view="dashboard">
+          <div class="view-heading"><div><h1>供应概览</h1><p>把商品、报价、库存和履约能力整理成可被全球需求调用的数据。</p></div><div class="view-actions"><button class="btn btn-secondary" data-open-product>新增商品</button><button class="btn btn-primary" data-open-offer>新增报价</button></div></div>
+          <div id="dashboard-root"></div>
+        </section>
+
+        <section class="app-view" data-view="products">
+          <div class="view-heading"><div><h1>商品主数据</h1><p>Product 是内部统一商品实体，供应商 SKU 和供货条件由报价单独维护。</p></div><div class="view-actions"><a class="btn btn-secondary" href="#imports">批量导入</a><button class="btn btn-primary" data-open-product>新增商品</button></div></div>
+          <section class="data-card">
+            <div class="toolbar"><div class="toolbar-left"><label class="search-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="products-search" class="input" placeholder="搜索名称、品牌、型号或类目"></label></div><div class="toolbar-right"><span class="muted" style="font-size:11px">内部 Product ID 不随销售渠道变化</span></div></div>
+            <div class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>品牌</th><th>型号</th><th>类目</th><th>状态</th><th>报价数</th><th></th></tr></thead><tbody id="products-tbody"><tr><td colspan="7" class="table-empty">正在加载…</td></tr></tbody></table></div>
+            <footer class="table-footer"><span id="products-count">共 0 条</span><span>Product Master · MVP</span></footer>
+          </section>
+        </section>
+
+        <section class="app-view" data-view="offers">
+          <div class="view-heading"><div><h1>供应报价</h1><p>报价用于描述某个供应商在特定时间能够提供的价格、库存、MOQ 和交期。</p></div><div class="view-actions"><a class="btn btn-secondary" href="#imports">批量导入</a><button class="btn btn-primary" data-open-offer>新增报价</button></div></div>
+          <section class="data-card">
+            <div class="toolbar"><div class="toolbar-left"><label class="search-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="offers-search" class="input" placeholder="搜索商品、SKU、品牌或型号"></label></div><div class="toolbar-right"><span class="badge badge-active">库存 ≤ 10 自动提醒</span></div></div>
+            <div class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>供应商 SKU</th><th>供货价</th><th>MOQ</th><th>库存</th><th>交期</th><th>履约</th><th>状态</th><th>更新时间</th><th></th></tr></thead><tbody id="offers-tbody"><tr><td colspan="10" class="table-empty">正在加载…</td></tr></tbody></table></div>
+            <footer class="table-footer"><span id="offers-count">共 0 条</span><span>Offer + Inventory Snapshot + Event Log</span></footer>
+          </section>
+        </section>
+
+        <section class="app-view" data-view="imports">
+          <div class="view-heading"><div><h1>批量导入</h1><p>使用标准 CSV 一次导入商品主数据、供应商 SKU、供货价、MOQ、库存和交期。</p></div><div class="view-actions"><a class="btn btn-secondary" href="/sample-offers.csv">下载标准模板</a></div></div>
+          <div class="import-layout">
+            <section class="panel">
+              <header class="panel-head"><div><h2>导入商品与报价</h2><p>支持 UTF-8 或 GB18030 编码，单文件最大 5MB。</p></div></header>
+              <div class="panel-body">
+                <div id="csv-dropzone" class="dropzone">
+                  <span class="dropzone-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 14v5h14v-5"/></svg></span>
+                  <h3>拖拽 CSV 文件到这里</h3><p>同一供应商 SKU 再次导入时，将更新对应的价格、库存、MOQ 和交期。</p>
+                  <input id="csv-file" type="file" accept=".csv,text/csv"><button id="choose-csv" class="btn btn-primary" type="button">选择 CSV 文件</button>
+                </div>
+              </div>
+            </section>
+            <aside class="panel">
+              <header class="panel-head"><div><h2>导入规则</h2><p>先用少量数据验证，再扩大批次。</p></div></header>
+              <div class="panel-body import-guide">
+                <div class="guide-item"><span class="guide-number">1</span><span class="guide-copy"><strong>下载标准模板</strong><span>不要删除必填列：商品名称、类目、供应商 SKU、采购价。</span></span></div>
+                <div class="guide-item"><span class="guide-number">2</span><span class="guide-copy"><strong>保持 SKU 唯一</strong><span>供应商 SKU 是同一组织内更新报价的唯一键。</span></span></div>
+                <div class="guide-item"><span class="guide-number">3</span><span class="guide-copy"><strong>填真实可执行数据</strong><span>库存、价格和交期将用于后续渠道匹配与交易决策。</span></span></div>
+                <div class="guide-item"><span class="guide-number">4</span><span class="guide-copy"><strong>查看错误行</strong><span>系统允许部分成功，失败行会保留错误原因。</span></span></div>
+              </div>
+            </aside>
+          </div>
+          <section class="panel import-result">
+            <header class="panel-head"><div><h2>最近导入</h2><p>导入结果同时写入审计事件。</p></div></header>
+            <div class="panel-body"><div id="import-job-list" class="import-job-list"><div class="table-empty">正在加载…</div></div></div>
+          </section>
+        </section>
+
+        <section class="app-view" data-view="documents">
+          <div class="view-heading"><div><h1>资质文件</h1><p>营业执照、产品认证、测试报告和工厂资料将与企业及商品实体关联。</p></div></div>
+          <div class="placeholder-card"><div class="placeholder-inner"><span class="placeholder-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></span><span class="roadmap-tag">MVP 下一阶段</span><h2>文件与资质管理</h2><p>底层 Document 实体已经预留。下一阶段接入对象存储、证书有效期、商品关联和审核状态。</p></div></div>
+        </section>
+
+        <section class="app-view" data-view="orders">
+          <div class="view-heading"><div><h1>分发订单</h1><p>统一承接 ToC 平台订单、联营订单和未来 ToB 销售订单。</p></div></div>
+          <div class="placeholder-card"><div class="placeholder-inner"><span class="placeholder-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18l-1 13H4L3 7Z"/><path d="M8 7a4 4 0 0 1 8 0"/></svg></span><span class="roadmap-tag">接入真实业务后启用</span><h2>订单与履约协同</h2><p>当前第一阶段先解决供给数据接入。订单模块后续从 ERP 的 Transaction 与 Fulfillment 能力映射进来，避免重复开发。</p></div></div>
+        </section>
+
+        <section class="app-view" data-view="settlements">
+          <div class="view-heading"><div><h1>结算管理</h1><p>按自营采购、联营代运营和 ToB 交易分别建立结算口径。</p></div></div>
+          <div class="placeholder-card"><div class="placeholder-inner"><span class="placeholder-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M8 15h3"/></svg></span><span class="roadmap-tag">业务规则确认后开发</span><h2>透明、可追溯的合作结算</h2><p>先用真实合作试点确定抽成、贡献毛利和退款责任，再固化为结算规则，不在没有业务依据时提前复杂化。</p></div></div>
+        </section>
+
+        <section class="app-view" data-view="settings">
+          <div class="view-heading"><div><h1>企业资料</h1><p>企业能力档案用于后续商品、市场与合作模式匹配。</p></div><div class="view-actions"><span id="profile-status"></span><button id="profile-save" class="btn btn-primary" type="submit" form="profile-form">保存资料</button></div></div>
+          <div class="settings-grid">
+            <section class="panel">
+              <header class="panel-head"><div><h2>企业与供应能力</h2><p>带“、”分隔的字段支持录入多项。</p></div></header>
+              <div class="panel-body">
+                <form id="profile-form" class="form-grid">
+                  <label class="form-group full"><span class="form-label">企业法定名称</span><input class="input" name="legal_name" required></label>
+                  <label class="form-group"><span class="form-label">统一社会信用代码</span><input class="input" name="unified_social_credit_code"></label>
+                  <label class="form-group"><span class="form-label">供应商类型</span><select class="select" name="supplier_type"><option value="FACTORY">生产工厂</option><option value="FACTORY_TRADER">工贸一体</option><option value="BRAND">品牌方</option><option value="TRADER">贸易商/经销商</option></select></label>
+                  <label class="form-group"><span class="form-label">省份</span><input class="input" name="province"></label>
+                  <label class="form-group"><span class="form-label">城市</span><input class="input" name="city"></label>
+                  <label class="form-group full"><span class="form-label">详细地址</span><input class="input" name="address"></label>
+                  <label class="form-group"><span class="form-label">联系人</span><input class="input" name="contact_name"></label>
+                  <label class="form-group"><span class="form-label">联系电话</span><input class="input" name="contact_phone"></label>
+                  <label class="form-group"><span class="form-label">联系邮箱</span><input class="input" type="email" name="contact_email"></label>
+                  <label class="form-group"><span class="form-label">企业网站</span><input class="input" name="website" placeholder="https://"></label>
+                  <label class="form-group full"><span class="form-label">主营类目</span><input class="input" name="categories" placeholder="工业自动化、户外用品、汽摩用品"></label>
+                  <label class="form-group full"><span class="form-label">合作方式</span><input class="input" name="cooperation_modes" placeholder="自营采购、联营代运营、B2B外贸"></label>
+                  <label class="form-group full"><span class="form-label">已有或目标出口市场</span><input class="input" name="export_markets" placeholder="俄罗斯、中亚、中东"></label>
+                  <div class="full stack" style="margin-top:4px"><label class="checkbox-row"><input type="checkbox" name="supports_dropshipping"><span>支持一件代发</span></label><label class="checkbox-row"><input type="checkbox" name="supports_oem"><span>支持 OEM / 定制</span></label><label class="checkbox-row"><input type="checkbox" name="has_export_experience"><span>已有出口经验</span></label></div>
+                </form>
+              </div>
+            </section>
+            <aside class="panel">
+              <header class="panel-head"><div><h2>资料状态</h2><p>完整资料有助于提高匹配效率。</p></div></header>
+              <div class="panel-body">
+                <div class="row-between" style="padding-bottom:16px"><span class="muted" style="font-size:11px">当前完整度</span><strong id="profile-completion-text" style="font-size:25px">—</strong></div>
+                <div class="info-list"><div class="info-row"><span>主数据归属</span><strong>供应商组织</strong></div><div class="info-row"><span>价格与库存</span><strong>独立 Offer</strong></div><div class="info-row"><span>历史操作</span><strong>Event Log</strong></div><div class="info-row"><span>生产环境域名</span><strong>supplier.matrix-one.tech</strong></div></div>
+              </div>
+            </aside>
+          </div>
+        </section>
+      </main>
+    </section>
+  </div>
+
+  <dialog id="product-dialog">
+    <form id="product-form">
+      <header class="dialog-head"><div><h2>新增商品主数据</h2><p>商品实体与供应报价分开维护。</p></div><button class="icon-btn" type="button" data-close-dialog aria-label="关闭">×</button></header>
+      <div class="dialog-body form-grid">
+        <label class="form-group full"><span class="form-label">商品名称 *</span><input class="input" name="name" minlength="2" maxlength="240" required></label>
+        <label class="form-group"><span class="form-label">品牌</span><input class="input" name="brand" maxlength="120"></label>
+        <label class="form-group"><span class="form-label">型号</span><input class="input" name="model" maxlength="120"></label>
+        <label class="form-group full"><span class="form-label">标准类目 *</span><input class="input" name="category" minlength="2" maxlength="160" required placeholder="例如：工业自动化/接近传感器"></label>
+        <label class="form-group"><span class="form-label">状态</span><select class="select" name="status"><option value="DRAFT">草稿</option><option value="ACTIVE">有效</option></select></label>
+        <span></span>
+        <label class="form-group full"><span class="form-label">关键属性</span><textarea class="textarea" name="attributes_text" placeholder="每行一个属性，例如：&#10;尺寸：M18&#10;输出：PNP NO&#10;检测距离：8mm"></textarea></label>
+        <label class="form-group full"><span class="form-label">商品说明</span><textarea class="textarea" name="description" maxlength="4000"></textarea></label>
+      </div>
+      <footer class="dialog-actions"><button class="btn btn-secondary" type="button" data-close-dialog>取消</button><button id="product-dialog-submit" class="btn btn-primary" type="submit">创建商品</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="offer-dialog">
+    <form id="offer-form">
+      <header class="dialog-head"><div><h2 id="offer-dialog-title">新增供应报价</h2><p>报价变化会保留库存快照与操作事件。</p></div><button class="icon-btn" type="button" data-close-dialog aria-label="关闭">×</button></header>
+      <div class="dialog-body form-grid">
+        <label class="form-group full"><span class="form-label">对应商品 *</span><select id="offer-product-id" class="select" name="product_id" required><option value="">请选择商品</option></select></label>
+        <label class="form-group"><span class="form-label">供应商 SKU *</span><input class="input" name="supplier_sku" maxlength="120" required></label>
+        <label class="form-group"><span class="form-label">供货价 *</span><input class="input" type="number" name="price" min="0.0001" step="0.01" required></label>
+        <label class="form-group"><span class="form-label">币种</span><select class="select" name="currency"><option value="CNY">CNY 人民币</option><option value="USD">USD 美元</option><option value="EUR">EUR 欧元</option></select></label>
+        <label class="form-group"><span class="form-label">最小起订量 MOQ</span><input class="input" type="number" name="moq" value="1" min="1" required></label>
+        <label class="form-group"><span class="form-label">可用库存</span><input class="input" type="number" name="stock_qty" value="0" min="0" required></label>
+        <label class="form-group"><span class="form-label">交期（天）</span><input class="input" type="number" name="lead_time_days" value="3" min="0" required></label>
+        <label class="form-group"><span class="form-label">履约模式</span><select class="select" name="fulfillment_mode"><option value="PURCHASE">平台采购</option><option value="DROPSHIP">一件代发</option><option value="CONSIGNMENT">寄售</option><option value="JOINT_OPERATION">联营</option></select></label>
+        <label class="form-group"><span class="form-label">状态</span><select class="select" name="status"><option value="DRAFT">草稿</option><option value="ACTIVE">有效</option><option value="PAUSED">暂停</option></select></label>
+        <label class="form-group full"><span class="form-label">备注</span><textarea class="textarea" name="notes" maxlength="2000"></textarea></label>
+      </div>
+      <footer class="dialog-actions"><button class="btn btn-secondary" type="button" data-close-dialog>取消</button><button id="offer-dialog-submit" class="btn btn-primary" type="submit">创建报价</button></footer>
+    </form>
+  </dialog>
+</body>
+</html>
