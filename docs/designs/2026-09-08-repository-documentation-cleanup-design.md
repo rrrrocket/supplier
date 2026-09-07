@@ -10,6 +10,7 @@
 - 修复移动产生的全部相对路径与文件清单引用。
 - 清除已经被 PostgreSQL、`start.sh` 和当前部署方式替代的旧文件。
 - 清除可再生成的本地缓存与虚拟环境，不删除业务数据或本地密钥。
+- 将自动化测试 PostgreSQL 改为独立持久卷，重复测试保留数据且不触碰业务数据库。
 - 使用仓库级 Git 作者 `rrrrocket <standxh@163.com>` 提交已确认改动。
 
 ## 2. 文档目录
@@ -62,6 +63,7 @@ docs/
 - `scripts/reset_demo.py`：只支持删除旧本地数据库文件。
 - `start-macos.command`：旧端口和本地虚拟环境启动器，已由 `start.sh` 取代。
 - `scripts/dev.sh`：仅转发到 `start.sh`，没有独立职责。
+- `Makefile`：仅转发 `start.sh` 并暴露重复的容器命令，不再作为统一入口。
 
 ### 4.2 可再生成的本地文件
 
@@ -75,8 +77,7 @@ docs/
 ## 5. 明确保留
 
 - `.env`：本地运行配置和密钥，不提交、不输出内容。
-- `Dockerfile`、`docker-compose.yml`、`docker-compose.test.yml`：`start.sh` 的运行依赖。
-- `Makefile`：保留开发快捷命令。
+- `Dockerfile`、`docker-compose.yml`、`docker-compose.test.yml`：`start.sh` 的运行依赖；测试 Compose 继续负责隔离固定凭证和测试服务。
 - `deploy/nginx-supplier.conf`：仍是有效的反向代理示例。
 - `app/web/sample-offers.csv`：工作台下载接口正在引用。
 - PostgreSQL 数据卷和当前业务数据：不执行删除或重建。
@@ -86,7 +87,7 @@ docs/
 1. 搜索旧文档路径，确保只在迁移说明中出现。
 2. 搜索旧数据库、旧端口、旧角色和特定调用系统术语。
 3. 检查 Markdown 链接目标均存在。
-4. 运行 `./start.sh test`。
+4. 连续运行两次 `./start.sh test`，验证同一测试数据库可重复使用。
 5. 运行 `git diff --check` 并确认 `.env` 未被跟踪。
 6. 按逻辑拆分提交：先提交既有应用改造，再提交文档归档与清理；每个提交只包含确认范围内的文件。
 
@@ -97,3 +98,13 @@ docs/
 - 不提交密钥、临时密码或 `.env`。
 - 不删除 PostgreSQL 卷、表、记录或迁移历史。
 - 如验证发现某个待删除文件仍被运行路径引用，保留该文件并修复清理清单。
+
+## 8. 持久化自动化测试数据库
+
+- `docker-compose.test.yml` 保持独立，不与业务 Compose 合并。
+- `test-db` 使用命名卷 `supplier_test_postgres`，不再使用内存临时目录。
+- `./start.sh test` 结束后保留 `test-db` 容器、网络和命名卷，不执行自动销毁。
+- 测试基础平台、供应商和账号使用幂等创建；连续执行测试不会因固定邮箱或组织编码重复而失败。
+- 自动化测试产生的随机申请、商品、报价和事件允许累积，不自动清空。
+- 测试数据库继续使用独立数据库名、固定测试凭证和 Compose project，不连接业务数据库。
+- 当前测试 Compose 不开放 Web 应用或数据库宿主机端口；持久化仅保证后续测试运行复用数据。

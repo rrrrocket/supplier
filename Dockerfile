@@ -15,6 +15,7 @@ FROM base AS test
 COPY requirements-dev.txt ./
 RUN pip install --no-cache-dir -r requirements-dev.txt
 COPY docker-compose.yml ./
+COPY docker-compose.test.yml start.sh ./
 COPY deploy/nginx-supplier.conf ./deploy/nginx-supplier.conf
 COPY tests ./tests
 

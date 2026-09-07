@@ -7,8 +7,8 @@ services:
       POSTGRES_USER: supplier_test
       POSTGRES_PASSWORD: supplier-test-only-password
       PGPORT: 6432
-    tmpfs:
-      - /var/lib/postgresql/data
+    volumes:
+      - supplier_test_postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U supplier_test -d supplier_test -p 6432"]
       interval: 2s
@@ -45,3 +45,6 @@ services:
         node --check app/web/assets/app.js &&
         node --check app/web/assets/admin.js &&
         node --test tests/test_public_auth.js
+
+volumes:
+  supplier_test_postgres:

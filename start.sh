@@ -131,15 +131,9 @@ start_stack() {
   printf '  停止服务：./start.sh stop\n\n'
 }
 
-cleanup_test_environment() {
-  docker compose -p "$TEST_PROJECT_NAME" -f "$TEST_COMPOSE_FILE" \
-    down --volumes --remove-orphans >/dev/null 2>&1 || true
-}
-
 run_tests() {
   local backend_result=0
   local frontend_result=0
-  trap cleanup_test_environment EXIT INT TERM
   echo "正在构建 PostgreSQL 测试环境..."
   docker compose -p "$TEST_PROJECT_NAME" -f "$TEST_COMPOSE_FILE" build test
   docker compose -p "$TEST_PROJECT_NAME" -f "$TEST_COMPOSE_FILE" up -d --wait test-db
@@ -158,8 +152,6 @@ run_tests() {
     frontend_result=$?
   fi
 
-  cleanup_test_environment
-  trap - EXIT INT TERM
   if [ "$backend_result" -ne 0 ]; then
     return "$backend_result"
   fi

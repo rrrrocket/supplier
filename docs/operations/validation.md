@@ -8,9 +8,12 @@
 | Python 模块编译 | 通过 |
 | JavaScript 语法检查 | 通过 |
 | 5 个 HTML 页面重复 ID 与本地资源检查 | 通过 |
-| PostgreSQL 16 隔离测试环境 | 迁移到 Alembic head，通过；数据库端口 6432 |
-| Pytest 自动化测试 | 28 项通过 |
-| 前端登录状态测试 | 11 项通过 |
+| PostgreSQL 16 隔离测试环境 | 持久命名卷；迁移到 Alembic head，通过；数据库端口 6432 |
+| 连续两次 Pytest 自动化测试 | 每次 30 项通过 |
+| 连续两次前端登录状态测试 | 每次 11 项通过 |
+| 测试卷复用 | `supplier-tests_supplier_test_postgres:2026-09-07T20:40:00Z` 两次相同 |
+| 测试用户数据保留 | 第一次 8 行，第二次 11 行，未减少 |
+| 测试数据库最终状态 | `supplier-tests-test-db-1` 保持 healthy |
 | 全新 PostgreSQL 16 数据库执行 Alembic `upgrade head` | 通过 |
 | PostgreSQL 历史供应商角色迁移 | 通过 |
 | Alembic 模型一致性 `check` | 无待生成迁移 |

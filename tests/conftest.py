@@ -4,6 +4,7 @@ import os
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.engine import make_url
 
 
@@ -37,44 +38,63 @@ ADMIN_PASSWORD = "AdminTest123!"
 
 def create_test_accounts() -> None:
     with SessionLocal() as db:
-        platform = Organization(
-            code="TEST-PLATFORM",
-            name="测试平台组织",
-            organization_type=OrganizationType.PLATFORM.value,
+        platform = db.scalar(
+            select(Organization).where(Organization.code == "TEST-PLATFORM")
         )
-        supplier = Organization(
-            code="TEST-SUPPLIER",
-            name="测试供应商组织",
-            organization_type=OrganizationType.SUPPLIER.value,
+        if platform is None:
+            platform = Organization(
+                code="TEST-PLATFORM",
+                name="测试平台组织",
+                organization_type=OrganizationType.PLATFORM.value,
+            )
+            db.add(platform)
+            db.flush()
+
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
         )
-        db.add_all([platform, supplier])
-        db.flush()
-        db.add_all(
-            [
-                User(
-                    organization_id=platform.id,
-                    email=ADMIN_EMAIL,
-                    name="测试平台管理员",
-                    role=UserRole.PLATFORM_ADMIN.value,
-                    password_hash=hash_password(ADMIN_PASSWORD),
-                ),
-                User(
-                    organization_id=supplier.id,
-                    email=SUPPLIER_EMAIL,
-                    name="测试供应商",
-                    role=UserRole.SUPPLIER.value,
-                    password_hash=hash_password(SUPPLIER_PASSWORD),
-                ),
-                SupplierProfile(
-                    organization_id=supplier.id,
-                    legal_name="测试供应商有限公司",
-                    supplier_type="FACTORY",
-                    categories=["工业自动化"],
-                    cooperation_modes=["B2B外贸"],
-                    status=SupplierStatus.APPROVED.value,
-                ),
-            ]
+        if supplier is None:
+            supplier = Organization(
+                code="TEST-SUPPLIER",
+                name="测试供应商组织",
+                organization_type=OrganizationType.SUPPLIER.value,
+            )
+            db.add(supplier)
+            db.flush()
+
+        admin_user = db.scalar(select(User).where(User.email == ADMIN_EMAIL))
+        if admin_user is None:
+            admin_user = User(email=ADMIN_EMAIL, name="测试平台管理员")
+            db.add(admin_user)
+        admin_user.organization_id = platform.id
+        admin_user.role = UserRole.PLATFORM_ADMIN.value
+        admin_user.password_hash = hash_password(ADMIN_PASSWORD)
+        admin_user.is_active = True
+
+        supplier_user = db.scalar(select(User).where(User.email == SUPPLIER_EMAIL))
+        if supplier_user is None:
+            supplier_user = User(email=SUPPLIER_EMAIL, name="测试供应商")
+            db.add(supplier_user)
+        supplier_user.organization_id = supplier.id
+        supplier_user.role = UserRole.SUPPLIER.value
+        supplier_user.password_hash = hash_password(SUPPLIER_PASSWORD)
+        supplier_user.is_active = True
+
+        profile = db.scalar(
+            select(SupplierProfile).where(
+                SupplierProfile.organization_id == supplier.id
+            )
         )
+        if profile is None:
+            profile = SupplierProfile(
+                organization_id=supplier.id,
+                legal_name="测试供应商有限公司",
+                supplier_type="FACTORY",
+                categories=["工业自动化"],
+                cooperation_modes=["B2B外贸"],
+                status=SupplierStatus.APPROVED.value,
+            )
+            db.add(profile)
         db.commit()
 
 

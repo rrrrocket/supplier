@@ -14,7 +14,7 @@
 
 - Keep root `README.md` as the only Markdown document outside `docs/`.
 - Keep `.env` local, ignored, unread during cleanup, and absent from every commit.
-- Keep `Dockerfile`, both Compose files, `Makefile`, Nginx configuration, and `app/web/sample-offers.csv`.
+- Keep `Dockerfile`, both Compose files, Nginx configuration, and `app/web/sample-offers.csv`; remove the redundant `Makefile`.
 - Do not delete PostgreSQL volumes, tables, records, or migration history.
 - Start and test only through `./start.sh` and `./start.sh test`.
 - Runtime and test database URLs use `postgresql+psycopg`; PostgreSQL listens on port 6432.
@@ -51,6 +51,7 @@
 - `start-macos.command` — obsolete legacy-port virtual-environment launcher.
 - `scripts/dev.sh` — redundant four-line proxy to `start.sh`.
 - `.venv/`, `.pytest_cache/`, Python `__pycache__/`, and `.pyc` files — ignored reproducible artifacts.
+- `Makefile` — redundant wrapper around `start.sh` and direct container commands.
 
 ---
 
@@ -478,3 +479,184 @@ git status --short --ignored
 ```
 
 Expected: new commits show `rrrrocket <standxh@163.com>`; tracked worktree is clean; `.env` is the only required ignored local configuration, while Docker-managed PostgreSQL data remains outside the repository.
+
+---
+
+### Task 5: Persist the Automated Test Database and Remove the Make Wrapper
+
+**Files:**
+- Modify: `Dockerfile`
+- Modify: `docker-compose.test.yml`
+- Modify: `start.sh`
+- Modify: `tests/conftest.py`
+- Modify: `tests/test_database_backend.py`
+- Modify: `README.md`
+- Modify: `docs/designs/2026-09-08-repository-documentation-cleanup-design.md`
+- Modify: `docs/plans/2026-09-08-repository-documentation-cleanup.md`
+- Modify: `docs/operations/validation.md`
+- Delete: `Makefile`
+
+**Interfaces:**
+- Consumes: the isolated Compose project name `supplier-tests`, test database `supplier_test`, and `./start.sh test` entrypoint.
+- Produces: persistent named volume `supplier_test_postgres`, a retained `test-db` service after each run, idempotent fixed test accounts, and repeatable tests over accumulated test data.
+
+- [ ] **Step 1: Add failing persistence contract tests**
+
+Add these tests to `tests/test_database_backend.py`:
+
+```python
+def test_test_compose_uses_persistent_database_volume() -> None:
+    compose_source = (PROJECT_ROOT / "docker-compose.test.yml").read_text()
+    assert "tmpfs:" not in compose_source
+    assert "supplier_test_postgres:/var/lib/postgresql/data" in compose_source
+    assert re.search(r"(?m)^  supplier_test_postgres:\s*$", compose_source)
+
+
+def test_test_command_does_not_destroy_persistent_database() -> None:
+    start_source = (PROJECT_ROOT / "start.sh").read_text()
+    assert "cleanup_test_environment" not in start_source
+    assert "down --volumes" not in start_source
+```
+
+- [ ] **Step 2: Run the current suite and observe the persistence tests fail**
+
+Run:
+
+```bash
+./start.sh test
+```
+
+Expected: the two new tests fail because the test database still uses `tmpfs` and `start.sh` still destroys the test Compose project and volume.
+
+- [ ] **Step 3: Replace tmpfs with a named test volume**
+
+Change `docker-compose.test.yml` so `test-db` contains:
+
+```yaml
+    volumes:
+      - supplier_test_postgres:/var/lib/postgresql/data
+```
+
+Add this top-level declaration:
+
+```yaml
+volumes:
+  supplier_test_postgres:
+```
+
+Keep `docker-compose.test.yml` separate from `docker-compose.yml`. Do not expose a host port and do not change the fixed test database name, credentials, PostgreSQL internal port 6432, or application test service URL.
+
+- [ ] **Step 4: Stop destroying the test project after each run**
+
+Remove `cleanup_test_environment`, its `EXIT INT TERM` trap, the explicit cleanup call, and trap removal from `start.sh`. Keep `docker compose run --rm` for the backend and frontend runner containers; leave `supplier-tests-test-db-1`, its network, and `supplier-tests_supplier_test_postgres` running after the command completes or fails.
+
+- [ ] **Step 5: Make fixed test records idempotent**
+
+In `tests/conftest.py`, import `select` and replace unconditional creation in `create_test_accounts()` with select-or-create behavior:
+
+```python
+def create_test_accounts() -> None:
+    with SessionLocal() as db:
+        platform = db.scalar(
+            select(Organization).where(Organization.code == "TEST-PLATFORM")
+        )
+        if platform is None:
+            platform = Organization(
+                code="TEST-PLATFORM",
+                name="测试平台组织",
+                organization_type=OrganizationType.PLATFORM.value,
+            )
+            db.add(platform)
+            db.flush()
+
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+        )
+        if supplier is None:
+            supplier = Organization(
+                code="TEST-SUPPLIER",
+                name="测试供应商组织",
+                organization_type=OrganizationType.SUPPLIER.value,
+            )
+            db.add(supplier)
+            db.flush()
+
+        admin_user = db.scalar(select(User).where(User.email == ADMIN_EMAIL))
+        if admin_user is None:
+            admin_user = User(email=ADMIN_EMAIL, name="测试平台管理员")
+            db.add(admin_user)
+        admin_user.organization_id = platform.id
+        admin_user.role = UserRole.PLATFORM_ADMIN.value
+        admin_user.password_hash = hash_password(ADMIN_PASSWORD)
+        admin_user.is_active = True
+
+        supplier_user = db.scalar(select(User).where(User.email == SUPPLIER_EMAIL))
+        if supplier_user is None:
+            supplier_user = User(email=SUPPLIER_EMAIL, name="测试供应商")
+            db.add(supplier_user)
+        supplier_user.organization_id = supplier.id
+        supplier_user.role = UserRole.SUPPLIER.value
+        supplier_user.password_hash = hash_password(SUPPLIER_PASSWORD)
+        supplier_user.is_active = True
+
+        profile = db.scalar(
+            select(SupplierProfile).where(
+                SupplierProfile.organization_id == supplier.id
+            )
+        )
+        if profile is None:
+            profile = SupplierProfile(
+                organization_id=supplier.id,
+                legal_name="测试供应商有限公司",
+                supplier_type="FACTORY",
+                categories=["工业自动化"],
+                cooperation_modes=["B2B外贸"],
+                status=SupplierStatus.APPROVED.value,
+            )
+            db.add(profile)
+        db.commit()
+```
+
+Do not delete or truncate existing rows. Randomized application, product, offer, and role-test rows may remain between runs.
+
+- [ ] **Step 6: Remove Makefile and update documentation**
+
+Keep the user-provided `Makefile` deletion. Update `README.md` to state that `./start.sh test` uses an isolated persistent PostgreSQL volume, retains accumulated test records and the test database service after completion, and never connects to the business database.
+
+Update the cleanup design and plan to classify `Makefile` as deleted rather than retained. Update `docs/operations/validation.md` only after Step 7 with the exact passing test count and persistence result.
+
+- [ ] **Step 7: Verify two consecutive runs reuse the database**
+
+Run:
+
+```bash
+bash -n start.sh
+./start.sh test
+first_volume_id="$(docker volume inspect supplier-tests_supplier_test_postgres --format '{{.Name}}:{{.CreatedAt}}')"
+first_user_count="$(docker compose -p supplier-tests -f docker-compose.test.yml exec -T test-db psql -U supplier_test -d supplier_test -tAc 'SELECT count(*) FROM users')"
+./start.sh test
+second_volume_id="$(docker volume inspect supplier-tests_supplier_test_postgres --format '{{.Name}}:{{.CreatedAt}}')"
+second_user_count="$(docker compose -p supplier-tests -f docker-compose.test.yml exec -T test-db psql -U supplier_test -d supplier_test -tAc 'SELECT count(*) FROM users')"
+test "$first_volume_id" = "$second_volume_id"
+test "$first_user_count" -gt 0
+test "$second_user_count" -ge "$first_user_count"
+docker compose -p supplier-tests -f docker-compose.test.yml ps test-db
+```
+
+Expected: both complete test runs pass; the named volume identity is unchanged; user rows remain and do not decrease; `test-db` remains healthy after both runs.
+
+- [ ] **Step 8: Update validation results and commit**
+
+Record the exact backend and frontend test counts from both runs, the unchanged volume identity, nondecreasing user count, retained healthy test database, and PostgreSQL port 6432 in `docs/operations/validation.md`.
+
+Run:
+
+```bash
+git add -- Dockerfile docker-compose.test.yml start.sh tests/conftest.py tests/test_database_backend.py README.md docs/designs/2026-09-08-repository-documentation-cleanup-design.md docs/plans/2026-09-08-repository-documentation-cleanup.md docs/operations/validation.md
+git add -u -- Makefile
+git diff --cached --check
+git diff --cached --name-status
+git commit -m "feat: persist automated test database"
+```
+
+Expected: the commit contains exactly the nine modified files and the `Makefile` deletion, uses author `rrrrocket <standxh@163.com>`, and leaves only ignored `.env` plus the SDD workspace in Git status.

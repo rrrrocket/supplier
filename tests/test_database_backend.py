@@ -43,3 +43,16 @@ def test_nginx_upload_limit_covers_application_limit_and_multipart_overhead() ->
     multipart_overhead_allowance = 2 * 1024**2
 
     assert nginx_limit >= MAX_FILE_SIZE + multipart_overhead_allowance
+
+
+def test_test_compose_uses_persistent_database_volume() -> None:
+    compose_source = (PROJECT_ROOT / "docker-compose.test.yml").read_text()
+    assert "tmpfs:" not in compose_source
+    assert "supplier_test_postgres:/var/lib/postgresql/data" in compose_source
+    assert re.search(r"(?m)^  supplier_test_postgres:\s*$", compose_source)
+
+
+def test_test_command_does_not_destroy_persistent_database() -> None:
+    start_source = (PROJECT_ROOT / "start.sh").read_text()
+    assert "cleanup_test_environment" not in start_source
+    assert "down --volumes" not in start_source
