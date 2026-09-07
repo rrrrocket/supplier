@@ -6,9 +6,9 @@
   <meta name="robots" content="noindex,nofollow">
   <title>供应网络管理 · Matrix One</title>
   <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/styles.css">
-  <script src="/assets/common.js" defer></script>
-  <script src="/assets/admin.js" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260908-auth-visibility">
+  <script src="/assets/common.js?v=20260908-supplier-role" defer></script>
+  <script src="/assets/admin.js?v=20260908-supplier-role" defer></script>
 </head>
 <body class="app-body">
   <div class="app-shell">
@@ -31,13 +31,13 @@
         <span class="nav-section-label">平台底座</span>
         <button class="nav-item" data-route="system" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/></svg>
-          系统架构
+          平台能力
         </button>
       </nav>
       <div class="sidebar-footer">
         <div class="supplier-mini">
           <strong>中国供应网络</strong>
-          <span>平台管理端 · v0.1</span>
+          <span>平台管理端</span>
         </div>
       </div>
     </aside>
@@ -64,7 +64,7 @@
       <main class="app-content">
         <section class="app-view active" data-view="applications">
           <div class="view-heading">
-            <div><h1>供应商入驻申请</h1><p>审核企业基础信息和合作能力；通过后自动建立独立组织与供应商管理员账号。</p></div>
+            <div><h1>供应商入驻申请</h1><p>审核企业基础信息和合作能力；通过后自动建立独立组织与供应商账号。</p></div>
             <div class="view-actions"><a class="btn btn-secondary" href="/apply" target="_blank">查看申请入口</a><button id="refresh-applications" class="btn btn-primary" type="button">刷新数据</button></div>
           </div>
           <div id="admin-metrics" class="admin-metric-grid"></div>
@@ -87,7 +87,7 @@
                 <tbody id="applications-tbody"><tr><td colspan="7" class="table-empty">正在加载…</td></tr></tbody>
               </table>
             </div>
-            <footer class="table-footer"><span id="applications-count">共 0 条</span><span>Application → Organization → Supplier Profile → User</span></footer>
+            <footer class="table-footer"><span id="applications-count">共 0 条</span><span>审核通过后自动创建组织、企业档案和供应商账号</span></footer>
           </section>
         </section>
 
@@ -107,29 +107,29 @@
                 <tbody id="suppliers-tbody"><tr><td colspan="7" class="table-empty">正在加载…</td></tr></tbody>
               </table>
             </div>
-            <footer class="table-footer"><span id="suppliers-count">共 0 家</span><span>下一阶段：履约、质量与合作贡献评分</span></footer>
+            <footer class="table-footer"><span id="suppliers-count">共 0 家</span><span>综合评估履约、质量与合作贡献</span></footer>
           </section>
         </section>
 
         <section class="app-view" data-view="system">
           <div class="view-heading">
-            <div><h1>系统架构与边界</h1><p>当前版本先形成可靠的供给数据入口，后续通过 API 与现有 ERP 共享 Product、Offer 和 Inventory。</p></div>
+            <div><h1>平台能力与数据治理</h1><p>统一管理供应商、商品、报价、库存和关键操作记录，确保供给数据真实、清晰、可追溯。</p></div>
           </div>
           <div class="admin-system-grid">
-            <section class="panel"><header class="panel-head"><div><h2>当前已落地</h2><p>v0.1 可运行闭环</p></div></header><div class="panel-body stack">
-              <div class="system-layer"><strong>供应商接入</strong><span>公开申请、平台审核、组织创建、管理员账号、企业资料维护。</span></div>
-              <div class="system-layer"><strong>供给主数据</strong><span>Product 与 Supplier Offer 解耦，独立记录 SKU、价格、MOQ、库存、交期和履约模式。</span></div>
-              <div class="system-layer"><strong>可追溯执行</strong><span>登录、商品、报价、导入、资料和审核动作写入 Event Log。</span></div>
-              <div class="system-layer"><strong>多组织隔离</strong><span>供应商只可读写自己 organization_id 下的业务数据。</span></div>
+            <section class="panel"><header class="panel-head"><div><h2>业务管理能力</h2><p>覆盖供应商从申请到供货数据维护的完整流程</p></div></header><div class="panel-body stack">
+              <div class="system-layer"><strong>供应商接入</strong><span>公开申请、平台审核、组织创建、供应商账号、企业资料维护。</span></div>
+              <div class="system-layer"><strong>商品与报价</strong><span>统一维护商品、供应商 SKU、价格、MOQ、库存、交期和履约模式。</span></div>
+              <div class="system-layer"><strong>智能表格导入</strong><span>识别 CSV、Excel 和 PDF 成本表，预览确认后生成标准商品列表。</span></div>
+              <div class="system-layer"><strong>供应数据概览</strong><span>集中查看商品数量、有效报价、低库存提醒和企业资料完整度。</span></div>
             </div></section>
-            <section class="panel"><header class="panel-head"><div><h2>下一阶段</h2><p>首批真实供应商试点</p></div></header><div class="panel-body stack">
-              <div class="system-layer"><strong>资质与文件</strong><span>营业执照、认证、测试报告、有效期、对象存储与审核状态。</span></div>
-              <div class="system-layer"><strong>类目数据规范</strong><span>类目属性模板、必填规格、单位统一和商品实体匹配。</span></div>
-              <div class="system-layer"><strong>ERP 数据同步</strong><span>Outbox / Webhook 将供应报价、库存和履约事件送入现有 ERP。</span></div>
-              <div class="system-layer"><strong>供应商表现</strong><span>从真实订单沉淀准时率、缺货率、质量、售后和贡献毛利。</span></div>
+            <section class="panel"><header class="panel-head"><div><h2>数据治理能力</h2><p>保证企业数据安全、准确并可核查</p></div></header><div class="panel-body stack">
+              <div class="system-layer"><strong>组织数据隔离</strong><span>每个供应商仅能查看和维护本组织的企业、商品与报价数据。</span></div>
+              <div class="system-layer"><strong>字段标准化</strong><span>统一类目、币种、库存、交期、履约方式和报价状态。</span></div>
+              <div class="system-layer"><strong>导入质量校验</strong><span>导入前检查必填字段和数据格式，错误行单独标记并保留原因。</span></div>
+              <div class="system-layer"><strong>全程操作审计</strong><span>登录、审核、资料、商品、报价和导入操作均保留审计记录。</span></div>
             </div></section>
           </div>
-          <section class="panel" style="margin-top:16px"><header class="panel-head"><div><h2>核心数据流</h2><p>平台与 AI 模型可替换，真实供给事实必须长期沉淀。</p></div></header><div class="panel-body"><div class="quote-box" style="margin-top:0">Supplier Application → Organization → Supplier Profile → Product → Supplier Offer → Inventory Snapshot → ERP / Global Distribution → Transaction Outcome</div></div></section>
+          <section class="panel" style="margin-top:16px"><header class="panel-head"><div><h2>核心业务流程</h2><p>真实供给数据贯穿供应商接入、商品维护、报价更新和履约协同。</p></div></header><div class="panel-body"><div class="quote-box" style="margin-top:0">供应商申请 → 平台审核 → 组织开户 → 企业档案 → 商品主数据 → 供应报价 → 库存记录 → 交易结果</div></div></section>
         </section>
       </main>
     </section>

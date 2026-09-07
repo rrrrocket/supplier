@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>工作台登录 · Matrix One</title>
   <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/styles.css">
-  <script src="/assets/common.js" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260908-auth-visibility">
+  <script src="/assets/common.js?v=20260908-supplier-role" defer></script>
   <script src="/assets/login.js" defer></script>
 </head>
-<body>
+<body data-auth-redirect="workspace">
   <main class="auth-layout">
     <section class="auth-aside">
       <a class="brand" href="/"><img src="/assets/logo.svg" alt=""><span class="brand-copy"><span class="brand-name">Matrix One</span><span class="brand-sub">中国供应网络</span></span></a>
@@ -23,10 +23,9 @@
       <div class="auth-box">
         <h2>登录 Matrix One 工作台</h2>
         <p>供应商进入供给工作台，平台团队进入审核管理端。</p>
-        <div class="demo-callout"><strong>本地开发演示账号</strong><span>供应商：supplier@matrix-one.tech / MatrixOne123!</span><span>平台管理员：admin@matrix-one.tech / MatrixAdmin123!</span></div>
         <form id="login-form" class="stack" novalidate>
-          <label class="form-group"><span class="form-label">登录邮箱</span><input class="input" type="email" name="email" value="supplier@matrix-one.tech" autocomplete="username" required></label>
-          <label class="form-group"><span class="form-label">密码</span><input class="input" type="password" name="password" value="MatrixOne123!" autocomplete="current-password" minlength="8" required></label>
+          <label class="form-group"><span class="form-label">登录邮箱</span><input class="input" type="email" name="email" placeholder="请输入账号邮箱" autocomplete="username" required></label>
+          <label class="form-group"><span class="form-label">密码</span><input class="input" type="password" name="password" placeholder="请输入密码" autocomplete="current-password" minlength="8" required></label>
           <p id="login-message" class="form-message" aria-live="polite"></p>
           <button id="login-submit" class="btn btn-primary btn-lg" type="submit">登录工作台</button>
         </form>

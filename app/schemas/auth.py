@@ -16,6 +16,7 @@ class UserView(BaseModel):
     name: str
     role: str
     organization_id: str
+    organization_type: str
     organization_name: str
 
 

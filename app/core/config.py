@@ -3,8 +3,9 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import EmailStr, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -23,23 +24,32 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_url: str = "https://supplier.matrix-one.tech"
     debug: bool = True
-    database_url: str = f"sqlite:///{PROJECT_ROOT / 'data' / 'supplier.db'}"
+    database_url: str
     session_secret: str = Field(
         default="dev-only-change-before-deploying-supplier-matrix-one-tech",
         min_length=32,
     )
     session_cookie_name: str = "matrix_supplier_session"
     session_max_age_seconds: int = 60 * 60 * 24 * 7
-    demo_email: str = "supplier@matrix-one.tech"
-    demo_password: str = "MatrixOne123!"
-    demo_admin_email: str = "admin@matrix-one.tech"
-    demo_admin_password: str = "MatrixAdmin123!"
-    seed_demo_data: bool = True
+    admin_email: EmailStr | None = None
+    admin_password: str | None = Field(default=None, min_length=12)
+    admin_name: str = "平台管理员"
     allowed_hosts: str = "localhost,127.0.0.1,supplier.matrix-one.tech"
 
     @property
     def is_production(self) -> bool:
         return self.app_env.lower() == "production"
+
+    @field_validator("database_url")
+    @classmethod
+    def require_postgresql(cls, value: str) -> str:
+        try:
+            driver_name = make_url(value).drivername
+        except ValueError as error:
+            raise ValueError("DATABASE_URL 必须是有效的 PostgreSQL URL") from error
+        if driver_name != "postgresql+psycopg":
+            raise ValueError("DATABASE_URL 必须使用 PostgreSQL 和 psycopg 3 驱动")
+        return value
 
     @property
     def allowed_host_list(self) -> list[str]:

@@ -3,9 +3,12 @@ const state = {
   dashboard: null,
   products: [],
   offers: [],
+  offerBrands: [],
   imports: [],
   profile: null,
   editingOfferId: null,
+  importFile: null,
+  importPreview: null,
 };
 
 const routes = {
@@ -61,7 +64,10 @@ async function renderRoute(route) {
   try {
     if (route === "dashboard") await loadDashboard();
     if (route === "products") await loadProducts();
-    if (route === "offers") await loadOffers();
+    if (route === "offers") {
+      await loadOfferBrands();
+      await loadOffers();
+    }
     if (route === "imports") await loadImports();
     if (route === "settings") await loadProfile();
   } catch (error) {
@@ -173,9 +179,24 @@ function renderProducts() {
   refreshOfferProductOptions();
 }
 
-async function loadOffers(query = "") {
-  const url = query ? `/api/offers?q=${encodeURIComponent(query)}` : "/api/offers";
-  state.offers = await Matrix.api(url);
+async function loadOfferBrands() {
+  const select = document.querySelector("#offers-brand");
+  const selected = select.value;
+  state.offerBrands = await Matrix.api("/api/offers/brands");
+  select.innerHTML = '<option value="">全部品牌</option>' + state.offerBrands.map((brand) => `
+    <option value="${Matrix.escapeHtml(brand)}">${Matrix.escapeHtml(brand)}</option>
+  `).join("");
+  if (state.offerBrands.includes(selected)) select.value = selected;
+}
+
+async function loadOffers(query = null, brand = null) {
+  const params = new URLSearchParams();
+  const searchValue = query === null ? document.querySelector("#offers-search").value.trim() : query.trim();
+  const brandValue = brand === null ? document.querySelector("#offers-brand").value : brand;
+  if (searchValue) params.set("q", searchValue);
+  if (brandValue) params.set("brand", brandValue);
+  const suffix = params.toString();
+  state.offers = await Matrix.api(suffix ? `/api/offers?${suffix}` : "/api/offers");
   renderOffers();
 }
 
@@ -346,6 +367,7 @@ async function submitOffer(event) {
     });
     document.querySelector("#offer-dialog").close();
     Matrix.toast(isEdit ? "报价已更新" : "报价已创建", "库存快照与审计事件已同步写入。", "success");
+    await loadOfferBrands();
     await loadOffers();
   } catch (error) {
     Matrix.toast("保存失败", error.message, "error");
@@ -354,27 +376,193 @@ async function submitOffer(event) {
   }
 }
 
-async function uploadCsv(file) {
+function selectImportFile(file) {
   if (!file) return;
-  if (!file.name.toLowerCase().endsWith(".csv")) {
-    Matrix.toast("文件格式错误", "当前仅支持 CSV 文件。", "error");
+  if (!/\.(csv|tsv|txt|xlsx|xls|pdf)$/i.test(file.name)) {
+    Matrix.toast("文件格式错误", "支持 CSV、XLSX、XLS 和 PDF 格式。", "error");
     return;
   }
-  const button = document.querySelector("#choose-csv");
+  state.importFile = file;
+  state.importPreview = null;
+  document.querySelector("#selected-import-file").textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KB`;
+  document.querySelector("#csv-dropzone").classList.add("has-file");
+  document.querySelector("#analyze-import").disabled = false;
+  document.querySelector("#import-preview").classList.add("hidden");
+}
+
+function collectImportOptions() {
+  const mapping = {};
+  const defaults = {};
+  document.querySelectorAll("[data-mapping-field]").forEach((select) => {
+    mapping[select.dataset.mappingField] = select.value;
+  });
+  document.querySelectorAll("[data-default-field]").forEach((input) => {
+    defaults[input.dataset.defaultField] = input.value.trim();
+  });
+  return { mapping, defaults };
+}
+
+function collectPreviewRows() {
+  return [...document.querySelectorAll("#import-preview-tbody [data-import-row]")].map((tableRow) => {
+    const row = {};
+    tableRow.querySelectorAll("[data-row-field]").forEach((input) => {
+      row[input.dataset.rowField] = input.value.trim();
+    });
+    return row;
+  });
+}
+
+function importFormData(includeOptions = false, includeRows = false) {
+  const body = new FormData();
+  body.append("file", state.importFile);
+  body.append("description", document.querySelector("#import-description").value.trim());
+  if (includeOptions) {
+    const { mapping, defaults } = collectImportOptions();
+    body.append("mapping_json", JSON.stringify(mapping));
+    body.append("defaults_json", JSON.stringify(defaults));
+  }
+  if (includeRows) body.append("rows_json", JSON.stringify(collectPreviewRows()));
+  return body;
+}
+
+function importRowInput(field, value, label) {
+  return `<input class="input import-cell-input" data-row-field="${field}" value="${Matrix.escapeHtml(value || "")}" aria-label="${label}">`;
+}
+
+function appendImportRow(values = {}, source = "新增", errors = []) {
+  const defaults = state.importPreview?.defaults || {};
+  const row = {
+    product_name: "",
+    brand: "",
+    model: "",
+    category: defaults.category || "",
+    supplier_sku: "",
+    price: "",
+    currency: defaults.currency || "CNY",
+    moq: defaults.moq || "1",
+    stock_qty: defaults.stock_qty || "0",
+    lead_time_days: defaults.lead_time_days || "3",
+    fulfillment_mode: defaults.fulfillment_mode || "PURCHASE",
+    status: defaults.status || "ACTIVE",
+    ...values,
+  };
+  document.querySelector("#import-preview-tbody").insertAdjacentHTML("beforeend", `
+    <tr data-import-row class="${errors.length ? "row-invalid" : ""}">
+      <td><span class="import-row-source">${Matrix.escapeHtml(source)}</span></td>
+      <td>${importRowInput("product_name", row.product_name, "商品名称")}</td>
+      <td>${importRowInput("brand", row.brand, "品牌")}</td>
+      <td>${importRowInput("model", row.model, "型号")}</td>
+      <td>${importRowInput("category", row.category, "类目")}</td>
+      <td>${importRowInput("supplier_sku", row.supplier_sku, "供应商 SKU")}</td>
+      <td>${importRowInput("price", row.price, "采购价")}</td>
+      <td>${importRowInput("currency", row.currency, "币种")}</td>
+      <td>${importRowInput("moq", row.moq, "MOQ")}</td>
+      <td>${importRowInput("stock_qty", row.stock_qty, "库存")}</td>
+      <td>${importRowInput("lead_time_days", row.lead_time_days, "交期")}</td>
+      <td>${importRowInput("fulfillment_mode", row.fulfillment_mode, "履约模式")}</td>
+      <td>${importRowInput("status", row.status, "状态")}</td>
+      <td data-row-validation>${errors.length ? `<span class="import-row-errors">${errors.map(Matrix.escapeHtml).join("；")}</span>` : '<span class="text-success">可导入</span>'}</td>
+      <td><button class="btn btn-secondary btn-sm import-row-delete" type="button" data-delete-import-row>删除</button></td>
+    </tr>
+  `);
+}
+
+function updateEditableImportState() {
+  const rows = collectPreviewRows();
+  const validCandidates = rows.filter((row) => row.product_name && row.category && row.supplier_sku && row.price);
+  document.querySelector("#import-preview-count").textContent = `目标列表 ${rows.length} 行 · 可导入 ${validCandidates.length} 行`;
+  document.querySelector("#confirm-import").disabled = validCandidates.length === 0;
+}
+
+function renderImportPreview(result) {
+  state.importPreview = result;
+  const sheet = result.sheet_name ? ` · 工作表「${result.sheet_name}」` : "";
+  document.querySelector("#import-preview-summary").textContent = `${result.file_name}${sheet} · 第 ${result.header_row} 行为表头 · 共 ${result.total_rows} 行`;
+  document.querySelector("#import-preview-count").textContent = `有效 ${result.valid_rows} 行 · 待修正 ${result.invalid_rows} 行 · 最多展示前 20 行`;
+  document.querySelector("#import-preview-warnings").innerHTML = result.warnings.length
+    ? `<div class="import-warning">${result.warnings.map(Matrix.escapeHtml).join("；")}</div>`
+    : "";
+
+  document.querySelector("#import-mapping-grid").innerHTML = result.mapping.map((item) => {
+    const options = [
+      '<option value="">不映射 / 使用默认值</option>',
+      ...result.headers.map((header) => `<option value="${Matrix.escapeHtml(header)}" ${header === item.source ? "selected" : ""}>${Matrix.escapeHtml(header)}</option>`),
+    ].join("");
+    const defaultValue = result.defaults[item.field] || "";
+    return `
+      <div class="import-mapping-item">
+        <div class="import-mapping-title">
+          <strong>${Matrix.escapeHtml(item.label)}${item.required ? '<span class="required-mark"> *</span>' : ""}</strong>
+          <span class="mapping-confidence ${item.confidence}">${item.source ? `${item.confidence === "high" ? "高" : item.confidence === "medium" ? "中" : "低"}可信` : "未匹配"}</span>
+        </div>
+        <div class="import-mapping-controls">
+          <select class="select" data-mapping-field="${item.field}" aria-label="${Matrix.escapeHtml(item.label)}来源列">${options}</select>
+          <input class="input" data-default-field="${item.field}" value="${Matrix.escapeHtml(defaultValue)}" placeholder="空值默认" aria-label="${Matrix.escapeHtml(item.label)}默认值">
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  document.querySelector("#import-preview-tbody").innerHTML = "";
+  result.preview_rows.forEach((item) => appendImportRow(item.values, `原表第 ${item.row} 行`, item.errors));
+  updateEditableImportState();
+  document.querySelector("#import-preview").classList.remove("hidden");
+}
+
+async function previewImport(includeOptions = false) {
+  if (!state.importFile) return;
+  const button = includeOptions
+    ? document.querySelector("#refresh-import-preview")
+    : document.querySelector("#analyze-import");
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = "正在识别…";
+  try {
+    const result = await Matrix.api("/api/imports/product-offers/preview", {
+      method: "POST",
+      body: importFormData(includeOptions),
+    });
+    renderImportPreview(result);
+    document.querySelector("#import-preview").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    Matrix.toast("识别失败", error.message, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
+async function confirmSmartImport() {
+  if (!state.importFile || !state.importPreview) return;
+  if (!collectPreviewRows().length) {
+    Matrix.toast("无法导入", "目标列表至少保留一行。", "error");
+    return;
+  }
+  const button = document.querySelector("#confirm-import");
   button.disabled = true;
   button.textContent = "正在导入…";
-  const body = new FormData();
-  body.append("file", file);
   try {
-    const result = await Matrix.api("/api/imports/product-offers", { method: "POST", body });
+    const result = await Matrix.api("/api/imports/product-offers", {
+      method: "POST",
+      body: importFormData(true, true),
+    });
     Matrix.toast("导入完成", `成功 ${result.success_rows} 条，失败 ${result.error_rows} 条。`, result.error_rows ? "default" : "success");
-    await Promise.all([loadImports(), loadProducts(), loadOffers()]);
+    state.importFile = null;
+    state.importPreview = null;
+    document.querySelector("#csv-file").value = "";
+    document.querySelector("#import-description").value = "";
+    document.querySelector("#selected-import-file").textContent = "支持 CSV、XLSX、XLS、PDF，单文件最大 10MB。";
+    document.querySelector("#csv-dropzone").classList.remove("has-file");
+    document.querySelector("#analyze-import").disabled = true;
+    document.querySelector("#import-preview").classList.add("hidden");
+    await Promise.all([loadImports(), loadProducts()]);
+    await loadOfferBrands();
+    await loadOffers();
   } catch (error) {
     Matrix.toast("导入失败", error.message, "error");
   } finally {
     button.disabled = false;
-    button.textContent = "选择 CSV 文件";
-    document.querySelector("#csv-file").value = "";
+    button.textContent = "确认导入";
   }
 }
 
@@ -439,6 +627,7 @@ function bindEvents() {
 
   document.querySelector("#products-search").addEventListener("input", debounce((event) => loadProducts(event.target.value)));
   document.querySelector("#offers-search").addEventListener("input", debounce((event) => loadOffers(event.target.value)));
+  document.querySelector("#offers-brand").addEventListener("change", (event) => loadOffers(null, event.target.value));
 
   document.querySelector("#products-tbody").addEventListener("click", (event) => {
     const button = event.target.closest("[data-add-offer]");
@@ -455,7 +644,28 @@ function bindEvents() {
   const choose = document.querySelector("#choose-csv");
   const dropzone = document.querySelector("#csv-dropzone");
   choose.addEventListener("click", () => input.click());
-  input.addEventListener("change", () => uploadCsv(input.files[0]));
+  input.addEventListener("change", () => selectImportFile(input.files[0]));
+  document.querySelector("#analyze-import").addEventListener("click", () => previewImport(false));
+  document.querySelector("#refresh-import-preview").addEventListener("click", () => previewImport(true));
+  document.querySelector("#add-import-row").addEventListener("click", () => {
+    appendImportRow();
+    updateEditableImportState();
+  });
+  document.querySelector("#confirm-import").addEventListener("click", confirmSmartImport);
+  document.querySelector("#import-preview-tbody").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-delete-import-row]");
+    if (!button) return;
+    button.closest("[data-import-row]").remove();
+    updateEditableImportState();
+  });
+  document.querySelector("#import-preview-tbody").addEventListener("input", (event) => {
+    const tableRow = event.target.closest("[data-import-row]");
+    if (tableRow) {
+      tableRow.classList.remove("row-invalid");
+      tableRow.querySelector("[data-row-validation]").innerHTML = '<span class="muted">已编辑</span>';
+    }
+    updateEditableImportState();
+  });
   ["dragenter", "dragover"].forEach((type) => dropzone.addEventListener(type, (event) => {
     event.preventDefault();
     dropzone.classList.add("dragging");
@@ -464,14 +674,15 @@ function bindEvents() {
     event.preventDefault();
     dropzone.classList.remove("dragging");
   }));
-  dropzone.addEventListener("drop", (event) => uploadCsv(event.dataTransfer.files[0]));
+  dropzone.addEventListener("drop", (event) => selectImportFile(event.dataTransfer.files[0]));
 }
 
 async function boot() {
   try {
     state.user = await Matrix.api("/api/auth/me");
-    if (state.user.role === "PLATFORM_ADMIN") {
-      window.location.href = "/admin";
+    const view = Matrix.publicAuthView(state.user);
+    if (view.workspaceHref !== "/app") {
+      window.location.href = view.authenticated ? view.workspaceHref : "/login";
       return;
     }
   } catch (error) {
@@ -479,7 +690,7 @@ async function boot() {
     return;
   }
   document.querySelector("#user-name").textContent = state.user.name;
-  document.querySelector("#user-role").textContent = state.user.role === "SUPPLIER_ADMIN" ? "供应商管理员" : state.user.role;
+  document.querySelector("#user-role").textContent = Matrix.userRoleLabel(state.user);
   document.querySelector("#user-avatar").textContent = state.user.name.slice(0, 1);
   document.querySelector("#supplier-name-mini").textContent = state.user.organization_name;
   bindEvents();

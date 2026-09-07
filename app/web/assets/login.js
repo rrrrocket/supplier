@@ -12,7 +12,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const data = Object.fromEntries(new FormData(form).entries());
     try {
       const result = await Matrix.api("/api/auth/login", { method: "POST", body: data });
-      window.location.href = result.user.role === "PLATFORM_ADMIN" ? "/admin" : "/app";
+      const view = Matrix.publicAuthView(result.user);
+      if (!view.authenticated) {
+        await Matrix.api("/api/auth/logout", { method: "POST" });
+        throw new Error("账号角色或组织类型无效，请联系平台管理员");
+      }
+      window.location.href = view.workspaceHref;
     } catch (error) {
       message.textContent = error.message;
     } finally {

@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models.entities import OrganizationType, User
+from app.models.entities import OrganizationType, User, UserRole
 
 
 DbSession = Annotated[Session, Depends(get_db)]
@@ -28,7 +28,10 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 def get_current_supplier_user(user: CurrentUser) -> User:
-    if user.organization.organization_type != OrganizationType.SUPPLIER.value:
+    if (
+        user.role != UserRole.SUPPLIER.value
+        or user.organization.organization_type != OrganizationType.SUPPLIER.value
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="需要供应商组织账号权限",

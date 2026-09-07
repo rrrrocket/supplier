@@ -8,7 +8,7 @@ const adminState = {
 const adminRoutes = {
   applications: ["入驻申请", "中国供应网络 / 平台管理 / 入驻申请"],
   suppliers: ["入驻供应商", "中国供应网络 / 平台管理 / 供应商"],
-  system: ["系统架构", "中国供应网络 / 平台管理 / 系统架构"],
+  system: ["平台能力", "中国供应网络 / 平台管理 / 平台能力"],
 };
 
 function metricIcon(type) {
@@ -181,7 +181,7 @@ async function approveSelectedApplication() {
     document.querySelector("#approve-application").classList.add("hidden");
     document.querySelector("#reject-application").classList.add("hidden");
     document.querySelector("#review-notes-group").classList.add("hidden");
-    Matrix.toast("审核通过", "组织、供应商档案和管理员账号已建立。", "success");
+    Matrix.toast("审核通过", "组织、供应商档案和供应商账号已建立。", "success");
     await Promise.all([loadApplications(), loadSuppliers()]);
   } catch (error) {
     Matrix.toast("审核失败", error.message, "error");
@@ -245,8 +245,9 @@ async function logout() {
 async function bootAdmin() {
   try {
     adminState.user = await Matrix.api("/api/auth/me");
-    if (adminState.user.role !== "PLATFORM_ADMIN") {
-      window.location.href = "/app";
+    const view = Matrix.publicAuthView(adminState.user);
+    if (view.workspaceHref !== "/admin") {
+      window.location.href = view.authenticated ? view.workspaceHref : "/login";
       return;
     }
   } catch {

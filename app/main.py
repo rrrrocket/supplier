@@ -12,9 +12,8 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.router import api_router
 from app.core.config import get_settings
-from app.db.base import Base
-from app.db.seed import seed_database
-from app.db.session import SessionLocal, engine
+from app.db.bootstrap import sync_platform_admin
+from app.db.session import SessionLocal
 
 
 settings = get_settings()
@@ -25,20 +24,15 @@ ASSETS = WEB_ROOT / "assets"
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Path(settings.database_url.removeprefix("sqlite:///")).parent.mkdir(
-        parents=True, exist_ok=True
-    ) if settings.database_url.startswith("sqlite") else None
-    if not settings.is_production:
-        Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
-        seed_database(db, settings)
+        sync_platform_admin(db, settings)
     yield
 
 
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
-    description="Matrix One 中国供应网络 MVP API",
+    description="Matrix One 中国供应网络 API",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",

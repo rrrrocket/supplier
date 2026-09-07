@@ -21,6 +21,7 @@ def to_user_view(user: User) -> UserView:
         name=user.name,
         role=user.role,
         organization_id=user.organization_id,
+        organization_type=user.organization.organization_type,
         organization_name=user.organization.name,
     )
 

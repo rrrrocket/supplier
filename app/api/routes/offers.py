@@ -40,6 +40,7 @@ def list_offers(
     db: DbSession,
     user: SupplierUser,
     q: str | None = Query(default=None, max_length=120),
+    brand: str | None = Query(default=None, max_length=120),
     offer_status: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=200, ge=1, le=1000),
 ) -> list[OfferView]:
@@ -62,8 +63,27 @@ def list_offers(
         )
     if offer_status:
         stmt = stmt.where(SupplierOffer.status == offer_status)
+    if brand:
+        stmt = stmt.where(Product.brand == brand.strip())
 
     return [offer_view(offer, product) for offer, product in db.execute(stmt).all()]
+
+
+@router.get("/brands", response_model=list[str])
+def list_offer_brands(db: DbSession, user: SupplierUser) -> list[str]:
+    return list(
+        db.scalars(
+            select(Product.brand)
+            .join(SupplierOffer, SupplierOffer.product_id == Product.id)
+            .where(
+                SupplierOffer.organization_id == user.organization_id,
+                Product.brand.is_not(None),
+                Product.brand != "",
+            )
+            .distinct()
+            .order_by(Product.brand)
+        ).all()
+    )
 
 
 @router.post("", response_model=OfferView, status_code=status.HTTP_201_CREATED)

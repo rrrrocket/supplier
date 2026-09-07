@@ -6,8 +6,8 @@
   <meta name="description" content="Matrix One 中国供应网络：用软件、数据和 AI，把中国供应能力与海外需求进行规模化匹配。">
   <title>Matrix One 中国供应网络</title>
   <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/styles.css">
-  <script src="/assets/common.js" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260908-auth-visibility">
+  <script src="/assets/common.js?v=20260908-supplier-role" defer></script>
 </head>
 <body class="landing-body">
   <header class="site-header">
@@ -23,8 +23,10 @@
         <a href="#data">数据原则</a>
       </nav>
       <div class="site-actions">
-        <a class="btn btn-ghost" href="/login">供应商登录</a>
-        <a class="btn btn-primary" href="/apply">申请入驻</a>
+        <a class="btn btn-ghost" href="/login" data-auth-guest>供应商登录</a>
+        <a class="btn btn-primary" href="/apply" data-auth-guest>申请入驻</a>
+        <a class="btn btn-ghost auth-identity" href="/app" data-auth-member data-auth-identity hidden></a>
+        <a class="btn btn-primary" href="/app" data-auth-member data-auth-workspace hidden>进入工作台</a>
       </div>
     </div>
   </header>
@@ -33,11 +35,12 @@
     <section class="hero">
       <div class="container hero-inner">
         <div>
-          <div class="eyebrow"><span class="eyebrow-dot"></span>首批供应商共建阶段</div>
+          <div class="eyebrow"><span class="eyebrow-dot"></span>中国供应网络开放入驻</div>
           <h1>让中国供应能力，<br><span>进入适合它的全球市场</span></h1>
           <p class="hero-lead">接入一次，统一管理商品、供货价、库存、交期与合作能力。Matrix One 通过软件、数据和 AI，把分散的中国供给转化为可匹配、可执行、可持续优化的全球分发能力。</p>
           <div class="hero-actions">
-            <a class="btn btn-primary btn-lg" href="/apply">申请加入供应网络</a>
+            <a class="btn btn-primary btn-lg" href="/apply" data-auth-guest>申请加入供应网络</a>
+            <a class="btn btn-primary btn-lg" href="/app" data-auth-member data-auth-workspace hidden>进入工作台</a>
             <a class="btn btn-secondary btn-lg" href="#modes">查看合作方式</a>
           </div>
           <div class="hero-note">
@@ -52,14 +55,14 @@
           </div>
         </div>
 
-        <div class="network-card" aria-label="供应能力档案示意">
+        <div class="network-card" aria-label="供应能力档案">
           <div class="network-card-head">
             <span class="network-card-title">供应能力档案</span>
             <span class="status-pill blue">持续同步</span>
           </div>
           <div class="supply-profile">
             <div class="supply-company">
-              <span class="company-avatar">供</span>
+              <span class="company-avatar" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V10l5 3v-3l5 3V5h4v16"/><path d="M8 17h1M12 17h1M16 17h1"/></svg></span>
               <span><strong>中国供应商</strong><span>企业、产品与履约能力统一接入</span></span>
             </div>
             <div class="profile-progress">
@@ -151,13 +154,13 @@
         <div class="section-heading center">
           <span class="section-kicker">Onboarding</span>
           <h2>五步进入中国供应网络</h2>
-          <p>第一阶段不追求上传尽可能多的商品，而是建立少量真实、稳定、可执行的供货数据。</p>
+          <p>从真实、稳定、可执行的供货数据开始，让每一项商品能力都能被准确理解和持续调用。</p>
         </div>
         <div class="workflow">
           <article class="workflow-step"><span class="step-number">1</span><h3>提交企业申请</h3><p>说明主体、经营类目、合作意向与出口能力。</p></article>
-          <article class="workflow-step"><span class="step-number">2</span><h3>完成基础审核</h3><p>核验企业信息，并确认首批接入商品范围。</p></article>
+          <article class="workflow-step"><span class="step-number">2</span><h3>完成基础审核</h3><p>核验企业信息，并确认接入商品范围。</p></article>
           <article class="workflow-step"><span class="step-number">3</span><h3>导入供货数据</h3><p>统一商品、供应商 SKU、价格、库存与交期。</p></article>
-          <article class="workflow-step"><span class="step-number">4</span><h3>建立试运行</h3><p>通过小批量采购、联营或真实 RFQ 验证履约。</p></article>
+          <article class="workflow-step"><span class="step-number">4</span><h3>验证履约能力</h3><p>通过采购、联营或真实 RFQ 持续验证履约。</p></article>
           <article class="workflow-step"><span class="step-number">5</span><h3>扩大全球分发</h3><p>依据利润、需求和履约结果扩大商品与市场。</p></article>
         </div>
       </div>
@@ -182,8 +185,13 @@
 
     <section class="cta-band">
       <div class="container cta-inner">
-        <div><h2>把你的供应能力，接入全球需求</h2><p>首批共建供应商将参与接入流程、数据模板和合作规则的共同验证。</p></div>
-        <div class="cta-actions"><a class="btn btn-secondary btn-lg" href="/login">已有账号登录</a><a class="btn btn-primary btn-lg" style="background:#fff;color:#155eef" href="/apply">提交入驻申请</a></div>
+        <div><h2>把你的供应能力，接入全球需求</h2><p>完成企业审核和商品数据接入后，即可参与市场匹配与合作评估。</p></div>
+        <div class="cta-actions">
+          <a class="btn btn-secondary btn-lg" href="/login" data-auth-guest>已有账号登录</a>
+          <a class="btn btn-primary btn-lg" style="background:#fff;color:#155eef" href="/apply" data-auth-guest>提交入驻申请</a>
+          <a class="btn btn-secondary btn-lg auth-identity" href="/app" data-auth-member data-auth-identity hidden></a>
+          <a class="btn btn-primary btn-lg" style="background:#fff;color:#155eef" href="/app" data-auth-member data-auth-workspace hidden>进入工作台</a>
+        </div>
       </div>
     </section>
   </main>
@@ -195,7 +203,7 @@
           <a class="brand" href="/"><img src="/assets/logo.svg" alt=""><span class="brand-copy"><span class="brand-name">Matrix One</span><span class="brand-sub">中国供应网络</span></span></a>
           <p>中国供应能力的全球化分发。用软件、数据和 AI，把中国高度分散的供应能力，与海外高度分散的需求进行规模化匹配。</p>
         </div>
-        <div class="footer-column"><h4>供应商</h4><a href="/apply">申请入驻</a><a href="/login">供应商登录</a><a href="#process">接入流程</a></div>
+        <div class="footer-column"><h4>供应商</h4><a href="/apply" data-auth-guest>申请入驻</a><a href="/login" data-auth-guest>供应商登录</a><a href="/app" data-auth-member data-auth-workspace hidden>进入工作台</a><a href="#process">接入流程</a></div>
         <div class="footer-column"><h4>合作</h4><a href="#modes">自营采购</a><a href="#modes">联营代运营</a><a href="#modes">ToB 外贸</a></div>
         <div class="footer-column"><h4>平台</h4><a href="#value">平台价值</a><a href="#data">数据原则</a><a href="/api/docs">API 文档</a></div>
       </div>

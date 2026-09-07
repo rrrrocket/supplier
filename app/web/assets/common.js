@@ -20,7 +20,7 @@
     PRODUCT_CREATED: ["新建商品", "商品主数据已创建"],
     PRODUCT_OFFERS_IMPORTED: ["批量导入", "商品与报价数据已处理"],
     SUPPLIER_APPROVED: ["供应商审核通过", "供应能力档案已激活"],
-    SUPPLIER_APPLICATION_APPROVED: ["入驻申请通过", "供应商组织与管理员账号已创建"],
+    SUPPLIER_APPLICATION_APPROVED: ["入驻申请通过", "供应商组织与供应商账号已创建"],
     SUPPLIER_APPLICATION_REJECTED: ["入驻申请驳回", "平台已保存审核意见"],
     SUPPLIER_PROFILE_UPDATED: ["更新企业资料", "供应商能力档案已更新"],
     USER_LOGGED_IN: ["账号登录", "供应商工作台登录成功"],
@@ -117,10 +117,72 @@
     return eventLabels[eventType] || [eventType || "系统事件", "业务数据已更新"];
   }
 
+  function publicAuthView(user) {
+    const isPlatformAdmin = user?.role === "PLATFORM_ADMIN"
+      && user?.organization_type === "PLATFORM";
+    const isSupplier = user?.role === "SUPPLIER"
+      && user?.organization_type === "SUPPLIER";
+    if (!isPlatformAdmin && !isSupplier) {
+      return {
+        authenticated: false,
+        identityLabel: "",
+        workspaceHref: "",
+        workspaceLabel: "",
+      };
+    }
+    return {
+      authenticated: true,
+      identityLabel: user.organization_name || user.name,
+      workspaceHref: isPlatformAdmin ? "/admin" : "/app",
+      workspaceLabel: isPlatformAdmin ? "进入管理端" : "进入工作台",
+    };
+  }
+
+  function renderPublicAuth(user) {
+    const view = publicAuthView(user);
+    document.querySelectorAll("[data-auth-guest]").forEach((node) => {
+      node.hidden = view.authenticated;
+    });
+    document.querySelectorAll("[data-auth-member]").forEach((node) => {
+      node.hidden = !view.authenticated;
+    });
+    document.querySelectorAll("[data-auth-identity]").forEach((node) => {
+      node.textContent = view.identityLabel;
+      node.title = view.identityLabel;
+      node.href = view.workspaceHref;
+    });
+    document.querySelectorAll("[data-auth-workspace]").forEach((node) => {
+      node.textContent = view.workspaceLabel;
+      node.href = view.workspaceHref;
+    });
+  }
+
+  async function syncPublicAuth() {
+    try {
+      const user = await api("/api/auth/me", { cache: "no-store" });
+      const view = publicAuthView(user);
+      if (document.body.dataset.authRedirect === "workspace" && view.authenticated) {
+        window.location.replace(view.workspaceHref);
+        return user;
+      }
+      renderPublicAuth(user);
+      return user;
+    } catch {
+      renderPublicAuth(null);
+      return null;
+    }
+  }
+
   function setYear() {
     document.querySelectorAll("[data-current-year]").forEach((node) => {
       node.textContent = new Date().getFullYear();
     });
+  }
+
+  function userRoleLabel(user) {
+    if (user?.role === "PLATFORM_ADMIN") return "平台管理员";
+    if (user?.role === "SUPPLIER") return "供应商";
+    return "";
   }
 
   window.Matrix = {
@@ -129,11 +191,19 @@
     eventInfo,
     formatDate,
     formatMoney,
+    publicAuthView,
     setYear,
     statusBadge,
     statusLabels,
+    syncPublicAuth,
     toast,
+    userRoleLabel,
   };
 
-  document.addEventListener("DOMContentLoaded", setYear);
+  document.addEventListener("DOMContentLoaded", () => {
+    setYear();
+    const usesPublicAuth = document.body.dataset.authRedirect === "workspace"
+      || document.querySelector("[data-auth-guest], [data-auth-member]");
+    if (usesPublicAuth) syncPublicAuth();
+  });
 })();

@@ -29,9 +29,7 @@ class OrganizationType(str, Enum):
 
 class UserRole(str, Enum):
     PLATFORM_ADMIN = "PLATFORM_ADMIN"
-    SUPPLIER_ADMIN = "SUPPLIER_ADMIN"
-    OPERATOR = "OPERATOR"
-    FINANCE = "FINANCE"
+    SUPPLIER = "SUPPLIER"
 
 
 class SupplierStatus(str, Enum):
@@ -90,7 +88,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     role: Mapped[str] = mapped_column(
-        String(40), default=UserRole.SUPPLIER_ADMIN.value, nullable=False
+        String(40), default=UserRole.SUPPLIER.value, nullable=False
     )
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

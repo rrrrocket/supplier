@@ -1,20 +1,13 @@
-.PHONY: install dev test reset migrate revision
-
-install:
-	python3 -m venv .venv
-	. .venv/bin/activate && pip install -r requirements-dev.txt
+.PHONY: dev test migrate revision
 
 dev:
-	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	./start.sh
 
 test:
-	pytest
-
-reset:
-	python scripts/reset_demo.py
+	./start.sh test
 
 migrate:
-	alembic upgrade head
+	docker compose exec app alembic upgrade head
 
 revision:
-	alembic revision --autogenerate -m "$(m)"
+	docker compose exec app alembic revision --autogenerate -m "$(m)"

@@ -45,7 +45,7 @@ class ApplicationApprovalResponse(BaseModel):
     message: str
 
 
-class SupplierAdminView(BaseModel):
+class SupplierManagementView(BaseModel):
     organization_id: str
     organization_code: str
     organization_name: str

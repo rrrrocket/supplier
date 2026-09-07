@@ -1,0 +1,47 @@
+services:
+  test-db:
+    image: postgres:16-alpine
+    command: ["postgres", "-p", "6432"]
+    environment:
+      POSTGRES_DB: supplier_test
+      POSTGRES_USER: supplier_test
+      POSTGRES_PASSWORD: supplier-test-only-password
+      PGPORT: 6432
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U supplier_test -d supplier_test -p 6432"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  test:
+    build:
+      context: .
+      target: test
+    depends_on:
+      test-db:
+        condition: service_healthy
+    environment:
+      APP_ENV: testing
+      DATABASE_URL: postgresql+psycopg://supplier_test:supplier-test-only-password@test-db:6432/supplier_test
+      SESSION_SECRET: test-session-secret-with-more-than-thirty-two-characters
+      ADMIN_EMAIL: admin-test@example.com
+      ADMIN_PASSWORD: AdminTest123!
+      ADMIN_NAME: 测试平台管理员
+
+  frontend-test:
+    image: node:22-alpine
+    working_dir: /workspace
+    volumes:
+      - .:/workspace:ro
+    command:
+      - sh
+      - -c
+      - >-
+        node --check app/web/assets/common.js &&
+        node --check app/web/assets/login.js &&
+        node --check app/web/assets/apply.js &&
+        node --check app/web/assets/app.js &&
+        node --check app/web/assets/admin.js &&
+        node --test tests/test_public_auth.js

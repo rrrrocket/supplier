@@ -4,11 +4,13 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+from tests.conftest import ADMIN_EMAIL, ADMIN_PASSWORD, SUPPLIER_EMAIL, SUPPLIER_PASSWORD
+
 
 def login_supplier(client: TestClient) -> None:
     response = client.post(
         "/api/auth/login",
-        json={"email": "supplier@matrix-one.tech", "password": "MatrixOne123!"},
+        json={"email": SUPPLIER_EMAIL, "password": SUPPLIER_PASSWORD},
     )
     assert response.status_code == 200
 
@@ -16,7 +18,7 @@ def login_supplier(client: TestClient) -> None:
 def login_admin(client: TestClient) -> None:
     response = client.post(
         "/api/auth/login",
-        json={"email": "admin@matrix-one.tech", "password": "MatrixAdmin123!"},
+        json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
     )
     assert response.status_code == 200
     assert response.json()["user"]["role"] == "PLATFORM_ADMIN"
@@ -93,7 +95,7 @@ def test_admin_can_list_and_approve_application(client: TestClient) -> None:
         },
     )
     assert first_login.status_code == 200
-    assert first_login.json()["user"]["role"] == "SUPPLIER_ADMIN"
+    assert first_login.json()["user"]["role"] == "SUPPLIER"
 
     profile = client.get("/api/profile")
     assert profile.status_code == 200

@@ -25,7 +25,7 @@ from app.schemas.admin import (
     ApplicationAdminView,
     ApplicationApprovalResponse,
     ApplicationReviewRequest,
-    SupplierAdminView,
+    SupplierManagementView,
 )
 from app.services.events import record_event
 from app.services.scoring import calculate_profile_completion
@@ -35,7 +35,10 @@ router = APIRouter(prefix="/admin", tags=["平台管理"])
 
 
 def require_platform_admin(user: CurrentUser) -> User:
-    if user.role != UserRole.PLATFORM_ADMIN.value:
+    if (
+        user.role != UserRole.PLATFORM_ADMIN.value
+        or user.organization.organization_type != OrganizationType.PLATFORM.value
+    ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要平台管理员权限")
     return user
 
@@ -162,7 +165,7 @@ def approve_application(
         organization_id=organization.id,
         email=application.email.lower(),
         name=application.contact_name,
-        role=UserRole.SUPPLIER_ADMIN.value,
+        role=UserRole.SUPPLIER.value,
         password_hash=hash_password(temporary_password),
     )
     db.add(supplier_user)
@@ -197,7 +200,7 @@ def approve_application(
         organization_code=organization.code,
         login_email=supplier_user.email,
         temporary_password=temporary_password,
-        message="供应商组织与管理员账号已创建。临时密码只在本次响应中显示。",
+        message="供应商组织与供应商账号已创建。临时密码只在本次响应中显示。",
     )
 
 
@@ -233,8 +236,8 @@ def reject_application(
     return application_view(application)
 
 
-@router.get("/suppliers", response_model=list[SupplierAdminView])
-def list_suppliers(db: DbSession, _: PlatformAdmin) -> list[SupplierAdminView]:
+@router.get("/suppliers", response_model=list[SupplierManagementView])
+def list_suppliers(db: DbSession, _: PlatformAdmin) -> list[SupplierManagementView]:
     product_counts = (
         select(
             Product.created_by_organization_id.label("organization_id"),
@@ -267,7 +270,7 @@ def list_suppliers(db: DbSession, _: PlatformAdmin) -> list[SupplierAdminView]:
     ).all()
 
     return [
-        SupplierAdminView(
+        SupplierManagementView(
             organization_id=organization.id,
             organization_code=organization.code,
             organization_name=organization.name,

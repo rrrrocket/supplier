@@ -1,34 +1,46 @@
 services:
   db:
     image: postgres:16-alpine
+    command: ["postgres", "-p", "6432"]
     restart: unless-stopped
     environment:
       POSTGRES_DB: supplier
       POSTGRES_USER: supplier
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PGPORT: 6432
     volumes:
       - supplier_postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U supplier -d supplier"]
+      test: ["CMD-SHELL", "pg_isready -U supplier -d supplier -p 6432"]
       interval: 5s
       timeout: 5s
       retries: 10
 
   app:
-    build: .
+    build:
+      context: .
+      target: runtime
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
     environment:
-      APP_ENV: production
-      APP_URL: https://supplier.matrix-one.tech
-      DATABASE_URL: postgresql+psycopg://supplier:${POSTGRES_PASSWORD:-change-me}@db:5432/supplier
+      APP_ENV: ${APP_ENV:-development}
+      APP_URL: ${APP_URL:-https://supplier.matrix-one.tech}
+      DATABASE_URL: postgresql+psycopg://supplier:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:6432/supplier
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
-      SEED_DEMO_DATA: "false"
-      ALLOWED_HOSTS: supplier.matrix-one.tech
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      ADMIN_NAME: ${ADMIN_NAME:-平台管理员}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-supplier.matrix-one.tech,localhost,127.0.0.1}
     ports:
-      - "127.0.0.1:8000:8000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-6790}:6790"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6790/api/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
 
 volumes:
   supplier_postgres:

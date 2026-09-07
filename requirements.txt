@@ -8,3 +8,6 @@ python-multipart>=0.0.29,<1
 email-validator>=2.3,<3
 itsdangerous>=2.2,<3
 psycopg[binary]>=3.2,<4
+openpyxl>=3.1,<4
+xlrd>=2.0,<3
+pdfplumber>=0.11,<1
