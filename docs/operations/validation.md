@@ -4,15 +4,20 @@
 
 | 检查项 | 结果 |
 |---|---|
+| `start.sh` Shell 语法 | 通过 |
 | Python 模块编译 | 通过 |
 | JavaScript 语法检查 | 通过 |
 | 5 个 HTML 页面重复 ID 与本地资源检查 | 通过 |
-| Pytest 自动化测试 | 27 项通过 |
+| PostgreSQL 16 隔离测试环境 | 迁移到 Alembic head，通过；数据库端口 6432 |
+| Pytest 自动化测试 | 28 项通过 |
 | 前端登录状态测试 | 11 项通过 |
 | 全新 PostgreSQL 16 数据库执行 Alembic `upgrade head` | 通过 |
 | PostgreSQL 历史供应商角色迁移 | 通过 |
 | Alembic 模型一致性 `check` | 无待生成迁移 |
 | FastAPI 真实启动 | 通过 |
+| `./start.sh status` | app 与 db 均为 healthy |
+| `/api/health` | `{"status":"ok","service":"supplier-network","environment":"development"}` |
+| PostgreSQL `SHOW port` | `6432` |
 | `/`、`/apply`、`/login`、`/app`、`/admin`、`/api/docs` | 全部 HTTP 200 |
 | 平台管理员登录与待审核申请读取 | 通过 |
 
