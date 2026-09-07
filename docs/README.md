@@ -20,6 +20,7 @@
 
 ## 设计与实施计划
 
+- [PostgreSQL 全新基线与数据重建设计](designs/2026-09-08-clean-database-baseline-design.md)
 - [供应商品牌、SKU 与通用系统集成设计](designs/2026-09-08-supplier-brand-sku-integration-design.md)
 - [供应商品牌、SKU 与通用系统集成实施计划](plans/2026-09-08-supplier-brand-sku-integration.md)
 - [仓库文档归档与清理设计](designs/2026-09-08-repository-documentation-cleanup-design.md)
