@@ -46,7 +46,7 @@
 - Produces: dataclasses `WorkbookColumn`, `WorkbookSheet`, `WorkbookInspection`, `SheetImportConfig`, `SourcedRow`
 - Preserves: `parse_table`, `infer_mapping`, `infer_defaults`, `normalize_rows` for the legacy single-source flow
 
-- [ ] **Step 1: Add a malformed-style workbook fixture and failing scan test**
+- [x] **Step 1: Add a malformed-style workbook fixture and failing scan test**
 
 Create a test helper that builds a workbook with two sheets, makes `Sheet1` active, and injects an empty Fill without writing a fixture to the repository:
 
@@ -100,7 +100,7 @@ def test_inspect_excel_workbook_repairs_empty_fill_and_preserves_active_sheet():
     assert inspection.sheets[0].columns[17].label == "R列 · 成本"
 ```
 
-- [ ] **Step 2: Run the scan test and verify RED**
+- [x] **Step 2: Run the scan test and verify RED**
 
 Run:
 
@@ -110,7 +110,7 @@ Run:
 
 Expected: Python tests fail because `inspect_excel_workbook` and workbook dataclasses do not exist.
 
-- [ ] **Step 3: Implement the workbook reader and scan dataclasses**
+- [x] **Step 3: Implement the workbook reader and scan dataclasses**
 
 Add these public shapes to `app/services/import_mapping.py`:
 
@@ -172,7 +172,7 @@ label = f"{key}列 · {header}" if header else f"{key}列（无表头）"
 
 Return at most five sample rows per Sheet. `estimated_rows` counts nonempty rows below the suggested header. Suggested mappings must only use nonempty header text and existing `_header_match_score`; do not guess empty-header fields by position.
 
-- [ ] **Step 4: Add failing tests for independent selected-Sheet parsing**
+- [x] **Step 4: Add failing tests for independent selected-Sheet parsing**
 
 Add:
 
@@ -208,7 +208,7 @@ def test_parse_excel_sheets_uses_column_keys_and_preserves_source_coordinates():
 
 Also assert duplicate Sheet names, missing Sheet names, missing header rows, invalid column letters, and a total above `MAX_IMPORT_ROWS` raise a specific `ValueError`.
 
-- [ ] **Step 5: Run the selected-Sheet test and verify RED**
+- [x] **Step 5: Run the selected-Sheet test and verify RED**
 
 Run:
 
@@ -218,7 +218,7 @@ Run:
 
 Expected: the new parsing test fails because `parse_excel_sheets` is missing.
 
-- [ ] **Step 6: Implement selected-Sheet parsing and run GREEN**
+- [x] **Step 6: Implement selected-Sheet parsing and run GREEN**
 
 Read only configured Sheets. Validate the complete config before returning rows. Map source column keys to `FIELD_ORDER`, merge `DEFAULT_VALUES` with per-Sheet defaults, skip wholly blank raw rows, attach the exact Sheet name and one-based Excel row number, and enforce the 10,000-row limit across all selected Sheets.
 
@@ -230,7 +230,7 @@ Run:
 
 Expected: all Python and Node tests pass.
 
-- [ ] **Step 7: Commit Task 1**
+- [x] **Step 7: Commit Task 1**
 
 ```bash
 git add app/services/import_mapping.py tests/test_import_mapping.py
@@ -251,7 +251,7 @@ git commit -m "feat: inspect and parse selected Excel sheets"
 - Extends: `POST /api/imports/product-offers/preview` with `sheet_configs_json`
 - Extends: `POST /api/imports/product-offers` rows with `source_sheet`, `source_row`, `included`
 
-- [ ] **Step 1: Add failing workbook inspection API test**
+- [x] **Step 1: Add failing workbook inspection API test**
 
 Create an in-memory two-Sheet workbook in `tests/test_api.py` and assert:
 
@@ -271,7 +271,7 @@ def test_excel_inspection_returns_all_sheets_and_active_sheet(authenticated_clie
 
 Also assert CSV submitted to this endpoint returns HTTP 400 with `工作簿扫描仅支持 XLSX 和 XLS 格式`.
 
-- [ ] **Step 2: Run the inspection API test and verify RED**
+- [x] **Step 2: Run the inspection API test and verify RED**
 
 Run:
 
@@ -281,11 +281,11 @@ Run:
 
 Expected: HTTP 404 because the inspection route does not exist.
 
-- [ ] **Step 3: Implement the inspection route**
+- [x] **Step 3: Implement the inspection route**
 
 Add an `excel_only=True` option to `_read_upload` or an equivalent explicit extension check without duplicating the 10 MiB limit. Serialize the Task 1 dataclasses into the response schema from the design. Convert workbook parsing `ValueError` to HTTP 400 without logging file contents.
 
-- [ ] **Step 4: Add failing multi-Sheet preview and conflict tests**
+- [x] **Step 4: Add failing multi-Sheet preview and conflict tests**
 
 Create two Sheets with different headers and the same SKU:
 
@@ -319,7 +319,7 @@ assert {row["conflict_group"] for row in response.json()["preview_rows"]} == {"D
 
 Add a second preview case with distinct SKUs and assert `can_import is True`. Add 400 cases for malformed JSON, empty configuration, duplicate Sheet configuration, unknown Sheet, invalid header row, and invalid column key.
 
-- [ ] **Step 5: Run the preview tests and verify RED**
+- [x] **Step 5: Run the preview tests and verify RED**
 
 Run:
 
@@ -329,7 +329,7 @@ Run:
 
 Expected: the response ignores `sheet_configs_json` or lacks `conflict_count`, so the new assertions fail.
 
-- [ ] **Step 6: Implement multi-Sheet preview**
+- [x] **Step 6: Implement multi-Sheet preview**
 
 Add `_sheet_configs(value: str) -> list[SheetImportConfig]` that rejects non-array JSON and constructs validated configs. Extend `preview_product_offers` with:
 
@@ -339,11 +339,11 @@ sheet_configs_json: str = Form(default="")
 
 When configurations exist, call `parse_excel_sheets`, validate each `SourcedRow.values` with `_validate_row`, and compute duplicate groups from nonempty normalized `supplier_sku` values. Return source fields, `included=True`, `conflict_group`, `conflict_count`, and `can_import`. Keep the current response path unchanged when configurations are absent.
 
-- [ ] **Step 7: Add failing final-import duplicate validation tests**
+- [x] **Step 7: Add failing final-import duplicate validation tests**
 
 Submit two included rows with the same SKU and assert HTTP 400 with `供应商 SKU 在本次导入中重复：DUP-001`. Assert no new offer with that SKU exists. Then submit the same rows with one row `included=false` and assert one successful import whose result and any row error retain the submitted Sheet and row coordinates.
 
-- [ ] **Step 8: Run final-import tests and verify RED**
+- [x] **Step 8: Run final-import tests and verify RED**
 
 Run:
 
@@ -353,7 +353,7 @@ Run:
 
 Expected: the current endpoint strips source fields and silently Upserts the duplicate SKU, so assertions fail.
 
-- [ ] **Step 9: Implement authoritative submitted-row validation**
+- [x] **Step 9: Implement authoritative submitted-row validation**
 
 Change `_submitted_rows` to return rows containing `values`, `source_sheet`, `source_row`, and `included`. Reject invalid source types, remove excluded rows, require at least one included row, enforce the 10,000-row limit after filtering, and reject duplicate nonempty SKU values before creating or updating products/offers. During row processing, use the preserved Sheet/row coordinates in errors:
 
@@ -367,7 +367,7 @@ errors.append({
 
 Legacy `rows_json` objects without source fields remain accepted with `sheet=None` and sequential row numbers.
 
-- [ ] **Step 10: Run API and full backend tests**
+- [x] **Step 10: Run API and full backend tests**
 
 Run:
 
@@ -377,7 +377,7 @@ Run:
 
 Expected: all Python and Node tests pass.
 
-- [ ] **Step 11: Commit Task 2**
+- [x] **Step 11: Commit Task 2**
 
 ```bash
 git add app/api/routes/imports.py tests/test_api.py
@@ -402,7 +402,7 @@ git commit -m "feat: preview and validate multi-sheet imports"
 - Produces: pure functions `createWorkbookState`, `toggleSheet`, `updateRow`, `resolveRows`, `pageRows`, `canImport`
 - Preserves: existing CSV/PDF single-source UI behavior
 
-- [ ] **Step 1: Add failing frontend state tests**
+- [x] **Step 1: Add failing frontend state tests**
 
 Create `tests/test_import_workbook.js`, load `import-workbook.js` with `vm.runInNewContext`, and assert:
 
@@ -439,7 +439,7 @@ test("pagination retains off-page edits", () => {
 });
 ```
 
-- [ ] **Step 2: Register the new Node test and verify RED**
+- [x] **Step 2: Register the new Node test and verify RED**
 
 Update `frontend-test` to syntax-check `app/web/assets/import-workbook.js` and run both Node suites:
 
@@ -456,11 +456,11 @@ Run:
 
 Expected: frontend test fails because `import-workbook.js` does not exist.
 
-- [ ] **Step 3: Implement pure workbook state helpers**
+- [x] **Step 3: Implement pure workbook state helpers**
 
 Create `window.MatrixImportWorkbook` without reading the DOM. `createWorkbookState` selects only `active_sheet`, copies inspection data, and initializes each Sheet configuration. `resolveRows` recomputes conflict groups across all included rows. `pageRows` returns exactly the requested 50-row slice after current Sheet/conflict filters. `canImport` requires at least one included row, no duplicate included SKU, and required values on at least one included row.
 
-- [ ] **Step 4: Run frontend state tests and verify GREEN**
+- [x] **Step 4: Run frontend state tests and verify GREEN**
 
 Run:
 
@@ -470,7 +470,7 @@ Run:
 
 Expected: all Node tests pass; backend tests remain green.
 
-- [ ] **Step 5: Add workbook configuration markup and styles**
+- [x] **Step 5: Add workbook configuration markup and styles**
 
 Load `/assets/import-workbook.js` before `/assets/app.js`. Add hidden containers after the upload panel:
 
@@ -493,19 +493,19 @@ Load `/assets/import-workbook.js` before `/assets/app.js`. Add hidden containers
 
 Add preview controls for Sheet filter, conflict-only filter, previous/next page, and page status. Style selected Sheet chips, configuration cards, conflict rows, excluded rows, and responsive two-column mappings without changing unrelated workspace styles.
 
-- [ ] **Step 6: Wire Excel scanning and per-Sheet configuration**
+- [x] **Step 6: Wire Excel scanning and per-Sheet configuration**
 
 In `selectImportFile`, clear all earlier workbook and preview state. For `.xlsx` and `.xls`, call `/api/imports/product-offers/workbook/inspect`, render every Sheet with a checkbox, default to the returned active Sheet, and hide the old direct analyze button. CSV/PDF retain the old analyze button.
 
 Each selected Sheet card must render its own header-row input, column dropdowns keyed by column letter, and default inputs. Build `sheet_configs_json` from state rather than querying one shared mapping grid. Changing the file, Sheet selection, header row, mapping, or defaults invalidates the old merged preview.
 
-- [ ] **Step 7: Wire paginated preview and conflict resolution**
+- [x] **Step 7: Wire paginated preview and conflict resolution**
 
 Store every response row in `state.importWorkbook.rows`. Render only `pageRows(state, page)` and identify rows by their index in the full state. Row edits and include/exclude actions update the full state, call `resolveRows`, refresh conflict labels, and recompute the confirm-button state. `collectPreviewRows` must serialize all state rows, including off-page rows, rather than scrape `#import-preview-tbody`.
 
 Source labels use `Sheet1 · 第2行`. Duplicate rows use `row-conflict`; excluded rows use `row-excluded`. The confirm button remains disabled until every included SKU is unique.
 
-- [ ] **Step 8: Run syntax, frontend, and full tests**
+- [x] **Step 8: Run syntax, frontend, and full tests**
 
 Run:
 
@@ -515,7 +515,7 @@ Run:
 
 Expected: all Python tests and both Node test files pass.
 
-- [ ] **Step 9: Commit Task 3**
+- [x] **Step 9: Commit Task 3**
 
 ```bash
 git add app/web/assets/import-workbook.js app/web/assets/app.js app/web/assets/styles.css \
@@ -538,7 +538,7 @@ git commit -m "feat: add multi-sheet import workflow"
 - Consumes: complete backend and frontend flow from Tasks 1–3
 - Produces: operator instructions and dated validation evidence
 
-- [ ] **Step 1: Document the multi-Sheet workflow**
+- [x] **Step 1: Document the multi-Sheet workflow**
 
 Update README import instructions to say:
 
@@ -551,7 +551,7 @@ Update README import instructions to say:
 
 Add the current `Sheet1` example mapping C/E/N/O/P/R without committing or embedding source workbook data. Update project status from CSV-only wording to CSV/Excel/PDF and multi-Sheet preview.
 
-- [ ] **Step 2: Run the actual Trumpeter workbook acceptance check**
+- [x] **Step 2: Run the actual Trumpeter workbook acceptance check**
 
 Record the source hash without printing workbook contents:
 
@@ -571,7 +571,7 @@ Use the implemented service inside the application image to assert:
 
 Hash the source again and assert it is unchanged. Do not add `Trumpeter.xlsx` to Git.
 
-- [ ] **Step 3: Run complete automated verification**
+- [x] **Step 3: Run complete automated verification**
 
 Run:
 
@@ -584,7 +584,7 @@ git status --short
 
 Expected: both consecutive test runs pass against the same persistent test volume; the only permitted untracked business file is `Trumpeter.xlsx`; `.env` is not tracked.
 
-- [ ] **Step 4: Restart and verify the local service**
+- [x] **Step 4: Restart and verify the local service**
 
 Run:
 
@@ -596,11 +596,11 @@ curl --fail --silent http://127.0.0.1:6790/api/health
 
 Expected: health endpoint succeeds, application and PostgreSQL are healthy, and PostgreSQL continues to use internal port `6432`.
 
-- [ ] **Step 5: Record validation evidence**
+- [x] **Step 5: Record validation evidence**
 
 Update `docs/operations/validation.md` with the exact test totals, Node totals, workbook Sheet count, `Sheet1` normalized row count, source-hash preservation, service health, and PostgreSQL port result. Mark all completed checkboxes in this plan.
 
-- [ ] **Step 6: Commit Task 4**
+- [x] **Step 6: Commit Task 4**
 
 ```bash
 git add README.md docs/README.md docs/product/project-status.md \

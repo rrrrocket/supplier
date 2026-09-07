@@ -7,12 +7,12 @@
 
 ## 产品
 
-- [项目状态](product/project-status.md)
+- [项目状态](product/project-status.md)（含 CSV、Excel、PDF 与多 Sheet 导入范围）
 - [产品路线图](product/roadmap.md)
 
 ## 运维与验证
 
-- [验证报告](operations/validation.md)
+- [验证报告](operations/validation.md)（含真实工作簿、连续测试与服务健康证据）
 
 ## 系统集成
 
