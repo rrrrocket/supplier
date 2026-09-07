@@ -6,52 +6,64 @@
 
 - 公开供应商入驻申请
 - 平台管理员审核、驳回与组织开户
-- 审核通过后自动创建供应商组织、企业档案和管理员账号
+- 审核通过后自动创建供应商组织、企业档案和供应商账号
 - 供应商账号登录与组织数据隔离
 - 企业供应能力档案
 - 统一商品主数据（Product）
 - 独立供应报价（Supplier Offer）
 - 价格、MOQ、库存、交期与履约方式
-- CSV 批量导入、校验与 Upsert
+- CSV / XLSX / XLS / PDF 智能表格导入、字段匹配、预览校验与 Upsert
 - 库存快照
 - 关键操作事件审计
 - 自动生成 OpenAPI 文档
 
-## 1. 本地启动
+## 1. 一键启动
+
+本地开发与服务器使用相同的 PostgreSQL 容器化环境。预先安装 Docker Engine 和 Docker Compose 插件，进入项目目录后执行：
 
 ```bash
-cd supplier
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-dev.txt
-cp .env.example .env
-uvicorn app.main:app --reload --port 8000
+./start.sh
 ```
 
-在 macOS 上也可以双击项目根目录的 `start-macos.command`，脚本会创建虚拟环境、安装依赖并打开登录页。
+脚本会自动：
 
-打开：
+- 检查 Docker 与 Compose；
+- 创建 `.env` 并生成数据库密码、Session 密钥和管理员密码；
+- 构建应用镜像；
+- 启动 PostgreSQL 与 FastAPI；
+- 执行 Alembic 数据库迁移；
+- 等待应用健康检查通过。
 
-- 首页：`http://127.0.0.1:8000`
-- 入驻申请：`http://127.0.0.1:8000/apply`
-- 统一登录：`http://127.0.0.1:8000/login`
-- 供应商工作台：`http://127.0.0.1:8000/app`
-- 平台审核端：`http://127.0.0.1:8000/admin`
-- API 文档：`http://127.0.0.1:8000/api/docs`
+常用运维命令：
 
-本地演示账号：
-
-```text
-供应商管理员
-supplier@matrix-one.tech
-MatrixOne123!
-
-平台管理员
-admin@matrix-one.tech
-MatrixAdmin123!
+```bash
+./start.sh status
+./start.sh logs
+./start.sh restart
+./start.sh stop
 ```
 
-演示数据在首次启动时自动生成，并包含一条待审核申请。生产环境必须设置 `SEED_DEMO_DATA=false`，替换 `SESSION_SECRET`，并使用真实账号初始化流程。
+服务默认仅监听服务器的 `127.0.0.1:6790`，由 Nginx 反向代理。可在 `.env` 中修改 `APP_PORT`、`APP_URL`、`ALLOWED_HOSTS` 和 `BIND_ADDRESS`。
+PostgreSQL 在 Compose 内部统一监听 `6432`，生产与测试配置一致。
+
+访问地址：
+
+- 首页：`http://127.0.0.1:6790`
+- 入驻申请：`http://127.0.0.1:6790/apply`
+- 统一登录：`http://127.0.0.1:6790/login`
+- 供应商工作台：`http://127.0.0.1:6790/app`
+- 平台审核端：`http://127.0.0.1:6790/admin`
+- API 文档：`http://127.0.0.1:6790/api/docs`
+
+平台管理员账号固定配置在 `.env`：
+
+```dotenv
+ADMIN_EMAIL=admin@your-company.com
+ADMIN_PASSWORD=replace-with-a-strong-password
+ADMIN_NAME=平台管理员
+```
+
+应用启动时自动创建或同步该管理员；修改配置密码并重启后，登录密码会同步更新。`.env` 不会提交到 Git。供应商账号通过公开申请和平台审核流程创建。
 
 ## 2. 完整业务体验
 
@@ -69,10 +81,18 @@ MatrixAdmin123!
 
 1. 使用供应商账号登录；
 2. 完善企业与供应能力资料；
-3. 创建商品主数据或进入“批量导入”；
-4. 下载并填写标准 CSV 模板；
-5. 上传商品、供应商 SKU、报价、库存、MOQ 和交期；
-6. 查看商品、报价、库存快照与审计事件。
+3. 创建商品主数据或进入“智能表格导入”；
+4. 直接上传供应商原始 CSV、XLSX、XLS 或文本型 PDF 成本表；
+5. 可用语言说明表头行、成本列、SKU、统一类目、币种和默认值；
+6. 检查系统生成的字段映射与标准商品列表预览；
+7. 确认后导入商品、供应商 SKU、报价、库存、MOQ 和交期；
+8. 查看商品、报价、库存快照与审计事件。
+
+语言说明示例：`第 3 行是表头；产品编码作为供应商 SKU；含税单价作为采购价；全部商品类目为工业自动化；币种人民币；默认交期 5 天。`
+
+系统会优先根据说明匹配字段，再结合中英文常见表头自动识别。预览阶段不会写入数据，所有建议映射均可人工调整；目标列表支持编辑、新增和删除行，确认时严格按当前列表导入。
+
+PDF 会优先提取表格并合并跨页同结构数据。纯扫描图片 PDF 为避免误读价格，需先完成 OCR 后再上传。
 
 同一组织内，`供应商 SKU` 是供应报价的唯一更新键。再次导入同一 SKU 时会更新报价，而不是重复创建。
 
@@ -83,8 +103,7 @@ FastAPI
 ├─ API-first 业务接口
 ├─ Session 登录与角色权限
 ├─ SQLAlchemy 2 数据模型
-├─ SQLite 本地开发
-├─ PostgreSQL 生产配置
+├─ PostgreSQL 统一数据存储
 ├─ Alembic 数据库迁移
 └─ 无构建依赖的响应式 Web UI
 ```
@@ -97,14 +116,13 @@ FastAPI
 app/
 ├─ api/          路由、认证依赖、平台审核与 API 契约
 ├─ core/         配置与密码安全
-├─ db/           数据库会话和幂等演示数据
+├─ db/           数据库基础模型和会话管理
 ├─ models/       核心业务实体
 ├─ schemas/      Pydantic 输入输出模型
 ├─ services/     事件、评分和看板逻辑
 └─ web/          公开站、供应商门户与平台审核 UI
 migrations/      Alembic 迁移
-scripts/         开发与重置脚本
-deploy/          Nginx / systemd 示例
+deploy/          Nginx 示例
 tests/           API、权限、安全与审核闭环测试
 ```
 
@@ -118,38 +136,32 @@ tests/           API、权限、安全与审核闭环测试
 - **Event Log**：记录谁在什么时候对什么实体执行了什么操作。
 - **Organization ID**：所有供应商业务数据按组织隔离，客户端不能自行指定数据归属。
 
-详细说明见 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [DATA_DICTIONARY.md](DATA_DICTIONARY.md)。
+详细说明见 [文档索引](docs/README.md)、[系统架构](docs/architecture/overview.md) 和 [数据字典](docs/architecture/data-dictionary.md)。
 
 ## 6. 测试与静态检查
 
 ```bash
-pytest -q
-python3 -m compileall app
-node --check app/web/assets/common.js
-node --check app/web/assets/login.js
-node --check app/web/assets/apply.js
-node --check app/web/assets/app.js
-node --check app/web/assets/admin.js
+./start.sh test
 ```
+
+Python 测试在独立的 PostgreSQL 16 临时容器中执行，不连接业务数据库；同一命令也会完成前端脚本语法检查和登录状态测试。测试容器、网络和临时数据库会在结束后自动删除。
 
 ## 7. 数据库迁移
 
 ```bash
-alembic upgrade head
-alembic revision --autogenerate -m "describe change"
-alembic check
+docker compose exec app alembic current
+docker compose exec app alembic check
 ```
 
-## 8. Docker + PostgreSQL
+`./start.sh` 每次启动应用前都会自动执行 `alembic upgrade head`。
+
+## 8. PostgreSQL 运行环境
 
 ```bash
-cp .env.example .env
-export POSTGRES_PASSWORD='replace-me'
-export SESSION_SECRET='replace-with-a-long-random-secret'
-docker compose up -d --build
+./start.sh
 ```
 
-服务默认只映射到 `127.0.0.1:8000`，由 Nginx 反向代理到：
+服务默认只映射到 `127.0.0.1:6790`，由 Nginx 反向代理到：
 
 ```text
 supplier.matrix-one.tech
@@ -159,10 +171,10 @@ Nginx 示例见 `deploy/nginx-supplier.conf`。配置 DNS、HTTPS 证书、真�
 
 ## 9. 生产上线前必须完成
 
-- 关闭演示数据并建立安全的管理员初始化方式；
+- 创建并妥善保管首个平台管理员账号；
 - 接入邮件邀请、密码设置/重置和账号生命周期；
 - 接入营业执照、产品认证与对象存储；
 - 增加申请补充材料和多级审核能力；
 - 增加限流、防暴力登录、会话撤销与更完整安全审计；
 - 配置 HTTPS、数据库备份、错误监控、日志脱敏和审计保留周期；
-- 与现有 ERP 确定 Product、Offer、Inventory、Transaction 的主数据归属与同步协议。
+- 与外部业务系统确定 Product、Offer、Inventory、Transaction 的主数据归属与同步协议。

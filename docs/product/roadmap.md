@@ -5,7 +5,7 @@
 - [x] 供应商公开入驻申请
 - [x] 平台管理员登录与角色权限
 - [x] 申请审核、驳回和审核备注
-- [x] 审核通过后自动创建组织、供应商档案与管理员账号
+- [x] 审核通过后自动创建组织、供应商档案与供应商账号
 - [x] 供应商登录与组织隔离
 - [x] 企业供应能力档案
 - [x] Product 主数据
@@ -15,7 +15,7 @@
 - [x] Inventory Snapshot
 - [x] Event Log
 - [x] 响应式供应商工作台与平台审核端
-- [x] SQLite 本地运行与 PostgreSQL 部署配置
+- [x] PostgreSQL 开发、测试与部署统一配置
 - [x] OpenAPI 文档、权限测试与审核闭环测试
 
 ## v0.2 — 首批真实供应商试点
@@ -31,10 +31,10 @@
 - [ ] 供应商通知中心
 - [ ] 管理端供应商详情与人工停用
 
-## v0.3 — 接入现有 ERP
+## v0.3 — 通用系统接入
 
 - [ ] 统一全局 Product ID 与主数据归属
-- [ ] ERP 与 Supplier Network 的 Transactional Outbox / Webhook
+- [ ] 外部业务系统与 Supplier Network 的 Transactional Outbox / Webhook
 - [ ] 供应商报价进入采购候选池
 - [ ] 渠道商品与供应商 Offer 关联
 - [ ] 订单履约状态回传
@@ -57,7 +57,7 @@
 - [ ] 多供应商价格、MOQ、交期比较
 - [ ] Supplier Capability Score
 - [ ] ToC 市场机会与 ToB RFQ 匹配
-- [ ] Agent 建议、人工批准、ERP 执行和 Outcome 回流
+- [ ] Agent 建议、人工批准、外部业务系统执行和 Outcome 回流
 
 ## 首批真实试点验收指标
 
@@ -66,4 +66,4 @@
 - 库存和价格拥有明确更新时间；
 - 至少 2 家进入采购、联营或代运营试点；
 - 每次数据变更可追踪到 Actor 和 Event；
-- ERP 能消费 Offer 数据而不依赖人工二次整理。
+- 调用方能消费 Offer 数据而不依赖人工二次整理。

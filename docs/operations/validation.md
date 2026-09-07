@@ -7,8 +7,10 @@
 | Python 模块编译 | 通过 |
 | JavaScript 语法检查 | 通过 |
 | 5 个 HTML 页面重复 ID 与本地资源检查 | 通过 |
-| Pytest 自动化测试 | 11 项通过 |
-| 全新 SQLite 数据库执行 Alembic `upgrade head` | 通过 |
+| Pytest 自动化测试 | 27 项通过 |
+| 前端登录状态测试 | 11 项通过 |
+| 全新 PostgreSQL 16 数据库执行 Alembic `upgrade head` | 通过 |
+| PostgreSQL 历史供应商角色迁移 | 通过 |
 | Alembic 模型一致性 `check` | 无待生成迁移 |
 | FastAPI 真实启动 | 通过 |
 | `/`、`/apply`、`/login`、`/app`、`/admin`、`/api/docs` | 全部 HTTP 200 |
@@ -32,4 +34,4 @@
 - 真实 DNS、HTTPS 与云服务器部署；
 - 跨浏览器视觉回归测试；
 - PostgreSQL 高并发、压力和故障恢复测试；
-- 与现有 ERP 的线上联调。
+- 与外部业务系统的线上联调。

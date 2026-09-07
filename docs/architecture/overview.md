@@ -11,7 +11,7 @@ Supplier Network
    ↓
 Product / Offer / Inventory / Capability
    ↓
-ERP Execution OS + Data / AI
+业务执行系统 + Data / AI
    ↓
 ToC Marketplace + ToB Trade
    ↓
@@ -82,7 +82,7 @@ SQLAlchemy / PostgreSQL
 
 未来 AI Agent 只能通过受控 API 或 Tool Layer 操作业务，不允许直接修改核心数据库。
 
-## 4. 与现有 ERP 的边界
+## 4. 与外部业务系统的边界
 
 Supplier Network 保留：
 
@@ -93,7 +93,7 @@ Supplier Network 保留：
 - 资质与能力文件
 - 供应商协同和通知
 
-现有 ERP 继续成为：
+外部业务系统继续成为：
 
 - 商品全局主数据与渠道 Listing
 - 采购与补货
@@ -101,7 +101,7 @@ Supplier Network 保留：
 - 定价、利润、广告和履约执行
 - 真实交易事实库
 
-第一阶段 Supplier Network 暂时存 Product；正式整合前必须确定 Product 主键归属。长期推荐由 ERP/Commerce OS 生成全局 `product_id`，供应商门户通过 API 创建候选商品或关联既有 Product。
+第一阶段 Supplier Network 暂时存 Product；正式整合前必须确定 Product 主键归属。长期推荐由外部业务系统生成全局 `product_id`，供应商门户通过 API 创建候选商品或关联既有 Product。
 
 ## 5. 当前数据流
 
@@ -118,7 +118,7 @@ Supplier Network 保留：
        ↓
    创建 Supplier Profile
        ↓
-   创建 Supplier Admin + 临时密码
+   创建 Supplier Account + 临时密码
        ↓
    供应商登录并完善资料
 ```
@@ -138,7 +138,7 @@ Inventory Snapshot
   ↓
 Event Log
   ↓
-同步 ERP / Matching Engine
+外部系统同步 / Matching Engine
 ```
 
 ### 后续供应商评分
@@ -162,18 +162,18 @@ Event Log
 
 - FastAPI
 - SQLAlchemy 2
-- SQLite / PostgreSQL
+- PostgreSQL
 - Alembic
 - 服务端静态响应式 Web UI
 - Session Cookie
-- PLATFORM_ADMIN / SUPPLIER_ADMIN 角色边界
+- PLATFORM_ADMIN / SUPPLIER 角色边界
 
 ### 首批真实供应商试点后
 
 - PostgreSQL 作为唯一业务数据库
 - Redis 用于限流、缓存和短任务
 - S3 兼容对象存储用于证书、目录和图片
-- 异步队列处理大型导入与 ERP 同步
+- 异步队列处理大型导入与外部系统同步
 - 邮件邀请与密码生命周期
 - OpenTelemetry / Sentry 级监控
 

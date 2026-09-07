@@ -6,12 +6,12 @@
 - 四步供应商入驻申请
 - 平台管理员审核后台
 - 申请通过、驳回与审核备注
-- 通过后自动创建供应商组织、档案和管理员账号
+- 通过后自动创建供应商组织、档案和供应商账号
 - 供应商登录与企业资料维护
 - 商品主数据、独立供货报价、库存与交期
 - CSV 批量导入、校验、部分成功与 Upsert
 - 库存快照与操作事件
-- SQLite 开发、PostgreSQL / Docker / Nginx 生产配置
+- PostgreSQL / Docker / Nginx 统一运行配置
 
 ## 已验证
 
@@ -32,14 +32,14 @@
 - 域名 DNS、服务器和 HTTPS 实际部署
 - 邮件邀请与密码重置
 - 营业执照、认证和文件上传
-- 与现有 ERP 的真实同步
+- 与外部业务系统的真实同步
 - 采购、订单、结算和供应商绩效
 - AI 商品标准化、匹配与供应商评分
 
 ## 下一开发切片
 
-1. 确认现有 ERP 的 Product / Supplier / Cost 表结构；
-2. 定义 Supplier Network → ERP 的 Offer 与 Inventory 同步契约；
+1. 确认外部业务系统的 Product / Supplier / Cost 表结构；
+2. 定义 Supplier Network 与外部业务系统之间的 Offer 与 Inventory 同步契约；
 3. 实现 Transactional Outbox 和签名 Webhook；
 4. 用第一家真实供应商的 50–100 条商品数据做端到端验证；
 5. 根据真实导入错误完善类目模板和数据校验规则。

@@ -24,7 +24,7 @@
 | `reviewed_at` | 审核发生时间 |
 | `approved_organization_id` | 通过审核后创建的供应商组织 |
 
-审核通过同时创建 `Organization`、`SupplierProfile` 和 `SUPPLIER_ADMIN` 用户。临时密码只在创建响应中出现，不写入明文数据库。
+审核通过同时创建 `Organization`、`SupplierProfile` 和 `SUPPLIER` 用户。临时密码只在创建响应中出现，不写入明文数据库。
 
 ## Supplier Offer 必填语义
 
