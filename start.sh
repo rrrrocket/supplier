@@ -45,16 +45,76 @@ set_env_value() {
   mv "$temp_file" .env
 }
 
+compose_project_name() {
+  local configured_name="${COMPOSE_PROJECT_NAME:-}"
+  if [ -z "$configured_name" ] && [ -f .env ]; then
+    configured_name="$(env_value COMPOSE_PROJECT_NAME)"
+  fi
+  if [ -z "$configured_name" ]; then
+    configured_name="$(basename "$PROJECT_DIR")"
+  fi
+  printf '%s' "$configured_name" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9_-]+//g; s/^[^a-z0-9]+//'
+}
+
+business_volume_name() {
+  local project_name
+  project_name="$(compose_project_name)"
+  docker volume ls --quiet \
+    --filter "label=com.docker.compose.project=$project_name" \
+    --filter "label=com.docker.compose.volume=supplier_postgres" \
+    | head -n 1
+}
+
+business_volume_initialized() {
+  local volume_name
+  local inspect_status
+  volume_name="$(business_volume_name)"
+  if [ -z "$volume_name" ]; then
+    return 1
+  fi
+
+  if docker run --rm \
+    --volume "$volume_name:/var/lib/postgresql/data:ro" \
+    --network none \
+    --read-only \
+    --entrypoint sh \
+    postgres:16-alpine \
+    -c 'test -f /var/lib/postgresql/data/PG_VERSION || exit 10'; then
+    return 0
+  else
+    inspect_status=$?
+  fi
+  if [ "$inspect_status" -eq 10 ]; then
+    return 1
+  fi
+  echo "无法只读检查 PostgreSQL 业务卷初始化状态，启动已停止。"
+  exit 1
+}
+
 prepare_env() {
+  local postgres_password
+  local session_secret
+  local admin_email
+  local admin_password
+  postgres_password=""
+  if [ -f .env ]; then
+    postgres_password="$(env_value POSTGRES_PASSWORD)"
+  fi
+  if [ -z "$postgres_password" ] || [[ "$postgres_password" == replace-* ]] || [ "$postgres_password" = "change-me" ]; then
+    if business_volume_initialized; then
+      echo "检测到已初始化的 PostgreSQL 业务卷，但 POSTGRES_PASSWORD 缺失或仍为占位值。"
+      echo "请恢复原 .env 或从安全备份恢复原数据库密码后重试；为保护现有数据，启动已停止。"
+      exit 1
+    fi
+  fi
+
   if [ ! -f .env ]; then
     cp .env.example .env
     echo "已根据 .env.example 创建 .env"
   fi
 
-  local postgres_password
-  local session_secret
-  local admin_email
-  local admin_password
   postgres_password="$(env_value POSTGRES_PASSWORD)"
   session_secret="$(env_value SESSION_SECRET)"
   admin_email="$(env_value ADMIN_EMAIL)"

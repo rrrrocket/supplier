@@ -3,14 +3,17 @@ from __future__ import annotations
 import json
 from io import BytesIO
 from uuid import uuid4
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
+import xlwt
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
 
+import app.services.import_mapping as import_mapping
 from tests.conftest import SUPPLIER_EMAIL, SUPPLIER_PASSWORD
 
 
@@ -44,6 +47,42 @@ def multi_sheet_offer_workbook_content(second_sku: str = "DUP-001") -> bytes:
     content = BytesIO()
     workbook.save(content)
     return content.getvalue()
+
+
+def two_sheet_xls_content() -> bytes:
+    workbook = xlwt.Workbook()
+    first = workbook.add_sheet("Sheet1")
+    first.write(0, 0, "货号")
+    first.write(1, 0, "XLS-001")
+    second = workbook.add_sheet("Sheet2")
+    second.write(0, 0, "名称")
+    second.write(1, 0, "商品二")
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def xlsx_with_encrypted_entry_flag() -> bytes:
+    payload = bytearray(two_sheet_workbook_content())
+    for signature, flag_offset in ((b"PK\x03\x04", 6), (b"PK\x01\x02", 8)):
+        position = 0
+        while True:
+            position = payload.find(signature, position)
+            if position < 0:
+                break
+            offset = position + flag_offset
+            flags = int.from_bytes(payload[offset : offset + 2], "little") | 0x1
+            payload[offset : offset + 2] = flags.to_bytes(2, "little")
+            position += len(signature)
+    return bytes(payload)
+
+
+def highly_expanded_zip_content() -> bytes:
+    output = BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("xl/worksheets/sheet1.xml", b"x" * 700)
+        archive.writestr("xl/worksheets/sheet2.xml", b"x" * 700)
+    return output.getvalue()
 
 
 def multi_sheet_configs() -> list[dict[str, object]]:
@@ -122,6 +161,25 @@ def test_excel_inspection_returns_all_sheets_and_active_sheet(
     assert data["sheets"][0]["columns"][2]["key"] == "C"
 
 
+def test_xls_inspection_returns_real_biff_workbook_metadata(
+    authenticated_client: TestClient,
+) -> None:
+    response = authenticated_client.post(
+        "/api/imports/product-offers/workbook/inspect",
+        files={
+            "file": (
+                "supplier.xls",
+                BytesIO(two_sheet_xls_content()),
+                "application/vnd.ms-excel",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["active_sheet"] == "Sheet1"
+    assert [sheet["name"] for sheet in response.json()["sheets"]] == ["Sheet1", "Sheet2"]
+
+
 def test_excel_inspection_rejects_csv(authenticated_client: TestClient) -> None:
     response = authenticated_client.post(
         "/api/imports/product-offers/workbook/inspect",
@@ -178,6 +236,104 @@ def test_multi_sheet_preview_allows_distinct_skus(
     assert response.status_code == 200
     assert response.json()["can_import"] is True
     assert response.json()["conflict_count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("filename", "payload"),
+    [
+        ("broken.xlsx", b"not a zip workbook"),
+        ("broken.xls", b"not a biff workbook"),
+        ("mismatch.xlsx", two_sheet_xls_content()),
+        ("mismatch.xls", two_sheet_workbook_content()),
+        ("encrypted.xlsx", xlsx_with_encrypted_entry_flag()),
+    ],
+)
+def test_workbook_inspection_rejects_bad_or_mismatched_content_safely(
+    authenticated_client: TestClient,
+    filename: str,
+    payload: bytes,
+) -> None:
+    response = authenticated_client.post(
+        "/api/imports/product-offers/workbook/inspect",
+        files={"file": (filename, BytesIO(payload), "application/octet-stream")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "文件无法解析，请确认工作簿未损坏且未加密"
+    )
+
+
+@pytest.mark.parametrize(
+    ("filename", "payload"),
+    [
+        ("broken.xlsx", b"not a zip workbook"),
+        ("broken.xls", b"not a biff workbook"),
+        ("mismatch.xlsx", two_sheet_xls_content()),
+        ("mismatch.xls", two_sheet_workbook_content()),
+        ("encrypted.xlsx", xlsx_with_encrypted_entry_flag()),
+    ],
+)
+def test_configured_preview_rejects_bad_or_mismatched_content_safely(
+    authenticated_client: TestClient,
+    filename: str,
+    payload: bytes,
+) -> None:
+    response = authenticated_client.post(
+        "/api/imports/product-offers/preview",
+        data={"sheet_configs_json": json.dumps(multi_sheet_configs())},
+        files={"file": (filename, BytesIO(payload), "application/octet-stream")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "文件无法解析，请确认工作簿未损坏且未加密"
+    )
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "form_data"),
+    [
+        ("/api/imports/product-offers/workbook/inspect", {}),
+        (
+            "/api/imports/product-offers/preview",
+            {"sheet_configs_json": json.dumps([multi_sheet_configs()[0]])},
+        ),
+    ],
+)
+def test_excel_api_rejects_high_zip_expansion(
+    authenticated_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+    form_data: dict[str, str],
+) -> None:
+    monkeypatch.setattr(import_mapping, "MAX_WORKBOOK_UNCOMPRESSED_BYTES", 1_024)
+    monkeypatch.setattr(import_mapping, "MAX_WORKBOOK_SINGLE_ENTRY_BYTES", 1_024)
+    monkeypatch.setattr(import_mapping, "MAX_WORKBOOK_COMPRESSION_RATIO", 10_000)
+
+    response = authenticated_client.post(
+        endpoint,
+        data=form_data,
+        files={"file": ("expanded.xlsx", BytesIO(highly_expanded_zip_content()), XLSX_MIME)},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "工作簿解压后大小超过安全限制"
+
+
+def test_excel_api_rejects_overwide_sheet(authenticated_client: TestClient) -> None:
+    workbook = Workbook()
+    workbook.active.cell(row=1, column=import_mapping.MAX_WORKBOOK_COLUMNS + 1, value="超宽")
+    output = BytesIO()
+    workbook.save(output)
+
+    response = authenticated_client.post(
+        "/api/imports/product-offers/workbook/inspect",
+        files={"file": ("wide.xlsx", BytesIO(output.getvalue()), XLSX_MIME)},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "工作表行列规模超过安全限制：Sheet"
 
 
 @pytest.mark.parametrize(
@@ -260,8 +416,17 @@ def test_final_import_rejects_duplicate_included_skus_without_writing_offer(
 
     response = authenticated_client.post(
         "/api/imports/product-offers",
-        data={"rows_json": json.dumps(rows, ensure_ascii=False)},
-        files={"file": ("supplier.xlsx", BytesIO(b"source"), XLSX_MIME)},
+        data={
+            "rows_json": json.dumps(rows, ensure_ascii=False),
+            "sheet_configs_json": json.dumps(multi_sheet_configs(), ensure_ascii=False),
+        },
+        files={
+            "file": (
+                "supplier.xlsx",
+                BytesIO(multi_sheet_offer_workbook_content()),
+                XLSX_MIME,
+            )
+        },
     )
 
     assert response.status_code == 400
@@ -300,8 +465,17 @@ def test_final_import_excludes_duplicate_row_and_preserves_partial_error_source(
 
     response = authenticated_client.post(
         "/api/imports/product-offers",
-        data={"rows_json": json.dumps(rows, ensure_ascii=False)},
-        files={"file": ("supplier.xlsx", BytesIO(b"source"), XLSX_MIME)},
+        data={
+            "rows_json": json.dumps(rows, ensure_ascii=False),
+            "sheet_configs_json": json.dumps(multi_sheet_configs(), ensure_ascii=False),
+        },
+        files={
+            "file": (
+                "supplier.xlsx",
+                BytesIO(multi_sheet_offer_workbook_content()),
+                XLSX_MIME,
+            )
+        },
     )
 
     assert response.status_code == 201
@@ -340,12 +514,91 @@ def test_final_import_rejects_invalid_source_metadata(
 
     response = authenticated_client.post(
         "/api/imports/product-offers",
-        data={"rows_json": json.dumps([row], ensure_ascii=False)},
-        files={"file": ("supplier.xlsx", BytesIO(b"source"), XLSX_MIME)},
+        data={
+            "rows_json": json.dumps([row], ensure_ascii=False),
+            "sheet_configs_json": json.dumps(multi_sheet_configs(), ensure_ascii=False),
+        },
+        files={
+            "file": (
+                "supplier.xlsx",
+                BytesIO(multi_sheet_offer_workbook_content()),
+                XLSX_MIME,
+            )
+        },
     )
 
     assert response.status_code == 400
     assert response.json()["detail"] == detail
+
+
+def test_final_excel_import_requires_sheet_configs_for_nested_rows(
+    authenticated_client: TestClient,
+) -> None:
+    row = submitted_offer_row(
+        sku=f"NO-CONFIG-{uuid4().hex[:8]}",
+        name="缺配置商品",
+        source_sheet="Sheet1",
+        source_row=2,
+    )
+
+    response = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={"rows_json": json.dumps([row], ensure_ascii=False)},
+        files={"file": ("supplier.xlsx", BytesIO(multi_sheet_offer_workbook_content()), XLSX_MIME)},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Excel 多工作表导入缺少工作表配置"
+
+
+def test_final_excel_import_rejects_source_sheet_not_selected(
+    authenticated_client: TestClient,
+) -> None:
+    row = submitted_offer_row(
+        sku=f"UNSELECTED-{uuid4().hex[:8]}",
+        name="未选工作表商品",
+        source_sheet="Sheet2",
+        source_row=3,
+    )
+
+    response = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={
+            "rows_json": json.dumps([row], ensure_ascii=False),
+            "sheet_configs_json": json.dumps([multi_sheet_configs()[0]], ensure_ascii=False),
+        },
+        files={"file": ("supplier.xlsx", BytesIO(multi_sheet_offer_workbook_content()), XLSX_MIME)},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "目标列表第 1 行来源工作表未被选择：Sheet2"
+
+
+def test_final_excel_import_accepts_verified_selected_sheet_source(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    sku = f"VERIFIED-{suffix}"
+    row = submitted_offer_row(
+        sku=sku,
+        name=f"已验证商品-{suffix}",
+        source_sheet="Sheet1",
+        source_row=2,
+    )
+
+    response = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={
+            "rows_json": json.dumps([row], ensure_ascii=False),
+            "sheet_configs_json": json.dumps([multi_sheet_configs()[0]], ensure_ascii=False),
+        },
+        files={"file": ("supplier.xlsx", BytesIO(multi_sheet_offer_workbook_content()), XLSX_MIME)},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["success_rows"] == 1
+    offers = authenticated_client.get("/api/offers", params={"q": sku}).json()
+    assert offers[0]["supplier_sku"] == sku
 
 
 def test_dashboard_requires_login(client: TestClient) -> None:
@@ -638,3 +891,72 @@ def test_smart_import_uses_edited_target_rows(authenticated_client: TestClient) 
     ).json()
     assert len(offers) == 1
     assert offers[0]["product_name"] == f"手动新增商品-{suffix}"
+
+
+def _invalid_flat_rows(count: int, *, excluded_index: int | None = None) -> list[dict[str, object]]:
+    return [
+        {
+            "supplier_sku": str(index),
+            **({"included": False} if index == excluded_index else {}),
+        }
+        for index in range(count)
+    ]
+
+
+def test_final_import_accepts_exactly_ten_thousand_included_rows(
+    authenticated_client: TestClient,
+) -> None:
+    response = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={"rows_json": json.dumps(_invalid_flat_rows(10_000), ensure_ascii=False)},
+        files={"file": ("boundary.csv", BytesIO(b"source"), "text/csv")},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["total_rows"] == 10_000
+    assert response.json()["status"] == "FAILED"
+
+
+def test_final_import_rejects_ten_thousand_and_one_included_rows(
+    authenticated_client: TestClient,
+) -> None:
+    response = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={"rows_json": json.dumps(_invalid_flat_rows(10_001), ensure_ascii=False)},
+        files={"file": ("boundary.csv", BytesIO(b"source"), "text/csv")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "单次最多导入 10000 行"
+
+
+def test_final_import_excluded_row_does_not_count_toward_ten_thousand_limit(
+    authenticated_client: TestClient,
+) -> None:
+    response = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={
+            "rows_json": json.dumps(
+                _invalid_flat_rows(10_001, excluded_index=0),
+                ensure_ascii=False,
+            )
+        },
+        files={"file": ("boundary.csv", BytesIO(b"source"), "text/csv")},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["total_rows"] == 10_000
+
+
+def test_legacy_flat_rows_default_source_coordinates(
+    authenticated_client: TestClient,
+) -> None:
+    response = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={"rows_json": json.dumps(_invalid_flat_rows(1), ensure_ascii=False)},
+        files={"file": ("legacy.csv", BytesIO(b"source"), "text/csv")},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["errors"][0]["sheet"] is None
+    assert response.json()["errors"][0]["row"] == 1

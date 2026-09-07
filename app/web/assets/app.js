@@ -441,12 +441,17 @@ function resetImportInterface() {
 
 async function selectImportFile(file) {
   if (!file) return;
+  const workflowRevision = advanceImportWorkflow();
+  resetImportInterface();
+  state.importFile = null;
   if (!/\.(csv|tsv|txt|xlsx|xls|pdf)$/i.test(file.name)) {
+    document.querySelector("#selected-import-file").textContent = "支持 CSV、XLSX、XLS、PDF，单文件最大 10MB。";
+    document.querySelector("#csv-dropzone").classList.remove("has-file");
+    document.querySelector("#analyze-import").classList.remove("hidden");
+    document.querySelector("#analyze-import").disabled = true;
     Matrix.toast("文件格式错误", "支持 CSV、XLSX、XLS 和 PDF 格式。", "error");
     return;
   }
-  const workflowRevision = advanceImportWorkflow();
-  resetImportInterface();
   state.importFile = file;
   document.querySelector("#selected-import-file").textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KB`;
   document.querySelector("#csv-dropzone").classList.add("has-file");
@@ -611,7 +616,12 @@ function importFormData(includeOptions = false, includeRows = false) {
     body.append("mapping_json", JSON.stringify(mapping));
     body.append("defaults_json", JSON.stringify(defaults));
   }
-  if (includeRows) body.append("rows_json", JSON.stringify(collectPreviewRows()));
+  if (includeRows) {
+    body.append("rows_json", JSON.stringify(collectPreviewRows()));
+    if (state.importWorkbook?.inspection) {
+      body.append("sheet_configs_json", JSON.stringify(selectedSheetConfigs()));
+    }
+  }
   return body;
 }
 

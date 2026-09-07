@@ -271,7 +271,12 @@ def _duplicate_skus(rows: list[dict[str, str]]) -> set[str]:
     return {supplier_sku for supplier_sku, count in counts.items() if count > 1}
 
 
-def _submitted_rows(rows_json: str) -> list[SubmittedRow] | None:
+def _submitted_rows(
+    rows_json: str,
+    *,
+    allowed_source_sheets: set[str] | None = None,
+    require_sheet_configs: bool = False,
+) -> list[SubmittedRow] | None:
     if not rows_json:
         return None
     try:
@@ -286,8 +291,17 @@ def _submitted_rows(rows_json: str) -> list[SubmittedRow] | None:
     rows: list[SubmittedRow] = []
     for index, item in enumerate(data, start=1):
         if not isinstance(item, dict):
-            raise HTTPException(status_code=400, detail=f"目标列表第 {index} 行格式不正确")
+            raise HTTPException(
+                status_code=400,
+                detail=f"目标列表第 {index} 行格式不正确",
+            )
 
+        nested = "values" in item
+        if nested and require_sheet_configs:
+            raise HTTPException(
+                status_code=400,
+                detail="Excel 多工作表导入缺少工作表配置",
+            )
         source_sheet = item.get("source_sheet")
         if source_sheet is not None and not isinstance(source_sheet, str):
             raise HTTPException(
@@ -318,6 +332,18 @@ def _submitted_rows(rows_json: str) -> list[SubmittedRow] | None:
             )
         if not included:
             continue
+        if (
+            nested
+            and allowed_source_sheets is not None
+            and source_sheet not in allowed_source_sheets
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"目标列表第 {index} 行来源工作表未被选择："
+                    f"{source_sheet or '空'}"
+                ),
+            )
         rows.append(
             SubmittedRow(
                 values={
@@ -488,6 +514,7 @@ async def import_product_offers(
     mapping_json: str = Form(default=""),
     defaults_json: str = Form(default=""),
     rows_json: str = Form(default=""),
+    sheet_configs_json: str = Form(default=""),
 ) -> dict[str, Any]:
     filename, raw = await _read_upload(file)
     job = ImportJob(
@@ -500,7 +527,24 @@ async def import_product_offers(
     db.flush()
 
     try:
-        rows = _submitted_rows(rows_json)
+        extension = filename.lower().rsplit(".", 1)[-1]
+        allowed_source_sheets: set[str] | None = None
+        if sheet_configs_json:
+            configs = _sheet_configs(sheet_configs_json)
+            if extension not in {"xlsx", "xls"}:
+                raise HTTPException(
+                    status_code=400,
+                    detail="工作表配置仅支持 XLSX 和 XLS 格式",
+                )
+            parse_excel_sheets(raw, filename, configs)
+            allowed_source_sheets = {config.sheet_name for config in configs}
+        rows = _submitted_rows(
+            rows_json,
+            allowed_source_sheets=allowed_source_sheets,
+            require_sheet_configs=(
+                extension in {"xlsx", "xls"} and not sheet_configs_json
+            ),
+        )
         if rows is None:
             table = parse_table(raw, filename, description)
             mapping = _effective_mapping(table.headers, description, mapping_json)

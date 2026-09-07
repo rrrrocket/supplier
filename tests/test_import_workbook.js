@@ -452,3 +452,74 @@ test("editing the last duplicate removes rows from conflict-only view immediatel
   assert.equal(app.evaluate("state.importWorkbook.rows.every((row) => !row.conflict_group)"), true);
   assert.equal(app.element("#import-preview-tbody").innerHTML, "");
 });
+
+
+test("final import posts all 120 state rows including an off-page edit and sheet configs", async () => {
+  let submittedBody;
+  const app = loadImportApp((url, options = {}) => {
+    if (url === "/api/imports/product-offers") {
+      submittedBody = options.body;
+      return Promise.resolve({ success_rows: 120, error_rows: 0 });
+    }
+    if (["/api/imports", "/api/products", "/api/offers/brands", "/api/offers"].includes(url)) {
+      return Promise.resolve([]);
+    }
+    throw new Error(`Unexpected API request: ${url}`);
+  });
+  app.context.file = { name: "all-rows.xlsx", size: 100 };
+  app.context.inspection = inspection("all-rows.xlsx");
+  app.context.rows = Array.from({ length: 120 }, (_, index) => ({
+    source_sheet: "Sheet1",
+    source_row: index + 2,
+    included: true,
+    conflict_group: null,
+    values: {
+      product_name: `商品-${index}`,
+      category: "模型",
+      supplier_sku: `SKU-${index}`,
+      price: "10",
+    },
+    errors: [],
+  }));
+  app.evaluate(`
+    state.importFile = file;
+    state.importWorkbook = ImportWorkbook.createWorkbookState(inspection);
+    state.importWorkbook.rows = rows;
+    state.importPreview = { defaults: {} };
+    ImportWorkbook.updateRow(state.importWorkbook, 75, "price", "88");
+  `);
+
+  await app.evaluate("confirmSmartImport()");
+
+  const entries = new Map(submittedBody.entries);
+  const submittedRows = JSON.parse(entries.get("rows_json"));
+  const configs = JSON.parse(entries.get("sheet_configs_json"));
+  assert.equal(submittedRows.length, 120);
+  assert.equal(submittedRows[75].price, undefined);
+  assert.equal(submittedRows[75].values.price, "88");
+  assert.equal(configs.length, 1);
+  assert.equal(configs[0].sheet_name, "Sheet1");
+});
+
+
+test("an invalid file B immediately invalidates a pending scan for file A", async () => {
+  const inspectA = deferred();
+  const app = loadImportApp((url) => {
+    if (url.endsWith("/inspect")) return inspectA.promise;
+    throw new Error(`Unexpected API request: ${url}`);
+  });
+  app.context.fileA = { name: "A.xlsx", size: 100 };
+  app.context.invalidB = { name: "B.exe", size: 100 };
+  app.context.inspectionA = inspection("A.xlsx");
+
+  const pendingScan = app.evaluate("selectImportFile(fileA)");
+  await app.evaluate("selectImportFile(invalidB)");
+  inspectA.resolve(app.context.inspectionA);
+  await pendingScan;
+
+  assert.equal(app.evaluate("state.importFile"), null);
+  assert.equal(app.evaluate("state.importWorkbook"), null);
+  assert.equal(app.element("#import-workbook-config").classList.contains("hidden"), true);
+  assert.equal(app.toasts.length, 1);
+  assert.equal(app.toasts[0][0], "文件格式错误");
+});

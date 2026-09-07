@@ -5,14 +5,31 @@ import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from io import BytesIO, StringIO
+from itertools import chain, islice
 from pathlib import Path
-from typing import Any
-from zipfile import ZipFile
+from typing import Any, Iterable
+from xml.etree.ElementTree import ParseError
+from zipfile import BadZipFile, LargeZipFile, ZipFile
 
 from openpyxl.utils import column_index_from_string, get_column_letter
+from openpyxl.utils.exceptions import InvalidFileException
 
 
 MAX_IMPORT_ROWS = 10_000
+MAX_WORKBOOK_ZIP_ENTRIES = 2_048
+MAX_WORKBOOK_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
+MAX_WORKBOOK_SINGLE_ENTRY_BYTES = 128 * 1024 * 1024
+MAX_WORKBOOK_COMPRESSION_RATIO = 1_000
+MAX_WORKBOOK_SHEETS = 100
+MAX_WORKBOOK_ROWS = 100_000
+MAX_WORKBOOK_COLUMNS = 1_024
+MAX_WORKBOOK_CELLS = 5_000_000
+WORKBOOK_PARSE_ERROR = "文件无法解析，请确认工作簿未损坏且未加密"
+
+
+class WorkbookFileError(ValueError):
+    """Expected malformed or encrypted workbook input."""
+
 
 FIELD_DEFINITIONS: dict[str, dict[str, Any]] = {
     "product_name": {
@@ -326,33 +343,99 @@ def _preferred_sheet_name(sheet_names: list[str], description: str) -> str | Non
     return None
 
 
+def _guard_xlsx_archive(raw: bytes) -> None:
+    try:
+        with ZipFile(BytesIO(raw)) as archive:
+            entries = archive.infolist()
+            if len(entries) > MAX_WORKBOOK_ZIP_ENTRIES:
+                raise ValueError("工作簿压缩条目数量超过安全限制")
+            total_size = 0
+            for entry in entries:
+                if entry.flag_bits & 0x1:
+                    raise WorkbookFileError(WORKBOOK_PARSE_ERROR)
+                if entry.file_size > MAX_WORKBOOK_SINGLE_ENTRY_BYTES:
+                    raise ValueError("工作簿单个解压条目超过安全限制")
+                total_size += entry.file_size
+                if total_size > MAX_WORKBOOK_UNCOMPRESSED_BYTES:
+                    raise ValueError("工作簿解压后大小超过安全限制")
+                if entry.file_size and (
+                    entry.compress_size == 0
+                    or entry.file_size / entry.compress_size
+                    > MAX_WORKBOOK_COMPRESSION_RATIO
+                ):
+                    raise ValueError("工作簿压缩比超过安全限制")
+    except (BadZipFile, LargeZipFile, OSError) as exc:
+        raise WorkbookFileError(WORKBOOK_PARSE_ERROR) from exc
+
+
+def _validate_workbook_dimensions(
+    dimensions: Iterable[tuple[str, int, int]],
+) -> None:
+    items = list(dimensions)
+    if len(items) > MAX_WORKBOOK_SHEETS:
+        raise ValueError("工作表数量超过安全限制")
+    total_cells = 0
+    for name, row_count, column_count in items:
+        if row_count > MAX_WORKBOOK_ROWS or column_count > MAX_WORKBOOK_COLUMNS:
+            raise ValueError(f"工作表行列规模超过安全限制：{name}")
+        total_cells += row_count * column_count
+        if total_cells > MAX_WORKBOOK_CELLS:
+            raise ValueError("工作簿单元格规模超过安全限制")
+
+
 def _load_xlsx_workbook(raw: bytes, *, data_only: bool):
     from openpyxl import load_workbook
 
+    _guard_xlsx_archive(raw)
     try:
         return load_workbook(BytesIO(raw), read_only=True, data_only=data_only)
     except TypeError as error:
         if "Fill" not in str(error):
             raise
 
-        with ZipFile(BytesIO(raw)) as incoming:
-            styles = incoming.read("xl/styles.xml")
-            if re.search(rb"<fill\s*/>", styles) is None:
-                raise
+        try:
+            with ZipFile(BytesIO(raw)) as incoming:
+                styles = incoming.read("xl/styles.xml")
+                if re.search(rb"<fill\s*/>", styles) is None:
+                    raise WorkbookFileError(WORKBOOK_PARSE_ERROR) from error
 
-            output = BytesIO()
-            with ZipFile(output, "w") as outgoing:
-                for info in incoming.infolist():
-                    payload = incoming.read(info.filename)
-                    if info.filename == "xl/styles.xml":
-                        payload = re.sub(
-                            rb"<fill\s*/>",
-                            b'<fill><patternFill patternType="none"/></fill>',
-                            payload,
-                        )
-                    outgoing.writestr(info, payload)
+                output = BytesIO()
+                with ZipFile(output, "w") as outgoing:
+                    for info in incoming.infolist():
+                        payload = incoming.read(info.filename)
+                        if info.filename == "xl/styles.xml":
+                            payload = re.sub(
+                                rb"<fill\s*/>",
+                                b'<fill><patternFill patternType="none"/></fill>',
+                                payload,
+                            )
+                        outgoing.writestr(info, payload)
 
-        return load_workbook(BytesIO(output.getvalue()), read_only=True, data_only=data_only)
+            return load_workbook(
+                BytesIO(output.getvalue()),
+                read_only=True,
+                data_only=data_only,
+            )
+        except (BadZipFile, LargeZipFile, KeyError, OSError, ParseError) as exc:
+            raise WorkbookFileError(WORKBOOK_PARSE_ERROR) from exc
+    except (
+        BadZipFile,
+        LargeZipFile,
+        InvalidFileException,
+        KeyError,
+        OSError,
+        ParseError,
+    ) as exc:
+        raise WorkbookFileError(WORKBOOK_PARSE_ERROR) from exc
+
+
+def _load_xls_workbook(raw: bytes):
+    import xlrd
+
+    try:
+        return xlrd.open_workbook(file_contents=raw)
+    except (xlrd.biffh.XLRDError, EOFError, OSError) as exc:
+        raise WorkbookFileError(WORKBOOK_PARSE_ERROR) from exc
 
 
 def _suggested_column_mapping(columns: list[WorkbookColumn]) -> dict[str, str]:
@@ -392,13 +475,14 @@ def _inspection_header_score(row: list[Any]) -> float:
 
 
 def _inspect_workbook_sheet(
-    matrix: list[list[Any]],
+    rows: Iterable[Iterable[Any]],
     *,
     name: str,
     index: int,
 ) -> WorkbookSheet:
-    column_count = max((len(row) for row in matrix), default=0)
-    candidates = matrix[: min(20, len(matrix))]
+    iterator = iter(rows)
+    candidates = [list(row) for row in islice(iterator, 20)]
+    column_count = max((len(row) for row in candidates), default=0)
     header_index = (
         max(
             range(len(candidates)),
@@ -407,39 +491,49 @@ def _inspect_workbook_sheet(
         if candidates
         else 0
     )
-    header_values = matrix[header_index] if matrix else []
+    header_values = candidates[header_index] if candidates else []
+    estimated_rows = 0
+    sample_values: list[list[Any]] = []
+    for row in chain(candidates[header_index + 1 :], iterator):
+        row = list(row)
+        column_count = max(column_count, len(row))
+        if any(_cell_text(value) for value in row):
+            estimated_rows += 1
+            if len(sample_values) < 5:
+                sample_values.append(row)
+
     headers = [
         _cell_text(header_values[column_index])
         if column_index < len(header_values)
         else ""
         for column_index in range(column_count)
     ]
-    columns = []
-    for column_index, header in enumerate(headers):
-        key = get_column_letter(column_index + 1)
-        label = f"{key}列 · {header}" if header else f"{key}列（无表头）"
-        columns.append(WorkbookColumn(key=key, header=header, label=label))
-
-    data_rows: list[tuple[int, list[Any]]] = []
-    for row_index, row in enumerate(matrix[header_index + 1 :], start=header_index + 2):
-        if any(_cell_text(value) for value in row):
-            data_rows.append((row_index, row))
-
-    sample_rows = []
-    for _, row in data_rows[:5]:
-        sample_rows.append(
-            {
-                get_column_letter(column_index + 1): _cell_text(
-                    row[column_index] if column_index < len(row) else None
-                )
-                for column_index in range(column_count)
-            }
+    columns = [
+        WorkbookColumn(
+            key=get_column_letter(column_index + 1),
+            header=header,
+            label=(
+                f"{get_column_letter(column_index + 1)}列 · {header}"
+                if header
+                else f"{get_column_letter(column_index + 1)}列（无表头）"
+            ),
         )
+        for column_index, header in enumerate(headers)
+    ]
+    sample_rows = [
+        {
+            get_column_letter(column_index + 1): _cell_text(
+                row[column_index] if column_index < len(row) else None
+            )
+            for column_index in range(column_count)
+        }
+        for row in sample_values
+    ]
 
     return WorkbookSheet(
         name=name,
         index=index,
-        estimated_rows=len(data_rows),
+        estimated_rows=estimated_rows,
         column_count=column_count,
         suggested_header_row=header_index + 1,
         columns=columns,
@@ -450,41 +544,59 @@ def _inspect_workbook_sheet(
 
 def inspect_excel_workbook(raw: bytes, filename: str) -> WorkbookInspection:
     extension = Path(filename).suffix.lower()
-    if extension == ".xlsx":
-        workbook = _load_xlsx_workbook(raw, data_only=True)
-        active_sheet = workbook.active.title
-        sheets = [
-            _inspect_workbook_sheet(
-                [list(row) for row in sheet.iter_rows(values_only=True)],
-                name=sheet.title,
-                index=index,
+    try:
+        if extension == ".xlsx":
+            workbook = _load_xlsx_workbook(raw, data_only=True)
+            _validate_workbook_dimensions(
+                (sheet.title, sheet.max_row, sheet.max_column)
+                for sheet in workbook.worksheets
             )
-            for index, sheet in enumerate(workbook.worksheets)
-        ]
-    elif extension == ".xls":
-        import xlrd
-
-        workbook = xlrd.open_workbook(file_contents=raw)
-        workbook_sheets = workbook.sheets()
-        active_index = next(
-            (
-                index
+            active_sheet = workbook.active.title
+            sheets = [
+                _inspect_workbook_sheet(
+                    sheet.iter_rows(values_only=True),
+                    name=sheet.title,
+                    index=index,
+                )
+                for index, sheet in enumerate(workbook.worksheets)
+            ]
+        elif extension == ".xls":
+            workbook = _load_xls_workbook(raw)
+            workbook_sheets = workbook.sheets()
+            _validate_workbook_dimensions(
+                (sheet.name, sheet.nrows, sheet.ncols) for sheet in workbook_sheets
+            )
+            active_index = next(
+                (
+                    index
+                    for index, sheet in enumerate(workbook_sheets)
+                    if sheet.sheet_visible
+                ),
+                0,
+            )
+            active_sheet = workbook_sheets[active_index].name
+            sheets = [
+                _inspect_workbook_sheet(
+                    (
+                        sheet.row_values(row_index)
+                        for row_index in range(sheet.nrows)
+                    ),
+                    name=sheet.name,
+                    index=index,
+                )
                 for index, sheet in enumerate(workbook_sheets)
-                if sheet.sheet_visible
-            ),
-            0,
-        )
-        active_sheet = workbook_sheets[active_index].name
-        sheets = [
-            _inspect_workbook_sheet(
-                [sheet.row_values(row_index) for row_index in range(sheet.nrows)],
-                name=sheet.name,
-                index=index,
-            )
-            for index, sheet in enumerate(workbook_sheets)
-        ]
-    else:
-        raise ValueError("仅支持 XLSX 和 XLS 工作簿")
+            ]
+        else:
+            raise ValueError("仅支持 XLSX 和 XLS 工作簿")
+    except (
+        BadZipFile,
+        LargeZipFile,
+        InvalidFileException,
+        KeyError,
+        OSError,
+        ParseError,
+    ) as exc:
+        raise WorkbookFileError(WORKBOOK_PARSE_ERROR) from exc
 
     return WorkbookInspection(
         file_name=filename,
@@ -548,7 +660,7 @@ def _sourced_values(
     return values
 
 
-def parse_excel_sheets(
+def _parse_excel_sheets(
     raw: bytes,
     filename: str,
     configs: list[SheetImportConfig],
@@ -557,16 +669,21 @@ def parse_excel_sheets(
     if extension == ".xlsx":
         workbook = _load_xlsx_workbook(raw, data_only=True)
         sheet_names = workbook.sheetnames
+        _validate_workbook_dimensions(
+            (sheet.title, sheet.max_row, sheet.max_column)
+            for sheet in workbook.worksheets
+        )
         sheet_dimensions = {
             name: (workbook[name].max_row, workbook[name].max_column)
             for name in {config.sheet_name for config in configs}
             if name in sheet_names
         }
     elif extension == ".xls":
-        import xlrd
-
-        workbook = xlrd.open_workbook(file_contents=raw)
+        workbook = _load_xls_workbook(raw)
         sheet_names = workbook.sheet_names()
+        _validate_workbook_dimensions(
+            (sheet.name, sheet.nrows, sheet.ncols) for sheet in workbook.sheets()
+        )
         sheet_dimensions = {
             name: (
                 workbook.sheet_by_name(name).nrows,
@@ -617,8 +734,30 @@ def parse_excel_sheets(
     return sourced_rows
 
 
+def parse_excel_sheets(
+    raw: bytes,
+    filename: str,
+    configs: list[SheetImportConfig],
+) -> list[SourcedRow]:
+    try:
+        return _parse_excel_sheets(raw, filename, configs)
+    except (
+        BadZipFile,
+        LargeZipFile,
+        InvalidFileException,
+        KeyError,
+        OSError,
+        ParseError,
+    ) as exc:
+        raise WorkbookFileError(WORKBOOK_PARSE_ERROR) from exc
+
+
 def _read_xlsx(raw: bytes, description: str) -> ParsedTable:
     workbook = _load_xlsx_workbook(raw, data_only=True)
+    _validate_workbook_dimensions(
+        (sheet.title, sheet.max_row, sheet.max_column)
+        for sheet in workbook.worksheets
+    )
     preferred = _preferred_sheet_name(workbook.sheetnames, description)
     sheets = [workbook[preferred]] if preferred else list(workbook.worksheets)
     candidates: list[tuple[float, ParsedTable]] = []
@@ -636,9 +775,10 @@ def _read_xlsx(raw: bytes, description: str) -> ParsedTable:
 
 
 def _read_xls(raw: bytes, description: str) -> ParsedTable:
-    import xlrd
-
-    workbook = xlrd.open_workbook(file_contents=raw)
+    workbook = _load_xls_workbook(raw)
+    _validate_workbook_dimensions(
+        (sheet.name, sheet.nrows, sheet.ncols) for sheet in workbook.sheets()
+    )
     sheet_names = workbook.sheet_names()
     preferred = _preferred_sheet_name(sheet_names, description)
     sheets = [workbook.sheet_by_name(preferred)] if preferred else workbook.sheets()

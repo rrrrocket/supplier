@@ -1,11 +1,12 @@
 from hashlib import sha256
 from io import BytesIO
-from zipfile import ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 import xlwt
 from openpyxl import Workbook
 
+import app.services.import_mapping as import_mapping
 from app.services.import_mapping import (
     MAX_IMPORT_ROWS,
     SheetImportConfig,
@@ -257,3 +258,67 @@ def test_parse_excel_sheets_enforces_combined_row_limit():
                 SheetImportConfig("Data2", 1, {"product_name": "A"}, {}),
             ],
         )
+
+
+def test_xlsx_zip_expansion_is_rejected_before_workbook_parsing(monkeypatch):
+    monkeypatch.setattr(import_mapping, "MAX_WORKBOOK_UNCOMPRESSED_BYTES", 1_024)
+    monkeypatch.setattr(import_mapping, "MAX_WORKBOOK_SINGLE_ENTRY_BYTES", 1_024)
+    monkeypatch.setattr(import_mapping, "MAX_WORKBOOK_COMPRESSION_RATIO", 10_000)
+    output = BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("xl/worksheets/sheet1.xml", b"x" * 700)
+        archive.writestr("xl/worksheets/sheet2.xml", b"x" * 700)
+
+    with pytest.raises(ValueError, match="^工作簿解压后大小超过安全限制$"):
+        inspect_excel_workbook(output.getvalue(), "expanded.xlsx")
+
+
+def test_xlsx_sheet_and_dimension_limits_are_enforced(monkeypatch):
+    monkeypatch.setattr(import_mapping, "MAX_WORKBOOK_SHEETS", 1)
+    with pytest.raises(ValueError, match="^工作表数量超过安全限制$"):
+        inspect_excel_workbook(workbook_bytes_with_empty_fill(), "many-sheets.xlsx")
+
+    monkeypatch.setattr(import_mapping, "MAX_WORKBOOK_SHEETS", 10)
+    monkeypatch.setattr(import_mapping, "MAX_WORKBOOK_COLUMNS", 3)
+    workbook = Workbook()
+    workbook.active.cell(row=1, column=4, value="超宽")
+    output = BytesIO()
+    workbook.save(output)
+    with pytest.raises(ValueError, match="^工作表行列规模超过安全限制：Sheet$"):
+        inspect_excel_workbook(output.getvalue(), "wide.xlsx")
+
+
+def test_xls_dimension_limits_are_enforced(monkeypatch):
+    monkeypatch.setattr(import_mapping, "MAX_WORKBOOK_ROWS", 2)
+
+    with pytest.raises(ValueError, match="^工作表行列规模超过安全限制：报价$"):
+        inspect_excel_workbook(
+            workbook_bytes_xls(active_second_sheet=False),
+            "tall.xls",
+        )
+
+
+def test_workbook_inspection_consumes_rows_as_a_single_pass_stream():
+    iterations = 0
+
+    def rows():
+        nonlocal iterations
+        for row_index in range(100):
+            iterations += 1
+            yield ["名称"] if row_index == 0 else [f"商品-{row_index}"]
+
+    sheet = import_mapping._inspect_workbook_sheet(rows(), name="流式", index=0)
+
+    assert iterations == 100
+    assert sheet.estimated_rows == 99
+    assert len(sheet.sample_rows) == 5
+
+
+def test_workbook_inspection_does_not_hide_programming_errors(monkeypatch):
+    def fail_unexpectedly(*_args, **_kwargs):
+        raise RuntimeError("implementation defect")
+
+    monkeypatch.setattr(import_mapping, "_load_xlsx_workbook", fail_unexpectedly)
+
+    with pytest.raises(RuntimeError, match="^implementation defect$"):
+        inspect_excel_workbook(b"source", "supplier.xlsx")
