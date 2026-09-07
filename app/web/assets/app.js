@@ -10,6 +10,7 @@ const state = {
   importFile: null,
   importPreview: null,
   importWorkbook: null,
+  importWorkflowRevision: 0,
 };
 
 const ImportWorkbook = window.MatrixImportWorkbook;
@@ -398,13 +399,26 @@ function isExcelImport(file) {
   return /\.xlsx?$/i.test(file?.name || "");
 }
 
+function advanceImportWorkflow() {
+  state.importWorkflowRevision += 1;
+  return state.importWorkflowRevision;
+}
+
+function isCurrentImportWorkflow(revision) {
+  return state.importWorkflowRevision === revision;
+}
+
 function invalidateWorkbookPreview() {
+  advanceImportWorkflow();
   state.importPreview = null;
   if (state.importWorkbook) {
     state.importWorkbook.rows = [];
     state.importWorkbook.page = 1;
   }
   document.querySelector("#import-preview").classList.add("hidden");
+  const button = document.querySelector("#preview-selected-sheets");
+  button.disabled = !state.importWorkbook?.selectedSheets.length;
+  button.textContent = "生成合并预览";
 }
 
 function resetImportInterface() {
@@ -417,6 +431,12 @@ function resetImportInterface() {
   document.querySelector("#import-mapping-grid").innerHTML = "";
   document.querySelector("#import-sheet-filter").innerHTML = '<option value="">全部工作表</option>';
   document.querySelector("#import-conflict-only").checked = false;
+  document.querySelector("#preview-selected-sheets").textContent = "生成合并预览";
+  document.querySelector("#refresh-import-preview").disabled = false;
+  document.querySelector("#refresh-import-preview").textContent = "更新预览";
+  document.querySelector("#confirm-import").disabled = true;
+  document.querySelector("#confirm-import").textContent = "确认导入";
+  document.querySelector("#analyze-import").textContent = "智能识别并预览";
 }
 
 async function selectImportFile(file) {
@@ -425,6 +445,7 @@ async function selectImportFile(file) {
     Matrix.toast("文件格式错误", "支持 CSV、XLSX、XLS 和 PDF 格式。", "error");
     return;
   }
+  const workflowRevision = advanceImportWorkflow();
   resetImportInterface();
   state.importFile = file;
   document.querySelector("#selected-import-file").textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KB`;
@@ -443,13 +464,13 @@ async function selectImportFile(file) {
       method: "POST",
       body,
     });
-    if (state.importFile !== file) return;
+    if (!isCurrentImportWorkflow(workflowRevision) || state.importFile !== file) return;
     state.importWorkbook = ImportWorkbook.createWorkbookState(inspection);
     renderWorkbookConfiguration();
     document.querySelector("#import-workbook-config").classList.remove("hidden");
     document.querySelector("#selected-import-file").textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KB`;
   } catch (error) {
-    if (state.importFile === file) {
+    if (isCurrentImportWorkflow(workflowRevision) && state.importFile === file) {
       Matrix.toast("工作簿扫描失败", error.message, "error");
       document.querySelector("#selected-import-file").textContent = `${file.name} · 扫描失败，请重新选择文件`;
     }
@@ -536,6 +557,7 @@ function selectedSheetConfigs() {
 async function previewSelectedSheets() {
   const workbook = state.importWorkbook;
   if (!state.importFile || !workbook?.selectedSheets.length) return;
+  const workflowRevision = advanceImportWorkflow();
   const button = document.querySelector("#preview-selected-sheets");
   button.disabled = true;
   button.textContent = "正在合并…";
@@ -545,13 +567,17 @@ async function previewSelectedSheets() {
   body.append("sheet_configs_json", JSON.stringify(selectedSheetConfigs()));
   try {
     const result = await Matrix.api("/api/imports/product-offers/preview", { method: "POST", body });
+    if (!isCurrentImportWorkflow(workflowRevision)) return;
     renderImportPreview(result, true);
     document.querySelector("#import-preview").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
+    if (!isCurrentImportWorkflow(workflowRevision)) return;
     Matrix.toast("预览失败", error.message, "error");
   } finally {
-    button.disabled = !state.importWorkbook?.selectedSheets.length;
-    button.textContent = "生成合并预览";
+    if (isCurrentImportWorkflow(workflowRevision)) {
+      button.disabled = !state.importWorkbook?.selectedSheets.length;
+      button.textContent = "生成合并预览";
+    }
   }
 }
 
@@ -769,6 +795,7 @@ function renderImportPreview(result, multiSheet = false) {
 
 async function previewImport(includeOptions = false) {
   if (!state.importFile) return;
+  const workflowRevision = advanceImportWorkflow();
   const button = includeOptions
     ? document.querySelector("#refresh-import-preview")
     : document.querySelector("#analyze-import");
@@ -780,13 +807,17 @@ async function previewImport(includeOptions = false) {
       method: "POST",
       body: importFormData(includeOptions),
     });
+    if (!isCurrentImportWorkflow(workflowRevision)) return;
     renderImportPreview(result);
     document.querySelector("#import-preview").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
+    if (!isCurrentImportWorkflow(workflowRevision)) return;
     Matrix.toast("识别失败", error.message, "error");
   } finally {
-    button.disabled = false;
-    button.textContent = originalText;
+    if (isCurrentImportWorkflow(workflowRevision)) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
   }
 }
 
@@ -796,6 +827,7 @@ async function confirmSmartImport() {
     Matrix.toast("无法导入", "请至少保留一条完整记录，并先解决重复 SKU。", "error");
     return;
   }
+  const workflowRevision = advanceImportWorkflow();
   const button = document.querySelector("#confirm-import");
   button.disabled = true;
   button.textContent = "正在导入…";
@@ -804,6 +836,7 @@ async function confirmSmartImport() {
       method: "POST",
       body: importFormData(true, true),
     });
+    if (!isCurrentImportWorkflow(workflowRevision)) return;
     Matrix.toast("导入完成", `成功 ${result.success_rows} 条，失败 ${result.error_rows} 条。`, result.error_rows ? "default" : "success");
     state.importFile = null;
     resetImportInterface();
@@ -817,10 +850,13 @@ async function confirmSmartImport() {
     await loadOfferBrands();
     await loadOffers();
   } catch (error) {
+    if (!isCurrentImportWorkflow(workflowRevision)) return;
     Matrix.toast("导入失败", error.message, "error");
   } finally {
-    button.disabled = !ImportWorkbook.canImport(state.importWorkbook?.rows || []);
-    button.textContent = "确认导入";
+    if (isCurrentImportWorkflow(workflowRevision)) {
+      button.disabled = !ImportWorkbook.canImport(state.importWorkbook?.rows || []);
+      button.textContent = "确认导入";
+    }
   }
 }
 
@@ -917,8 +953,7 @@ function bindEvents() {
     const checkbox = event.target.closest("[data-sheet-name]");
     if (!checkbox || !state.importWorkbook) return;
     ImportWorkbook.toggleSheet(state.importWorkbook, checkbox.dataset.sheetName, checkbox.checked);
-    state.importPreview = null;
-    document.querySelector("#import-preview").classList.add("hidden");
+    invalidateWorkbookPreview();
     renderWorkbookConfiguration();
   });
   const sheetConfigs = document.querySelector("#import-sheet-configs");
@@ -987,7 +1022,11 @@ function bindEvents() {
     if (!row) return;
     row.errors = [];
     ImportWorkbook.updateRow(state.importWorkbook, rowIndex, event.target.dataset.rowField, event.target.value.trim());
-    refreshRenderedRowStates();
+    if (state.importWorkbook.conflictOnly && event.target.dataset.rowField === "supplier_sku") {
+      renderImportRows();
+    } else {
+      refreshRenderedRowStates();
+    }
   });
   document.querySelector("#import-sheet-filter").addEventListener("change", (event) => {
     if (!state.importWorkbook) return;

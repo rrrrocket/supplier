@@ -17,6 +17,187 @@ function loadImportWorkbook() {
 }
 
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+
+function loadImportApp(api) {
+  class FakeClassList {
+    constructor() {
+      this.values = new Set();
+    }
+
+    add(...names) {
+      names.forEach((name) => this.values.add(name));
+    }
+
+    remove(...names) {
+      names.forEach((name) => this.values.delete(name));
+    }
+
+    toggle(name, force) {
+      const enabled = force === undefined ? !this.values.has(name) : force;
+      if (enabled) this.values.add(name);
+      else this.values.delete(name);
+      return enabled;
+    }
+
+    contains(name) {
+      return this.values.has(name);
+    }
+  }
+
+  class FakeElement {
+    constructor() {
+      this.classList = new FakeClassList();
+      this.dataset = {};
+      this.disabled = false;
+      this.checked = false;
+      this.innerHTML = "";
+      this.textContent = "";
+      this.value = "";
+      this.listeners = new Map();
+    }
+
+    addEventListener(type, listener) {
+      if (!this.listeners.has(type)) this.listeners.set(type, []);
+      this.listeners.get(type).push(listener);
+    }
+
+    closest() {
+      return null;
+    }
+
+    matches() {
+      return false;
+    }
+
+    querySelector() {
+      return new FakeElement();
+    }
+
+    querySelectorAll() {
+      return [];
+    }
+
+    scrollIntoView() {}
+  }
+
+  class FakeFormData {
+    constructor() {
+      this.entries = [];
+    }
+
+    append(key, value) {
+      this.entries.push([key, value]);
+    }
+  }
+
+  const elements = new Map();
+  const element = (selector) => {
+    if (!elements.has(selector)) elements.set(selector, new FakeElement());
+    return elements.get(selector);
+  };
+  const toasts = [];
+  const document = {
+    addEventListener() {},
+    querySelector: element,
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const window = {
+    MatrixImportWorkbook: loadImportWorkbook(),
+    addEventListener() {},
+    location: { hash: "", href: "" },
+  };
+  const Matrix = {
+    api,
+    escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    },
+    formatDate: String,
+    formatMoney: String,
+    statusBadge: String,
+    toast(...args) {
+      toasts.push(args);
+    },
+  };
+  const context = vm.createContext({
+    clearTimeout,
+    console,
+    document,
+    FormData: FakeFormData,
+    Matrix,
+    setTimeout,
+    URLSearchParams,
+    window,
+  });
+  vm.runInContext(
+    fs.readFileSync(path.join(__dirname, "..", "app", "web", "assets", "app.js"), "utf8"),
+    context,
+  );
+  return {
+    context,
+    element,
+    evaluate(source) {
+      return vm.runInContext(source, context);
+    },
+    toasts,
+  };
+}
+
+
+function inspection(fileName, sheetName = "Sheet1") {
+  return {
+    file_name: fileName,
+    active_sheet: sheetName,
+    sheets: [{
+      name: sheetName,
+      estimated_rows: 1,
+      column_count: 4,
+      suggested_header_row: 1,
+      suggested_mapping: {},
+      columns: [],
+      sample_rows: [],
+    }],
+  };
+}
+
+
+function previewResult(fileName, sku = "SKU-1") {
+  return {
+    file_name: fileName,
+    sheet_name: "Sheet1",
+    header_row: 1,
+    total_rows: 1,
+    headers: [],
+    mapping: [],
+    defaults: {},
+    warnings: [],
+    preview_rows: [{
+      source_sheet: "Sheet1",
+      source_row: 2,
+      included: true,
+      conflict_group: null,
+      values: { product_name: "商品", category: "模型", supplier_sku: sku, price: "10" },
+      errors: [],
+    }],
+  };
+}
+
+
 test("active Excel sheet is selected after inspection", () => {
   const ImportWorkbook = loadImportWorkbook();
   const state = ImportWorkbook.createWorkbookState({
@@ -141,4 +322,133 @@ test("pageRows applies sheet and conflict filters before slicing fifty rows", ()
   assert.equal(firstPage.every((row) => row.conflict_group === "DUP"), true);
   assert.deepEqual(firstPage.map((row) => state.rows.indexOf(row)).slice(0, 3), [0, 2, 4]);
   assert.deepEqual(secondPage, []);
+});
+
+
+test("preview response for file A cannot overwrite file B after a switch", async () => {
+  const previewA = deferred();
+  const inspectB = deferred();
+  const requests = [];
+  const app = loadImportApp((url) => {
+    requests.push(url);
+    if (url.endsWith("/preview")) return previewA.promise;
+    if (url.endsWith("/inspect")) return inspectB.promise;
+    throw new Error(`Unexpected API request: ${url}`);
+  });
+  app.context.fileA = { name: "A.xlsx", size: 100 };
+  app.context.fileB = { name: "B.xlsx", size: 100 };
+  app.context.inspectionA = inspection("A.xlsx");
+  app.context.inspectionB = inspection("B.xlsx", "B-Sheet");
+  app.context.previewAResult = previewResult("A.xlsx", "A-SKU");
+  app.evaluate("state.importFile = fileA; state.importWorkbook = ImportWorkbook.createWorkbookState(inspectionA)");
+
+  const pendingPreview = app.evaluate("previewSelectedSheets()");
+  const pendingSelection = app.evaluate("selectImportFile(fileB)");
+  inspectB.resolve(app.context.inspectionB);
+  await pendingSelection;
+  previewA.resolve(app.context.previewAResult);
+  await pendingPreview;
+
+  assert.deepEqual(requests, [
+    "/api/imports/product-offers/preview",
+    "/api/imports/product-offers/workbook/inspect",
+  ]);
+  assert.equal(app.evaluate("state.importFile.name"), "B.xlsx");
+  assert.equal(app.evaluate("state.importWorkbook.inspection.file_name"), "B.xlsx");
+  assert.equal(app.evaluate("state.importWorkbook.rows.length"), 0);
+  assert.equal(app.element("#import-preview").classList.contains("hidden"), true);
+  assert.deepEqual(app.toasts, []);
+});
+
+
+test("changing a sheet config invalidates an in-flight preview", async () => {
+  const preview = deferred();
+  const app = loadImportApp((url) => {
+    if (url.endsWith("/preview")) return preview.promise;
+    throw new Error(`Unexpected API request: ${url}`);
+  });
+  app.context.file = { name: "config.xlsx", size: 100 };
+  app.context.inspection = inspection("config.xlsx");
+  app.context.result = previewResult("config.xlsx");
+  app.evaluate("state.importFile = file; state.importWorkbook = ImportWorkbook.createWorkbookState(inspection); bindEvents()");
+
+  const pendingPreview = app.evaluate("previewSelectedSheets()");
+  const configListener = app.element("#import-sheet-configs").listeners.get("input")[0];
+  configListener({
+    target: {
+      closest: () => ({ dataset: { sheetConfig: "Sheet1" } }),
+      dataset: {},
+      matches: (selector) => selector === "[data-sheet-header-row]",
+      value: "2",
+    },
+  });
+  preview.resolve(app.context.result);
+  await pendingPreview;
+
+  assert.equal(app.evaluate("state.importWorkbook.configs.Sheet1.header_row"), 2);
+  assert.equal(app.evaluate("state.importWorkbook.rows.length"), 0);
+  assert.equal(app.element("#import-preview").classList.contains("hidden"), true);
+  assert.deepEqual(app.toasts, []);
+});
+
+
+test("completion of an old import cannot reset a newly selected file", async () => {
+  const oldImport = deferred();
+  const inspectB = deferred();
+  const app = loadImportApp((url) => {
+    if (url === "/api/imports/product-offers") return oldImport.promise;
+    if (url.endsWith("/inspect")) return inspectB.promise;
+    if (["/api/imports", "/api/products", "/api/offers/brands", "/api/offers"].includes(url)) return Promise.resolve([]);
+    throw new Error(`Unexpected API request: ${url}`);
+  });
+  app.context.fileA = { name: "A.xlsx", size: 100 };
+  app.context.fileB = { name: "B.xlsx", size: 100 };
+  app.context.inspectionA = inspection("A.xlsx");
+  app.context.inspectionB = inspection("B.xlsx", "B-Sheet");
+  app.context.previewAResult = previewResult("A.xlsx", "A-SKU");
+  app.evaluate(`
+    state.importFile = fileA;
+    state.importWorkbook = ImportWorkbook.createWorkbookState(inspectionA);
+    renderImportPreview(previewAResult, true);
+  `);
+
+  const pendingImport = app.evaluate("confirmSmartImport()");
+  const pendingSelection = app.evaluate("selectImportFile(fileB)");
+  inspectB.resolve(app.context.inspectionB);
+  await pendingSelection;
+  oldImport.resolve({ success_rows: 1, error_rows: 0 });
+  await pendingImport;
+
+  assert.equal(app.evaluate("state.importFile.name"), "B.xlsx");
+  assert.equal(app.evaluate("state.importWorkbook.inspection.file_name"), "B.xlsx");
+  assert.equal(app.element("#import-workbook-config").classList.contains("hidden"), false);
+  assert.deepEqual(app.toasts, []);
+});
+
+
+test("editing the last duplicate removes rows from conflict-only view immediately", () => {
+  const app = loadImportApp(() => Promise.reject(new Error("API should not be called")));
+  app.context.inspection = inspection("conflicts.xlsx");
+  app.context.rows = [
+    { source_sheet: "Sheet1", source_row: 2, included: true, conflict_group: "DUP", values: { supplier_sku: "DUP" }, errors: [] },
+    { source_sheet: "Sheet1", source_row: 3, included: true, conflict_group: "DUP", values: { supplier_sku: "DUP" }, errors: [] },
+  ];
+  app.evaluate(`
+    state.importWorkbook = ImportWorkbook.createWorkbookState(inspection);
+    state.importWorkbook.rows = rows;
+    state.importWorkbook.conflictOnly = true;
+    renderImportRows();
+    bindEvents();
+  `);
+  const inputListener = app.element("#import-preview-tbody").listeners.get("input")[0];
+  inputListener({
+    target: {
+      dataset: { rowIndex: "0", rowField: "supplier_sku" },
+      matches: (selector) => selector === "[data-row-field]",
+      value: "UNIQUE",
+    },
+  });
+
+  assert.equal(app.evaluate("state.importWorkbook.rows.every((row) => !row.conflict_group)"), true);
+  assert.equal(app.element("#import-preview-tbody").innerHTML, "");
 });
