@@ -20,6 +20,7 @@
 
 ## 设计与实施计划
 
+- [Excel 多工作表导入设计](designs/2026-09-08-multi-sheet-excel-import-design.md)
 - [PostgreSQL 全新基线与数据重建设计](designs/2026-09-08-clean-database-baseline-design.md)
 - [供应商品牌、SKU 与通用系统集成设计](designs/2026-09-08-supplier-brand-sku-integration-design.md)
 - [供应商品牌、SKU 与通用系统集成实施计划](plans/2026-09-08-supplier-brand-sku-integration.md)
