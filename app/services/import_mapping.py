@@ -7,6 +7,9 @@ from difflib import SequenceMatcher
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
+from zipfile import ZipFile
+
+from openpyxl.utils import column_index_from_string, get_column_letter
 
 
 MAX_IMPORT_ROWS = 10_000
@@ -153,6 +156,47 @@ class ParsedTable:
     sheet_name: str | None = None
 
 
+@dataclass(frozen=True)
+class WorkbookColumn:
+    key: str
+    header: str
+    label: str
+
+
+@dataclass
+class WorkbookSheet:
+    name: str
+    index: int
+    estimated_rows: int
+    column_count: int
+    suggested_header_row: int
+    columns: list[WorkbookColumn]
+    sample_rows: list[dict[str, str]]
+    suggested_mapping: dict[str, str]
+
+
+@dataclass
+class WorkbookInspection:
+    file_name: str
+    active_sheet: str
+    sheets: list[WorkbookSheet]
+
+
+@dataclass(frozen=True)
+class SheetImportConfig:
+    sheet_name: str
+    header_row: int
+    mapping: dict[str, str]
+    defaults: dict[str, str]
+
+
+@dataclass
+class SourcedRow:
+    values: dict[str, str]
+    source_sheet: str
+    source_row: int
+
+
 def _normalize_token(value: str) -> str:
     return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", value.strip().lower())
 
@@ -282,10 +326,291 @@ def _preferred_sheet_name(sheet_names: list[str], description: str) -> str | Non
     return None
 
 
-def _read_xlsx(raw: bytes, description: str) -> ParsedTable:
+def _load_xlsx_workbook(raw: bytes, *, data_only: bool):
     from openpyxl import load_workbook
 
-    workbook = load_workbook(BytesIO(raw), read_only=True, data_only=True)
+    try:
+        return load_workbook(BytesIO(raw), read_only=True, data_only=data_only)
+    except TypeError as error:
+        if "Fill" not in str(error):
+            raise
+
+        with ZipFile(BytesIO(raw)) as incoming:
+            styles = incoming.read("xl/styles.xml")
+            if re.search(rb"<fill\s*/>", styles) is None:
+                raise
+
+            output = BytesIO()
+            with ZipFile(output, "w") as outgoing:
+                for info in incoming.infolist():
+                    payload = incoming.read(info.filename)
+                    if info.filename == "xl/styles.xml":
+                        payload = re.sub(
+                            rb"<fill\s*/>",
+                            b'<fill><patternFill patternType="none"/></fill>',
+                            payload,
+                        )
+                    outgoing.writestr(info, payload)
+
+        return load_workbook(BytesIO(output.getvalue()), read_only=True, data_only=data_only)
+
+
+def _suggested_column_mapping(columns: list[WorkbookColumn]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    used_keys: set[str] = set()
+    priority = ["product_name", "supplier_sku", "price", "category"] + [
+        field
+        for field in FIELD_ORDER
+        if field not in {"product_name", "supplier_sku", "price", "category"}
+    ]
+    for field in priority:
+        ranked = sorted(
+            (
+                (_header_match_score(column.header, field), column.key)
+                for column in columns
+                if column.header and column.key not in used_keys
+            ),
+            reverse=True,
+        )
+        if ranked and ranked[0][0] >= 72:
+            mapping[field] = ranked[0][1]
+            used_keys.add(ranked[0][1])
+    return mapping
+
+
+def _inspection_header_score(row: list[Any]) -> float:
+    cells = [_cell_text(value) for value in row]
+    nonempty = [value for value in cells if value]
+    if not nonempty:
+        return -1
+    recognized = sum(
+        max(_header_match_score(value, field) for field in FIELD_ORDER) >= 82
+        for value in nonempty
+    )
+    numeric = sum(bool(re.fullmatch(r"[-+]?\d+(?:\.\d+)?", value)) for value in nonempty)
+    return recognized * 20 + len(nonempty) - numeric * 3
+
+
+def _inspect_workbook_sheet(
+    matrix: list[list[Any]],
+    *,
+    name: str,
+    index: int,
+) -> WorkbookSheet:
+    column_count = max((len(row) for row in matrix), default=0)
+    candidates = matrix[: min(20, len(matrix))]
+    header_index = (
+        max(
+            range(len(candidates)),
+            key=lambda row_index: _inspection_header_score(candidates[row_index]),
+        )
+        if candidates
+        else 0
+    )
+    header_values = matrix[header_index] if matrix else []
+    headers = [
+        _cell_text(header_values[column_index])
+        if column_index < len(header_values)
+        else ""
+        for column_index in range(column_count)
+    ]
+    columns = []
+    for column_index, header in enumerate(headers):
+        key = get_column_letter(column_index + 1)
+        label = f"{key}列 · {header}" if header else f"{key}列（无表头）"
+        columns.append(WorkbookColumn(key=key, header=header, label=label))
+
+    data_rows: list[tuple[int, list[Any]]] = []
+    for row_index, row in enumerate(matrix[header_index + 1 :], start=header_index + 2):
+        if any(_cell_text(value) for value in row):
+            data_rows.append((row_index, row))
+
+    sample_rows = []
+    for _, row in data_rows[:5]:
+        sample_rows.append(
+            {
+                get_column_letter(column_index + 1): _cell_text(
+                    row[column_index] if column_index < len(row) else None
+                )
+                for column_index in range(column_count)
+            }
+        )
+
+    return WorkbookSheet(
+        name=name,
+        index=index,
+        estimated_rows=len(data_rows),
+        column_count=column_count,
+        suggested_header_row=header_index + 1,
+        columns=columns,
+        sample_rows=sample_rows,
+        suggested_mapping=_suggested_column_mapping(columns),
+    )
+
+
+def inspect_excel_workbook(raw: bytes, filename: str) -> WorkbookInspection:
+    extension = Path(filename).suffix.lower()
+    if extension == ".xlsx":
+        workbook = _load_xlsx_workbook(raw, data_only=True)
+        active_sheet = workbook.active.title
+        sheets = [
+            _inspect_workbook_sheet(
+                [list(row) for row in sheet.iter_rows(values_only=True)],
+                name=sheet.title,
+                index=index,
+            )
+            for index, sheet in enumerate(workbook.worksheets)
+        ]
+    elif extension == ".xls":
+        import xlrd
+
+        workbook = xlrd.open_workbook(file_contents=raw)
+        active_index = workbook.sheet_active
+        active_sheet = workbook.sheet_by_index(active_index).name
+        sheets = [
+            _inspect_workbook_sheet(
+                [sheet.row_values(row_index) for row_index in range(sheet.nrows)],
+                name=sheet.name,
+                index=index,
+            )
+            for index, sheet in enumerate(workbook.sheets())
+        ]
+    else:
+        raise ValueError("仅支持 XLSX 和 XLS 工作簿")
+
+    return WorkbookInspection(
+        file_name=filename,
+        active_sheet=active_sheet,
+        sheets=sheets,
+    )
+
+
+def _validate_sheet_configs(
+    configs: list[SheetImportConfig],
+    sheet_names: list[str],
+    sheet_dimensions: dict[str, tuple[int, int]],
+) -> dict[str, dict[str, int]]:
+    seen: set[str] = set()
+    column_indexes: dict[str, dict[str, int]] = {}
+    for config in configs:
+        if config.sheet_name in seen:
+            raise ValueError(f"工作表不能重复选择：{config.sheet_name}")
+        seen.add(config.sheet_name)
+        if config.sheet_name not in sheet_names:
+            raise ValueError(f"工作表不存在：{config.sheet_name}")
+
+        row_count, column_count = sheet_dimensions[config.sheet_name]
+        if config.header_row < 1 or config.header_row > row_count:
+            raise ValueError(
+                f"工作表 {config.sheet_name} 不存在第 {config.header_row} 行表头"
+            )
+
+        indexes: dict[str, int] = {}
+        for field, source in config.mapping.items():
+            if field not in FIELD_ORDER:
+                continue
+            if re.fullmatch(r"[A-Z]+", source) is None:
+                raise ValueError(
+                    f"工作表 {config.sheet_name} 的字段映射引用了无效列：{source}"
+                )
+            column_index = column_index_from_string(source)
+            if column_index > column_count:
+                raise ValueError(
+                    f"工作表 {config.sheet_name} 的字段映射引用了无效列：{source}"
+                )
+            indexes[field] = column_index - 1
+        column_indexes[config.sheet_name] = indexes
+    return column_indexes
+
+
+def _sourced_values(
+    row: list[Any],
+    column_indexes: dict[str, int],
+    defaults: dict[str, str],
+) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for field in FIELD_ORDER:
+        column_index = column_indexes.get(field)
+        value = (
+            _cell_text(row[column_index])
+            if column_index is not None and column_index < len(row)
+            else ""
+        )
+        values[field] = value or defaults.get(field, "")
+    return values
+
+
+def parse_excel_sheets(
+    raw: bytes,
+    filename: str,
+    configs: list[SheetImportConfig],
+) -> list[SourcedRow]:
+    extension = Path(filename).suffix.lower()
+    if extension == ".xlsx":
+        workbook = _load_xlsx_workbook(raw, data_only=True)
+        sheet_names = workbook.sheetnames
+        sheet_dimensions = {
+            name: (workbook[name].max_row, workbook[name].max_column)
+            for name in {config.sheet_name for config in configs}
+            if name in sheet_names
+        }
+    elif extension == ".xls":
+        import xlrd
+
+        workbook = xlrd.open_workbook(file_contents=raw)
+        sheet_names = workbook.sheet_names()
+        sheet_dimensions = {
+            name: (
+                workbook.sheet_by_name(name).nrows,
+                workbook.sheet_by_name(name).ncols,
+            )
+            for name in {config.sheet_name for config in configs}
+            if name in sheet_names
+        }
+    else:
+        raise ValueError("仅支持 XLSX 和 XLS 工作簿")
+
+    column_indexes = _validate_sheet_configs(configs, sheet_names, sheet_dimensions)
+    sourced_rows: list[SourcedRow] = []
+    for config in configs:
+        defaults = {**DEFAULT_VALUES, **config.defaults}
+        if extension == ".xlsx":
+            sheet = workbook[config.sheet_name]
+            rows = enumerate(
+                sheet.iter_rows(min_row=config.header_row + 1, values_only=True),
+                start=config.header_row + 1,
+            )
+        else:
+            sheet = workbook.sheet_by_name(config.sheet_name)
+            rows = (
+                (row_index + 1, sheet.row_values(row_index))
+                for row_index in range(config.header_row, sheet.nrows)
+            )
+
+        for source_row, raw_row in rows:
+            row = list(raw_row)
+            if not any(_cell_text(value) for value in row):
+                continue
+            sourced_rows.append(
+                SourcedRow(
+                    values=_sourced_values(
+                        row,
+                        column_indexes[config.sheet_name],
+                        defaults,
+                    ),
+                    source_sheet=config.sheet_name,
+                    source_row=source_row,
+                )
+            )
+            if len(sourced_rows) > MAX_IMPORT_ROWS:
+                raise ValueError(
+                    f"单次最多导入 {MAX_IMPORT_ROWS} 行，请拆分文件后重试"
+                )
+    return sourced_rows
+
+
+def _read_xlsx(raw: bytes, description: str) -> ParsedTable:
+    workbook = _load_xlsx_workbook(raw, data_only=True)
     preferred = _preferred_sheet_name(workbook.sheetnames, description)
     sheets = [workbook[preferred]] if preferred else list(workbook.worksheets)
     candidates: list[tuple[float, ParsedTable]] = []
