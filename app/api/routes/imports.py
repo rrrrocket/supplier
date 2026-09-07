@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -22,16 +23,27 @@ from app.services.events import record_event
 from app.services.import_mapping import (
     FIELD_DEFINITIONS,
     MAX_IMPORT_ROWS,
+    SheetImportConfig,
     infer_defaults,
     infer_mapping,
+    inspect_excel_workbook,
     mapping_view,
     normalize_rows,
+    parse_excel_sheets,
     parse_table,
 )
 
 
 router = APIRouter(prefix="/imports", tags=["数据导入"])
 MAX_FILE_SIZE = 10 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class SubmittedRow:
+    values: dict[str, str]
+    source_sheet: str | None
+    source_row: int
+    included: bool
 
 
 def _to_int(value: str, default: int, field_name: str) -> int:
@@ -130,10 +142,19 @@ def _job_view(job: ImportJob) -> dict[str, Any]:
     }
 
 
-async def _read_upload(file: UploadFile) -> tuple[str, bytes]:
+async def _read_upload(
+    file: UploadFile,
+    *,
+    excel_only: bool = False,
+) -> tuple[str, bytes]:
     if not file.filename:
         raise HTTPException(status_code=400, detail="请选择表格文件")
     extension = file.filename.lower().rsplit(".", 1)[-1]
+    if excel_only and extension not in {"xlsx", "xls"}:
+        raise HTTPException(
+            status_code=400,
+            detail="工作簿扫描仅支持 XLSX 和 XLS 格式",
+        )
     if extension not in {"csv", "tsv", "txt", "xlsx", "xls", "pdf"}:
         raise HTTPException(status_code=400, detail="支持 CSV、XLSX、XLS 和 PDF 格式")
     raw = await file.read()
@@ -179,7 +200,78 @@ def _effective_defaults(description: str, defaults_json: str) -> dict[str, str]:
     return defaults
 
 
-def _submitted_rows(rows_json: str) -> list[dict[str, str]] | None:
+def _sheet_configs(value: str) -> list[SheetImportConfig]:
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="工作表配置格式不正确") from exc
+    if not isinstance(data, list):
+        raise HTTPException(status_code=400, detail="工作表配置必须是数组")
+    if not data:
+        raise HTTPException(status_code=400, detail="请至少选择一个工作表")
+
+    configs: list[SheetImportConfig] = []
+    for index, item in enumerate(data, start=1):
+        if not isinstance(item, dict):
+            raise HTTPException(
+                status_code=400,
+                detail=f"工作表配置第 {index} 项格式不正确",
+            )
+        sheet_name = item.get("sheet_name")
+        header_row = item.get("header_row")
+        mapping = item.get("mapping", {})
+        defaults = item.get("defaults", {})
+        if not isinstance(sheet_name, str) or not sheet_name:
+            raise HTTPException(
+                status_code=400,
+                detail=f"工作表配置第 {index} 项缺少工作表名称",
+            )
+        if (
+            not isinstance(header_row, int)
+            or isinstance(header_row, bool)
+            or header_row < 1
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"工作表 {sheet_name} 的表头行必须是正整数",
+            )
+        if not isinstance(mapping, dict) or not all(
+            isinstance(key, str) and isinstance(source, str)
+            for key, source in mapping.items()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"工作表 {sheet_name} 的字段映射必须是对象",
+            )
+        if not isinstance(defaults, dict) or not all(
+            isinstance(key, str) and isinstance(default, str)
+            for key, default in defaults.items()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"工作表 {sheet_name} 的默认值必须是对象",
+            )
+        configs.append(
+            SheetImportConfig(
+                sheet_name=sheet_name,
+                header_row=header_row,
+                mapping=mapping,
+                defaults=defaults,
+            )
+        )
+    return configs
+
+
+def _duplicate_skus(rows: list[dict[str, str]]) -> set[str]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        supplier_sku = row.get("supplier_sku", "").strip()
+        if supplier_sku:
+            counts[supplier_sku] = counts.get(supplier_sku, 0) + 1
+    return {supplier_sku for supplier_sku, count in counts.items() if count > 1}
+
+
+def _submitted_rows(rows_json: str) -> list[SubmittedRow] | None:
     if not rows_json:
         return None
     try:
@@ -190,18 +282,63 @@ def _submitted_rows(rows_json: str) -> list[dict[str, str]] | None:
         raise HTTPException(status_code=400, detail="目标列表必须是数组")
     if not data:
         raise HTTPException(status_code=400, detail="目标列表至少保留一行")
-    if len(data) > MAX_IMPORT_ROWS:
-        raise HTTPException(status_code=400, detail=f"单次最多导入 {MAX_IMPORT_ROWS} 行")
 
-    rows = []
+    rows: list[SubmittedRow] = []
     for index, item in enumerate(data, start=1):
         if not isinstance(item, dict):
             raise HTTPException(status_code=400, detail=f"目标列表第 {index} 行格式不正确")
+
+        source_sheet = item.get("source_sheet")
+        if source_sheet is not None and not isinstance(source_sheet, str):
+            raise HTTPException(
+                status_code=400,
+                detail=f"目标列表第 {index} 行来源工作表格式不正确",
+            )
+        source_row = item.get("source_row", index)
+        if (
+            not isinstance(source_row, int)
+            or isinstance(source_row, bool)
+            or source_row < 1
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"目标列表第 {index} 行来源行号格式不正确",
+            )
+        included = item.get("included", True)
+        if not isinstance(included, bool):
+            raise HTTPException(
+                status_code=400,
+                detail=f"目标列表第 {index} 行是否导入格式不正确",
+            )
+        raw_values = item.get("values", item)
+        if not isinstance(raw_values, dict):
+            raise HTTPException(
+                status_code=400,
+                detail=f"目标列表第 {index} 行字段值格式不正确",
+            )
+        if not included:
+            continue
         rows.append(
-            {
-                field: str(item.get(field, "") or "").strip()
-                for field in FIELD_DEFINITIONS
-            }
+            SubmittedRow(
+                values={
+                    field: str(raw_values.get(field, "") or "").strip()
+                    for field in FIELD_DEFINITIONS
+                },
+                source_sheet=source_sheet or None,
+                source_row=source_row,
+                included=included,
+            )
+        )
+    if not rows:
+        raise HTTPException(status_code=400, detail="目标列表至少保留一行")
+    if len(rows) > MAX_IMPORT_ROWS:
+        raise HTTPException(status_code=400, detail=f"单次最多导入 {MAX_IMPORT_ROWS} 行")
+
+    duplicate_skus = sorted(_duplicate_skus([row.values for row in rows]))
+    if duplicate_skus:
+        raise HTTPException(
+            status_code=400,
+            detail=f"供应商 SKU 在本次导入中重复：{'、'.join(duplicate_skus)}",
         )
     return rows
 
@@ -217,6 +354,20 @@ def list_imports(db: DbSession, user: SupplierUser) -> list[dict[str, Any]]:
     return [_job_view(job) for job in jobs]
 
 
+@router.post("/product-offers/workbook/inspect")
+async def inspect_product_offer_workbook(
+    user: SupplierUser,
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    del user
+    filename, raw = await _read_upload(file, excel_only=True)
+    try:
+        inspection = inspect_excel_workbook(raw, filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return asdict(inspection)
+
+
 @router.post("/product-offers/preview")
 async def preview_product_offers(
     user: SupplierUser,
@@ -224,9 +375,61 @@ async def preview_product_offers(
     description: str = Form(default="", max_length=2000),
     mapping_json: str = Form(default=""),
     defaults_json: str = Form(default=""),
+    sheet_configs_json: str = Form(default=""),
 ) -> dict[str, Any]:
     del user
     filename, raw = await _read_upload(file)
+    if sheet_configs_json:
+        configs = _sheet_configs(sheet_configs_json)
+        try:
+            sourced_rows = parse_excel_sheets(raw, filename, configs)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        duplicate_skus = _duplicate_skus([row.values for row in sourced_rows])
+        preview_rows = []
+        valid_rows = 0
+        for sourced in sourced_rows:
+            errors = _validate_row(sourced.values)
+            if not errors:
+                valid_rows += 1
+            supplier_sku = sourced.values.get("supplier_sku", "").strip()
+            preview_rows.append(
+                {
+                    "row": sourced.source_row,
+                    "source_sheet": sourced.source_sheet,
+                    "source_row": sourced.source_row,
+                    "included": True,
+                    "conflict_group": (
+                        supplier_sku if supplier_sku in duplicate_skus else None
+                    ),
+                    "values": sourced.values,
+                    "errors": errors,
+                }
+            )
+
+        invalid_rows = len(sourced_rows) - valid_rows
+        warnings = []
+        if invalid_rows:
+            warnings.append(f"检测到 {invalid_rows} 行数据需要修正")
+        if duplicate_skus:
+            warnings.append(f"检测到 {len(duplicate_skus)} 组重复供应商 SKU")
+        return {
+            "file_name": filename,
+            "sheet_name": None,
+            "header_row": None,
+            "total_rows": len(sourced_rows),
+            "valid_rows": valid_rows,
+            "invalid_rows": invalid_rows,
+            "headers": [],
+            "mapping": [],
+            "defaults": {},
+            "preview_rows": preview_rows,
+            "warnings": warnings,
+            "conflict_count": len(duplicate_skus),
+            "can_import": not duplicate_skus,
+        }
+
     try:
         table = parse_table(raw, filename, description)
     except ValueError as exc:
@@ -302,11 +505,20 @@ async def import_product_offers(
             table = parse_table(raw, filename, description)
             mapping = _effective_mapping(table.headers, description, mapping_json)
             defaults = _effective_defaults(description, defaults_json)
-            rows = normalize_rows(table, mapping, defaults)
-            first_row_number = table.header_row + 1
+            rows = [
+                SubmittedRow(
+                    values=row,
+                    source_sheet=table.sheet_name,
+                    source_row=table.header_row + offset,
+                    included=True,
+                )
+                for offset, row in enumerate(
+                    normalize_rows(table, mapping, defaults),
+                    start=1,
+                )
+            ]
         else:
             mapping = {}
-            first_row_number = 1
     except (ValueError, HTTPException) as exc:
         message = exc.detail if isinstance(exc, HTTPException) else str(exc)
         job.status = ImportStatus.FAILED.value
@@ -319,7 +531,8 @@ async def import_product_offers(
 
     errors: list[dict[str, Any]] = []
     success = 0
-    for index, row in enumerate(rows, start=first_row_number):
+    for submitted in rows:
+        row = submitted.values
         try:
             row_errors = _validate_row(row)
             if row_errors:
@@ -391,7 +604,13 @@ async def import_product_offers(
             )
             success += 1
         except ValueError as exc:
-            errors.append({"row": index, "message": str(exc)})
+            errors.append(
+                {
+                    "sheet": submitted.source_sheet,
+                    "row": submitted.source_row,
+                    "message": str(exc),
+                }
+            )
 
     job.total_rows = len(rows)
     job.success_rows = success

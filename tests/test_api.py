@@ -4,6 +4,7 @@ import json
 from io import BytesIO
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from reportlab.lib import colors
@@ -13,10 +14,338 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
 from tests.conftest import SUPPLIER_EMAIL, SUPPLIER_PASSWORD
 
 
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def two_sheet_workbook_content() -> bytes:
+    workbook = Workbook()
+    sheet1 = workbook.active
+    sheet1.title = "Sheet1"
+    sheet1.append([None, None, "货号"])
+    sheet1.append([None, None, "SKU-001"])
+    sheet2 = workbook.create_sheet("Sheet2")
+    sheet2.append(["名称"])
+    sheet2.append(["商品二"])
+    content = BytesIO()
+    workbook.save(content)
+    return content.getvalue()
+
+
+def multi_sheet_offer_workbook_content(second_sku: str = "DUP-001") -> bytes:
+    workbook = Workbook()
+    sheet1 = workbook.active
+    sheet1.title = "Sheet1"
+    sheet1.append(["货号", "名称", "成本"])
+    sheet1.append(["DUP-001", "商品甲", 10])
+    sheet2 = workbook.create_sheet("Sheet2")
+    sheet2.append(["供应商成本表"])
+    sheet2.append(["产品编码", "产品名称", "出厂价"])
+    sheet2.append([second_sku, "商品乙", 12])
+    content = BytesIO()
+    workbook.save(content)
+    return content.getvalue()
+
+
+def multi_sheet_configs() -> list[dict[str, object]]:
+    defaults = {"category": "测试类目", "currency": "CNY"}
+    mapping = {"supplier_sku": "A", "product_name": "B", "price": "C"}
+    return [
+        {
+            "sheet_name": "Sheet1",
+            "header_row": 1,
+            "mapping": mapping,
+            "defaults": defaults,
+        },
+        {
+            "sheet_name": "Sheet2",
+            "header_row": 2,
+            "mapping": mapping,
+            "defaults": defaults,
+        },
+    ]
+
+
+def submitted_offer_row(
+    *,
+    sku: str,
+    name: str,
+    source_sheet: object,
+    source_row: object,
+    included: object = True,
+    price: str = "10",
+) -> dict[str, object]:
+    return {
+        "source_sheet": source_sheet,
+        "source_row": source_row,
+        "included": included,
+        "values": {
+            "product_name": name,
+            "brand": "TEST",
+            "model": sku,
+            "category": "测试类目",
+            "supplier_sku": sku,
+            "price": price,
+            "currency": "CNY",
+            "moq": "1",
+            "stock_qty": "5",
+            "lead_time_days": "3",
+            "fulfillment_mode": "PURCHASE",
+            "status": "ACTIVE",
+        },
+    }
+
+
 def test_health(client: TestClient) -> None:
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_excel_inspection_returns_all_sheets_and_active_sheet(
+    authenticated_client: TestClient,
+) -> None:
+    response = authenticated_client.post(
+        "/api/imports/product-offers/workbook/inspect",
+        files={
+            "file": (
+                "supplier.xlsx",
+                BytesIO(two_sheet_workbook_content()),
+                XLSX_MIME,
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["active_sheet"] == "Sheet1"
+    assert [sheet["name"] for sheet in data["sheets"]] == ["Sheet1", "Sheet2"]
+    assert data["sheets"][0]["columns"][2]["key"] == "C"
+
+
+def test_excel_inspection_rejects_csv(authenticated_client: TestClient) -> None:
+    response = authenticated_client.post(
+        "/api/imports/product-offers/workbook/inspect",
+        files={"file": ("supplier.csv", BytesIO(b"sku,name\n1,item\n"), "text/csv")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "工作簿扫描仅支持 XLSX 和 XLS 格式"
+
+
+def test_multi_sheet_preview_reports_duplicate_sku_conflict(
+    authenticated_client: TestClient,
+) -> None:
+    response = authenticated_client.post(
+        "/api/imports/product-offers/preview",
+        data={"sheet_configs_json": json.dumps(multi_sheet_configs(), ensure_ascii=False)},
+        files={
+            "file": (
+                "supplier.xlsx",
+                BytesIO(multi_sheet_offer_workbook_content()),
+                XLSX_MIME,
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_rows"] == 2
+    assert data["conflict_count"] == 1
+    assert data["can_import"] is False
+    assert {
+        (row["source_sheet"], row["source_row"])
+        for row in data["preview_rows"]
+    } == {("Sheet1", 2), ("Sheet2", 3)}
+    assert {row["conflict_group"] for row in data["preview_rows"]} == {"DUP-001"}
+    assert all(row["included"] is True for row in data["preview_rows"])
+
+
+def test_multi_sheet_preview_allows_distinct_skus(
+    authenticated_client: TestClient,
+) -> None:
+    response = authenticated_client.post(
+        "/api/imports/product-offers/preview",
+        data={"sheet_configs_json": json.dumps(multi_sheet_configs(), ensure_ascii=False)},
+        files={
+            "file": (
+                "supplier.xlsx",
+                BytesIO(multi_sheet_offer_workbook_content("UNIQUE-002")),
+                XLSX_MIME,
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["can_import"] is True
+    assert response.json()["conflict_count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("sheet_configs_json", "detail"),
+    [
+        ("{", "工作表配置格式不正确"),
+        ("{}", "工作表配置必须是数组"),
+        ("[]", "请至少选择一个工作表"),
+        (
+            json.dumps([multi_sheet_configs()[0], multi_sheet_configs()[0]]),
+            "工作表不能重复选择：Sheet1",
+        ),
+        (
+            json.dumps(
+                [
+                    {
+                        **multi_sheet_configs()[0],
+                        "sheet_name": "Missing",
+                    }
+                ]
+            ),
+            "工作表不存在：Missing",
+        ),
+        (
+            json.dumps([{**multi_sheet_configs()[0], "header_row": 4}]),
+            "工作表 Sheet1 不存在第 4 行表头",
+        ),
+        (
+            json.dumps(
+                [
+                    {
+                        **multi_sheet_configs()[0],
+                        "mapping": {"product_name": "A1"},
+                    }
+                ]
+            ),
+            "工作表 Sheet1 的字段映射引用了无效列：A1",
+        ),
+    ],
+)
+def test_multi_sheet_preview_rejects_invalid_configuration(
+    authenticated_client: TestClient,
+    sheet_configs_json: str,
+    detail: str,
+) -> None:
+    response = authenticated_client.post(
+        "/api/imports/product-offers/preview",
+        data={"sheet_configs_json": sheet_configs_json},
+        files={
+            "file": (
+                "supplier.xlsx",
+                BytesIO(multi_sheet_offer_workbook_content()),
+                XLSX_MIME,
+            )
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == detail
+
+
+def test_final_import_rejects_duplicate_included_skus_without_writing_offer(
+    authenticated_client: TestClient,
+) -> None:
+    sku = f"DUP-FINAL-{uuid4().hex[:8]}"
+    rows = [
+        submitted_offer_row(
+            sku=sku,
+            name="商品甲",
+            source_sheet="Sheet1",
+            source_row=2,
+        ),
+        submitted_offer_row(
+            sku=sku,
+            name="商品乙",
+            source_sheet="Sheet2",
+            source_row=3,
+        ),
+    ]
+
+    response = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={"rows_json": json.dumps(rows, ensure_ascii=False)},
+        files={"file": ("supplier.xlsx", BytesIO(b"source"), XLSX_MIME)},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == f"供应商 SKU 在本次导入中重复：{sku}"
+    offers = authenticated_client.get("/api/offers", params={"q": sku}).json()
+    assert offers == []
+
+
+def test_final_import_excludes_duplicate_row_and_preserves_partial_error_source(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    sku = f"RESOLVED-{suffix}"
+    rows = [
+        submitted_offer_row(
+            sku=sku,
+            name=f"保留商品-{suffix}",
+            source_sheet="Sheet1",
+            source_row=2,
+        ),
+        submitted_offer_row(
+            sku=sku,
+            name=f"排除商品-{suffix}",
+            source_sheet="Sheet2",
+            source_row=3,
+            included=False,
+        ),
+        submitted_offer_row(
+            sku=f"BAD-{suffix}",
+            name=f"错误商品-{suffix}",
+            source_sheet="Sheet2",
+            source_row=4,
+            price="错误价格",
+        ),
+    ]
+
+    response = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={"rows_json": json.dumps(rows, ensure_ascii=False)},
+        files={"file": ("supplier.xlsx", BytesIO(b"source"), XLSX_MIME)},
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["status"] == "PARTIAL"
+    assert data["total_rows"] == 2
+    assert data["success_rows"] == 1
+    assert data["error_rows"] == 1
+    assert data["errors"][0]["sheet"] == "Sheet2"
+    assert data["errors"][0]["row"] == 4
+    offers = authenticated_client.get("/api/offers", params={"q": sku}).json()
+    assert len(offers) == 1
+    assert offers[0]["supplier_sku"] == sku
+
+
+@pytest.mark.parametrize(
+    ("overrides", "detail"),
+    [
+        ({"source_sheet": 123}, "目标列表第 1 行来源工作表格式不正确"),
+        ({"source_row": "2"}, "目标列表第 1 行来源行号格式不正确"),
+        ({"included": "true"}, "目标列表第 1 行是否导入格式不正确"),
+    ],
+)
+def test_final_import_rejects_invalid_source_metadata(
+    authenticated_client: TestClient,
+    overrides: dict[str, object],
+    detail: str,
+) -> None:
+    row = submitted_offer_row(
+        sku=f"META-{uuid4().hex[:8]}",
+        name="元数据测试商品",
+        source_sheet="Sheet1",
+        source_row=2,
+    )
+    row.update(overrides)
+
+    response = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={"rows_json": json.dumps([row], ensure_ascii=False)},
+        files={"file": ("supplier.xlsx", BytesIO(b"source"), XLSX_MIME)},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == detail
 
 
 def test_dashboard_requires_login(client: TestClient) -> None:
