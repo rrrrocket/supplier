@@ -1,8 +1,10 @@
+import re
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+from app.api.routes.imports import MAX_FILE_SIZE
 from app.core.config import Settings
 from app.db.session import engine
 
@@ -27,3 +29,17 @@ def test_application_config_requires_psycopg3_driver() -> None:
 def test_default_compose_environment_supports_local_http_sessions() -> None:
     compose_source = (PROJECT_ROOT / "docker-compose.yml").read_text()
     assert "APP_ENV: ${APP_ENV:-development}" in compose_source
+
+
+def test_nginx_upload_limit_covers_application_limit_and_multipart_overhead() -> None:
+    nginx_source = (PROJECT_ROOT / "deploy/nginx-supplier.conf").read_text()
+    match = re.search(r"client_max_body_size\s+(\d+)([kKmMgG])?;", nginx_source)
+    assert match is not None
+
+    size = int(match.group(1))
+    unit = (match.group(2) or "").lower()
+    multiplier = {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3}[unit]
+    nginx_limit = size * multiplier
+    multipart_overhead_allowance = 2 * 1024**2
+
+    assert nginx_limit >= MAX_FILE_SIZE + multipart_overhead_allowance
