@@ -138,7 +138,7 @@ Inventory Snapshot
   ↓
 Event Log
   ↓
-外部系统同步 / Matching Engine
+外部系统同步
 ```
 
 ### 后续供应商评分
