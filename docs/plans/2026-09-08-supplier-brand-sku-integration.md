@@ -932,7 +932,7 @@ Run:
 
 ```bash
 ./start.sh test
-bash -n start.sh scripts/dev.sh
+bash -n start.sh
 docker compose -f docker-compose.yml config --quiet
 docker compose -p supplier-tests -f docker-compose.test.yml config --quiet
 git diff --check
