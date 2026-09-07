@@ -3,6 +3,7 @@ from io import BytesIO
 from zipfile import ZipFile
 
 import pytest
+import xlwt
 from openpyxl import Workbook
 
 from app.services.import_mapping import (
@@ -98,6 +99,26 @@ def workbook_bytes_with_row_counts(*row_counts: int) -> bytes:
     return output.getvalue()
 
 
+def workbook_bytes_xls(*, active_second_sheet: bool) -> bytes:
+    workbook = xlwt.Workbook()
+    first = workbook.add_sheet("First")
+    first.write(0, 0, "名称")
+    first.write(1, 0, "首表商品")
+    second = workbook.add_sheet("报价")
+    second.write(0, 0, "报价说明")
+    second.write(1, 0, "商品名称")
+    second.write(1, 2, "采购价")
+    second.write(2, 0, "旧格式商品")
+    second.write(2, 2, 88)
+    if active_second_sheet:
+        second.sheet_visible = True
+        second.selected = True
+        workbook.set_active_sheet(1)
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
 def test_inspect_excel_workbook_repairs_empty_fill_and_preserves_active_sheet():
     raw = workbook_bytes_with_empty_fill()
     original_hash = sha256(raw).hexdigest()
@@ -110,6 +131,25 @@ def test_inspect_excel_workbook_repairs_empty_fill_and_preserves_active_sheet():
     assert inspection.sheets[0].columns[2].key == "C"
     assert inspection.sheets[0].columns[2].label == "C列（无表头）"
     assert inspection.sheets[0].columns[17].label == "R列 · 成本"
+
+
+def test_inspect_xls_uses_visible_sheet_as_active_sheet():
+    inspection = inspect_excel_workbook(
+        workbook_bytes_xls(active_second_sheet=True),
+        "supplier.xls",
+    )
+
+    assert inspection.active_sheet == "报价"
+    assert [sheet.name for sheet in inspection.sheets] == ["First", "报价"]
+
+
+def test_inspect_xls_falls_back_to_first_sheet_when_none_is_visible():
+    inspection = inspect_excel_workbook(
+        workbook_bytes_xls(active_second_sheet=False),
+        "supplier.xls",
+    )
+
+    assert inspection.active_sheet == "First"
 
 
 def test_parse_excel_sheets_uses_column_keys_and_preserves_source_coordinates():
@@ -139,6 +179,29 @@ def test_parse_excel_sheets_uses_column_keys_and_preserves_source_coordinates():
     assert rows[0].values["supplier_sku"] == "001"
     assert rows[0].values["product_name"] == "商品一"
     assert rows[0].values["price"] == "70"
+
+
+def test_parse_xls_sheet_uses_mapping_defaults_and_source_coordinates():
+    rows = parse_excel_sheets(
+        workbook_bytes_xls(active_second_sheet=True),
+        "supplier.xls",
+        [
+            SheetImportConfig(
+                sheet_name="报价",
+                header_row=2,
+                mapping={"product_name": "A", "price": "C"},
+                defaults={"currency": "USD", "category": "模型"},
+            )
+        ],
+    )
+
+    assert len(rows) == 1
+    assert rows[0].source_sheet == "报价"
+    assert rows[0].source_row == 3
+    assert rows[0].values["product_name"] == "旧格式商品"
+    assert rows[0].values["price"] == "88"
+    assert rows[0].values["currency"] == "USD"
+    assert rows[0].values["category"] == "模型"
 
 
 def test_parse_excel_sheets_rejects_duplicate_sheet_names():

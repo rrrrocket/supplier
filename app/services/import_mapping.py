@@ -465,15 +465,23 @@ def inspect_excel_workbook(raw: bytes, filename: str) -> WorkbookInspection:
         import xlrd
 
         workbook = xlrd.open_workbook(file_contents=raw)
-        active_index = workbook.sheet_active
-        active_sheet = workbook.sheet_by_index(active_index).name
+        workbook_sheets = workbook.sheets()
+        active_index = next(
+            (
+                index
+                for index, sheet in enumerate(workbook_sheets)
+                if sheet.sheet_visible
+            ),
+            0,
+        )
+        active_sheet = workbook_sheets[active_index].name
         sheets = [
             _inspect_workbook_sheet(
                 [sheet.row_values(row_index) for row_index in range(sheet.nrows)],
                 name=sheet.name,
                 index=index,
             )
-            for index, sheet in enumerate(workbook.sheets())
+            for index, sheet in enumerate(workbook_sheets)
         ]
     else:
         raise ValueError("仅支持 XLSX 和 XLS 工作簿")
