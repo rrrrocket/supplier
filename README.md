@@ -163,12 +163,7 @@ Python 测试在独立的 PostgreSQL 16 服务和持久命名卷中执行，使�
 
 ## 7. 数据库迁移
 
-```bash
-docker compose exec app alembic current
-docker compose exec app alembic check
-```
-
-`./start.sh` 每次启动应用前都会自动执行 `alembic upgrade head`。
+`./start.sh` 和 `./start.sh restart` 都会在应用启动前自动执行现有 Alembic 升级，常规使用无需单独操作数据库迁移。
 
 ## 8. PostgreSQL 运行环境
 
