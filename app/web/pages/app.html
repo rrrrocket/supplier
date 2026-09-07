@@ -6,9 +6,10 @@
   <meta name="robots" content="noindex,nofollow">
   <title>供应商工作台 · Matrix One</title>
   <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/styles.css?v=20260908-auth-visibility">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260908-multi-sheet">
   <script src="/assets/common.js?v=20260908-supplier-role" defer></script>
-  <script src="/assets/app.js?v=20260908-supplier-role" defer></script>
+  <script src="/assets/import-workbook.js?v=20260908-multi-sheet" defer></script>
+  <script src="/assets/app.js?v=20260908-multi-sheet" defer></script>
 </head>
 <body class="app-body">
   <div class="app-shell">
@@ -94,13 +95,40 @@
               <div class="import-actions"><span>系统不会在预览阶段写入数据。</span><button id="analyze-import" class="btn btn-primary" type="button" disabled>智能识别并预览</button></div>
             </div>
           </section>
+          <section id="import-workbook-config" class="panel import-workbook-config hidden">
+            <header class="panel-head">
+              <div><h2>选择并配置工作表</h2><p id="import-workbook-summary"></p></div>
+              <button id="select-all-sheets" class="btn btn-secondary btn-sm" type="button">全选</button>
+            </header>
+            <div class="panel-body">
+              <div id="import-sheet-list" class="import-sheet-list" aria-label="工作表选择"></div>
+              <div id="import-sheet-configs" class="import-sheet-configs"></div>
+              <div class="import-actions">
+                <span>每个工作表可以使用不同的表头和字段映射。</span>
+                <button id="preview-selected-sheets" class="btn btn-primary" type="button" disabled>生成合并预览</button>
+              </div>
+            </div>
+          </section>
           <section id="import-preview" class="panel import-preview hidden">
             <header class="panel-head"><div><h2>标准化预览</h2><p id="import-preview-summary">正在识别表格…</p></div></header>
             <div class="panel-body">
               <div id="import-preview-warnings"></div>
-              <h3 class="import-section-title">字段映射</h3>
-              <div id="import-mapping-grid" class="import-mapping-grid"></div>
+              <div id="import-legacy-mapping">
+                <h3 class="import-section-title">字段映射</h3>
+                <div id="import-mapping-grid" class="import-mapping-grid"></div>
+              </div>
               <div class="import-preview-table-head"><div><h3 class="import-section-title">目标列表</h3><span id="import-preview-count" class="muted"></span></div><div class="import-preview-actions"><button id="refresh-import-preview" class="btn btn-secondary btn-sm" type="button">更新预览</button><button id="add-import-row" class="btn btn-secondary btn-sm" type="button">添加一行</button><button id="confirm-import" class="btn btn-primary btn-sm" type="button">确认导入</button></div></div>
+              <div id="import-preview-controls" class="import-preview-controls">
+                <div id="import-preview-filters" class="import-preview-filters">
+                  <label><span class="sr-only">按工作表筛选</span><select id="import-sheet-filter" class="select" aria-label="按工作表筛选"><option value="">全部工作表</option></select></label>
+                  <label class="checkbox-row"><input id="import-conflict-only" type="checkbox"><span>只看冲突</span></label>
+                </div>
+                <div class="import-pagination" aria-label="预览分页">
+                  <button id="import-prev-page" class="btn btn-secondary btn-sm" type="button">上一页</button>
+                  <span id="import-page-status" class="muted" aria-live="polite">第 1 / 1 页</span>
+                  <button id="import-next-page" class="btn btn-secondary btn-sm" type="button">下一页</button>
+                </div>
+              </div>
               <div class="table-wrap"><table class="data-table import-preview-table"><thead><tr><th>来源</th><th>商品名称</th><th>品牌</th><th>型号</th><th>类目</th><th>供应商 SKU</th><th>采购价</th><th>币种</th><th>MOQ</th><th>库存</th><th>交期</th><th>履约模式</th><th>状态</th><th>校验</th><th></th></tr></thead><tbody id="import-preview-tbody"></tbody></table></div>
             </div>
           </section>

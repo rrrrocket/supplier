@@ -47,6 +47,7 @@ a { color: inherit; text-decoration: none; }
 img, svg { display: block; }
 [hidden] { display: none !important; }
 .hidden { display: none !important; }
+.sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 .container { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
 .muted { color: var(--muted); }
 .text-success { color: var(--success); }
@@ -434,6 +435,7 @@ img, svg { display: block; }
 
 .import-process-panel { margin-bottom: 16px; }
 .import-source-panel { margin-bottom: 16px; }
+.import-workbook-config { margin-bottom: 16px; }
 .smart-import-form { display: grid; gap: 16px; }
 .import-description { min-height: 92px; }
 .dropzone { border: 1.5px dashed #b6c8e8; border-radius: 15px; padding: 46px 24px; text-align: center; background: #fbfdff; transition: 150ms ease; }
@@ -451,6 +453,29 @@ img, svg { display: block; }
 .guide-number { width: 25px; height: 25px; border-radius: 8px; display: grid; place-items: center; color: var(--primary); background: var(--primary-soft); font-size: 10px; font-weight: 800; }
 .guide-copy strong { display: block; font-size: 12px; }
 .guide-copy span { display: block; color: var(--muted); font-size: 10px; line-height: 1.5; margin-top: 4px; }
+.import-sheet-list { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 16px; }
+.import-sheet-chip { display: inline-flex; align-items: center; gap: 8px; min-width: 140px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 11px; color: var(--ink-soft); background: #fff; cursor: pointer; transition: 150ms ease; }
+.import-sheet-chip:hover { border-color: #b6c8e8; }
+.import-sheet-chip.selected { border-color: #84adff; background: var(--primary-soft); box-shadow: inset 0 0 0 1px rgba(24,97,212,.08); }
+.import-sheet-chip input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+.import-sheet-chip span { min-width: 0; }
+.import-sheet-chip strong, .import-sheet-chip small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.import-sheet-chip strong { font-size: 11px; }
+.import-sheet-chip small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.import-sheet-configs { display: grid; gap: 14px; margin-bottom: 16px; }
+.import-sheet-card { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+.import-sheet-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 14px; }
+.import-sheet-card-head h3 { margin: 0; font-size: 14px; }
+.import-sheet-card-head p { margin: 5px 0 0; color: var(--muted); font-size: 10px; }
+.import-header-row { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.import-header-row .input { width: 76px; min-height: 34px; padding: 6px 8px; box-shadow: none; }
+.import-sheet-sample { margin-bottom: 14px; padding: 10px 11px; border-radius: 10px; background: var(--surface-soft); overflow: hidden; }
+.import-sheet-sample > span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 9px; font-weight: 700; }
+.import-sheet-sample-row { display: flex; gap: 12px; overflow: hidden; color: var(--ink-soft); font-size: 9px; white-space: nowrap; }
+.import-sheet-sample-row + .import-sheet-sample-row { margin-top: 5px; }
+.import-sheet-sample-row span { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.import-sheet-sample-row strong { color: var(--muted); margin-right: 3px; }
+.import-sheet-mappings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .import-preview { margin-top: 15px; }
 .import-warning { margin-bottom: 14px; padding: 10px 12px; border: 1px solid #fedf89; border-radius: 10px; color: #93370d; background: var(--warning-soft); font-size: 11px; line-height: 1.55; }
 .import-section-title { margin: 0 0 12px; color: var(--ink-soft); font-size: 13px; }
@@ -467,6 +492,11 @@ img, svg { display: block; }
 .import-preview-table-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .import-preview-table-head .import-section-title { margin-bottom: 4px; }
 .import-preview-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.import-preview-controls { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 12px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-soft); }
+.import-preview-filters, .import-pagination { display: flex; align-items: center; gap: 9px; }
+.import-preview-filters .select { min-width: 160px; min-height: 34px; padding: 6px 9px; box-shadow: none; font-size: 11px; }
+.import-preview-filters .checkbox-row { align-items: center; font-size: 11px; white-space: nowrap; }
+.import-preview-filters .checkbox-row input { margin-top: 0; }
 .import-preview-table { min-width: 1900px; }
 .import-preview-table th, .import-preview-table td { padding: 8px 7px; white-space: nowrap; }
 .import-cell-input { min-height: 34px; min-width: 96px; padding: 6px 8px; font-size: 11px; box-shadow: none; }
@@ -478,6 +508,9 @@ img, svg { display: block; }
 .import-row-source { color: var(--muted); font-size: 10px; }
 .import-row-delete { color: var(--danger); }
 .import-preview-table tr.row-invalid td { background: #fff9f8; }
+.import-preview-table tr.row-conflict td { background: #fff4ed; }
+.import-preview-table tr.row-excluded td { color: var(--muted); background: #f7f8fa; opacity: .72; }
+.import-preview-table tr.row-excluded .import-cell-input { text-decoration: line-through; }
 .import-row-errors { color: var(--danger); font-size: 10px; }
 .import-result { margin-top: 15px; }
 .import-job-list { display: grid; }
@@ -583,6 +616,9 @@ dialog::backdrop { background: rgba(7,17,38,.55); backdrop-filter: blur(3px); }
   .import-preview-table-head { align-items: flex-start; flex-direction: column; }
   .import-preview-actions { width: 100%; flex-wrap: wrap; justify-content: flex-start; }
   .import-mapping-grid { grid-template-columns: 1fr; }
+  .import-sheet-mappings { grid-template-columns: 1fr; }
+  .import-sheet-card-head, .import-preview-controls { align-items: stretch; flex-direction: column; }
+  .import-preview-filters, .import-pagination { flex-wrap: wrap; }
   .import-guide { grid-template-columns: 1fr; }
   .import-mapping-controls { grid-template-columns: 1fr; }
   .apply-card-head, .apply-card-body { padding-left: 19px; padding-right: 19px; }
