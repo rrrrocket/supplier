@@ -414,6 +414,7 @@ function invalidateWorkbookPreview() {
   if (state.importWorkbook) {
     state.importWorkbook.rows = [];
     state.importWorkbook.page = 1;
+    state.importWorkbook.lastExcludedCorrections = [];
   }
   document.querySelector("#import-preview").classList.add("hidden");
   const button = document.querySelector("#preview-selected-sheets");

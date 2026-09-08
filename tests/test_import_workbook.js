@@ -408,7 +408,12 @@ test("changing a sheet config invalidates an in-flight preview", async () => {
   app.context.file = { name: "config.xlsx", size: 100 };
   app.context.inspection = inspection("config.xlsx");
   app.context.result = previewResult("config.xlsx");
-  app.evaluate("state.importFile = file; state.importWorkbook = ImportWorkbook.createWorkbookState(inspection); bindEvents()");
+  app.evaluate(`
+    state.importFile = file;
+    state.importWorkbook = ImportWorkbook.createWorkbookState(inspection);
+    state.importWorkbook.lastExcludedCorrections = [{ source_row: 2 }];
+    bindEvents();
+  `);
 
   const pendingPreview = app.evaluate("previewSelectedSheets()");
   const configListener = app.element("#import-sheet-configs").listeners.get("input")[0];
@@ -425,6 +430,7 @@ test("changing a sheet config invalidates an in-flight preview", async () => {
 
   assert.equal(app.evaluate("state.importWorkbook.configs.Sheet1.header_row"), 2);
   assert.equal(app.evaluate("state.importWorkbook.rows.length"), 0);
+  assert.equal(app.evaluate("state.importWorkbook.lastExcludedCorrections.length"), 0);
   assert.equal(app.element("#import-preview").classList.contains("hidden"), true);
   assert.deepEqual(app.toasts, []);
 });
