@@ -13,10 +13,20 @@ from openpyxl import Workbook
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
+from sqlalchemy import select
 
 import app.services.import_mapping as import_mapping
 import app.api.routes.imports as import_routes
 from app.api.routes.imports import MAX_IMPORT_FORM_PART_SIZE
+from app.db.session import SessionLocal
+from app.models.entities import (
+    Brand,
+    Organization,
+    OrganizationType,
+    Product,
+    SupplierOffer,
+    SupplierSku,
+)
 from tests.conftest import SUPPLIER_EMAIL, SUPPLIER_PASSWORD
 
 
@@ -658,7 +668,19 @@ def test_supplier_application(client: TestClient) -> None:
     assert data["status"] == "PENDING"
 
 
-def test_create_product_and_offer(authenticated_client: TestClient) -> None:
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"price": "49.9000"},
+        {"stock_qty": 321},
+        {"moq": 25},
+        {"lead_time_days": 14},
+    ],
+)
+def test_create_product_and_offer(
+    authenticated_client: TestClient,
+    changes: dict[str, object],
+) -> None:
     suffix = uuid4().hex[:8]
     product_response = authenticated_client.post(
         "/api/products",
@@ -698,11 +720,40 @@ def test_create_product_and_offer(authenticated_client: TestClient) -> None:
 
     updated = authenticated_client.patch(
         f"/api/offers/{created['id']}",
-        json={"price": "49.9000"},
+        json=changes,
     ).json()
 
     assert updated["supplier_sku_id"] == supplier_sku_id
     assert updated["supplier_sku_code"] == f"SKU-{suffix}"
+
+
+def test_legacy_supplier_sku_offer_payload_and_response_remain_compatible(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    product = authenticated_client.post(
+        "/api/products",
+        json={
+            "name": f"旧工作台兼容商品-{suffix}",
+            "brand": "TEST",
+            "model": suffix,
+            "category": "工业自动化",
+            "status": "ACTIVE",
+        },
+    ).json()
+
+    response = authenticated_client.post(
+        "/api/offers",
+        json={
+            "product_id": product["id"],
+            "supplier_sku": f"LEGACY-WORKBENCH-{suffix}",
+            "price": "18.5000",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["supplier_sku"] == f"LEGACY-WORKBENCH-{suffix}"
+    assert response.json()["supplier_sku_code"] == f"LEGACY-WORKBENCH-{suffix}"
 
 
 def test_product_requires_an_assigned_non_empty_brand(
@@ -813,6 +864,88 @@ def test_import_rejects_unassigned_brand_without_partial_catalog_writes(
         "/api/products", params={"q": f"未分配导入商品-{suffix}"}
     ).json()
     assert products == []
+
+
+def test_import_does_not_update_mismatched_other_tenant_offer(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    sku_code = f"MISMATCHED-TENANT-{suffix}"
+    product_name = f"跨租户历史报价商品-{suffix}"
+    product_response = authenticated_client.post(
+        "/api/products",
+        json={
+            "name": product_name,
+            "brand": "TEST",
+            "model": sku_code,
+            "category": "工业自动化",
+            "status": "ACTIVE",
+        },
+    )
+    assert product_response.status_code == 201
+
+    with SessionLocal() as db:
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+        )
+        brand = db.scalar(select(Brand).where(Brand.code == "TEST-BRAND"))
+        product = db.get(Product, product_response.json()["id"])
+        assert supplier is not None
+        assert brand is not None
+        assert product is not None
+
+        other_supplier = Organization(
+            code=f"MISMATCHED-OFFER-{suffix}",
+            name=f"跨租户报价组织-{suffix}",
+            organization_type=OrganizationType.SUPPLIER.value,
+        )
+        supplier_sku = SupplierSku(
+            supplier_id=supplier.id,
+            brand_id=brand.id,
+            product_id=product.id,
+            variant_id=None,
+            supplier_sku_code=sku_code,
+            status="ACTIVE",
+        )
+        db.add_all([other_supplier, supplier_sku])
+        db.flush()
+        mismatched_offer = SupplierOffer(
+            organization_id=other_supplier.id,
+            product_id=product.id,
+            supplier_sku_id=supplier_sku.id,
+            supplier_sku=sku_code,
+            price="99.0000",
+            currency="CNY",
+            moq=1,
+            stock_qty=0,
+            lead_time_days=3,
+            fulfillment_mode="PURCHASE",
+            status="ACTIVE",
+        )
+        db.add(mismatched_offer)
+        db.commit()
+        mismatched_offer_id = mismatched_offer.id
+
+    row = submitted_offer_row(
+        sku=sku_code,
+        name=product_name,
+        source_sheet="Sheet1",
+        source_row=2,
+        price="12.5000",
+    )
+    response = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={"rows_json": json.dumps([row], ensure_ascii=False)},
+        files={"file": ("mismatched.csv", BytesIO(b"source file"), "text/csv")},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "FAILED"
+    assert response.json()["error_rows"] == 1
+    with SessionLocal() as db:
+        mismatched_offer = db.get(SupplierOffer, mismatched_offer_id)
+        assert mismatched_offer is not None
+        assert str(mismatched_offer.price) == "99.0000"
 
 
 def test_offers_can_filter_by_brand(authenticated_client: TestClient) -> None:

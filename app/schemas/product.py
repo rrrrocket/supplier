@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ProductCreate(BaseModel):
@@ -44,7 +44,13 @@ class ProductView(BaseModel):
 
 class OfferCreate(BaseModel):
     product_id: str
-    supplier_sku_code: str = Field(min_length=1, max_length=120)
+    supplier_sku_code: str | None = Field(default=None, min_length=1, max_length=120)
+    supplier_sku: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=120,
+        deprecated=True,
+    )
     price: Decimal = Field(gt=0, max_digits=14, decimal_places=4)
     currency: str = Field(default="CNY", min_length=3, max_length=8)
     moq: int = Field(default=1, ge=1, le=10_000_000)
@@ -54,6 +60,18 @@ class OfferCreate(BaseModel):
     valid_until: date | None = None
     status: str = "DRAFT"
     notes: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def resolve_supplier_sku_code(self) -> OfferCreate:
+        code = (self.supplier_sku_code or "").strip()
+        legacy_code = (self.__dict__.get("supplier_sku") or "").strip()
+        if not code and not legacy_code:
+            raise ValueError("supplier_sku_code or supplier_sku is required")
+        if code and legacy_code and code != legacy_code:
+            raise ValueError("supplier_sku_code and supplier_sku must match")
+        self.supplier_sku_code = code or legacy_code
+        self.supplier_sku = legacy_code or code
+        return self
 
     @field_validator("currency")
     @classmethod
@@ -79,6 +97,7 @@ class OfferView(BaseModel):
     id: str
     supplier_sku_id: str
     supplier_sku_code: str
+    supplier_sku: str
     product_id: str
     product_name: str
     brand_id: str

@@ -693,9 +693,17 @@ async def import_product_offers(
             offer = db.scalar(
                 select(SupplierOffer).where(
                     SupplierOffer.supplier_sku_id == supplier_sku.id,
+                    SupplierOffer.organization_id == user.organization_id,
                 )
             )
             if offer is None:
+                mismatched_offer_id = db.scalar(
+                    select(SupplierOffer.id).where(
+                        SupplierOffer.supplier_sku_id == supplier_sku.id,
+                    )
+                )
+                if mismatched_offer_id is not None:
+                    raise ValueError("supplier SKU offer does not belong to supplier")
                 offer = SupplierOffer(
                     organization_id=user.organization_id,
                     product_id=product.id,

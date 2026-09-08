@@ -24,6 +24,7 @@ def offer_view(
         id=offer.id,
         supplier_sku_id=supplier_sku.id,
         supplier_sku_code=supplier_sku.supplier_sku_code,
+        supplier_sku=supplier_sku.supplier_sku_code,
         product_id=offer.product_id,
         product_name=product.name,
         brand_id=brand.id,
@@ -119,6 +120,13 @@ def create_offer(
             detail="product does not belong to brand",
         )
 
+    supplier_sku_code = payload.supplier_sku_code
+    if supplier_sku_code is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="supplier_sku_code or supplier_sku is required",
+        )
+
     try:
         supplier_sku = ensure_supplier_sku(
             db,
@@ -126,7 +134,7 @@ def create_offer(
             brand_id=product.brand_id,
             product_id=product.id,
             variant_id=None,
-            supplier_sku_code=payload.supplier_sku_code,
+            supplier_sku_code=supplier_sku_code,
         )
     except ValueError as exc:
         raise HTTPException(
