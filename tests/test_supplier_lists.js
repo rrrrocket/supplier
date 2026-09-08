@@ -13,18 +13,28 @@ const source = fs.readFileSync(
 
 function deferred() {
   let resolve;
-  const promise = new Promise((resolvePromise) => { resolve = resolvePromise; });
-  return { promise, resolve };
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
 }
 
 
 function element() {
+  let html = "";
   return {
     addEventListener() {},
     classList: { add() {}, remove() {}, toggle() {} },
     dataset: {},
     disabled: false,
-    innerHTML: "",
+    get innerHTML() { return html; },
+    set innerHTML(value) {
+      html = value;
+      this.innerHTMLWrites += 1;
+    },
+    innerHTMLWrites: 0,
     textContent: "",
     value: "",
   };
@@ -143,6 +153,27 @@ test("product table pagination never truncates offer product options", async () 
 });
 
 
+test("product page changes do not rebuild all offer product options", async () => {
+  let products = rows("Initial product", 1792);
+  const harness = supplierListsHarness(chunkApi({ get products() { return products; }, offers: [] }, []));
+
+  await harness.evaluate("loadProducts()");
+  const productOptions = harness.elements.get("#offer-product-id");
+  const initialWrites = productOptions.innerHTMLWrites;
+
+  harness.evaluate("state.productPage = 2; renderProducts()");
+  assert.equal(productOptions.innerHTMLWrites, initialWrites);
+
+  harness.evaluate("state.productPage = 36");
+  products = rows("Refreshed product", 60);
+  await harness.evaluate("loadProducts()");
+  assert.equal(productOptions.innerHTMLWrites, initialWrites + 1);
+  assert.equal((productOptions.innerHTML.match(/<option/g) || []).length, 61);
+  assert.match(productOptions.innerHTML, /Refreshed product 60/);
+  assert.equal(harness.evaluate("state.productPage"), 2);
+});
+
+
 test("offers load all rows, paginate, and search or brand changes reset page one", async () => {
   const requests = [];
   const offers = rows("Offer", 1792);
@@ -195,6 +226,84 @@ test("a slow old product request cannot overwrite a newer search result", async 
   );
   assert.match(harness.elements.get("#products-tbody").innerHTML, /New result 1/);
   assert.doesNotMatch(harness.elements.get("#products-tbody").innerHTML, /Old result/);
+});
+
+
+test("stale rejected product and offer requests are ignored", async () => {
+  for (const resource of ["products", "offers"]) {
+    const oldRequest = deferred();
+    const currentRows = rows(`Current ${resource}`, 1);
+    const harness = supplierListsHarness((requestPath) => {
+      const url = new URL(requestPath, "https://supplier.test");
+      if (url.searchParams.get("q") === "old") return oldRequest.promise;
+      return Promise.resolve(currentRows);
+    });
+    const loadFunction = resource === "products" ? "loadProducts" : "loadOffers";
+
+    const oldLoad = harness.evaluate(`${loadFunction}("old")`);
+    await harness.evaluate(`${loadFunction}("new")`);
+    oldRequest.reject(new Error(`stale ${resource} failure`));
+
+    await assert.doesNotReject(oldLoad);
+    assert.equal(harness.evaluate(`state.${resource}[0].name`), `Current ${resource} 1`);
+  }
+});
+
+
+test("current product and offer request failures still reject", async () => {
+  for (const resource of ["products", "offers"]) {
+    const harness = supplierListsHarness(async () => {
+      throw new Error(`current ${resource} failure`);
+    });
+    const loadFunction = resource === "products" ? "loadProducts" : "loadOffers";
+
+    await assert.rejects(
+      harness.evaluate(`${loadFunction}("current")`),
+      new RegExp(`current ${resource} failure`),
+    );
+  }
+});
+
+
+test("an old offer-brand route load cannot restore an obsolete filter", async () => {
+  const brandRequest = deferred();
+  const requests = [];
+  const harness = supplierListsHarness((requestPath) => {
+    requests.push(requestPath);
+    const url = new URL(requestPath, "https://supplier.test");
+    if (url.pathname === "/api/offers/brands") return brandRequest.promise;
+    const brand = url.searchParams.get("brand") || "A";
+    return Promise.resolve(rows(`Offer brand ${brand}`, 1));
+  });
+  const brandSelect = harness.elements.get("#offers-brand") || harness.evaluate('document.querySelector("#offers-brand")');
+  brandSelect.value = "A";
+
+  const routeLoad = harness.evaluate('renderRoute("offers")');
+  brandSelect.value = "B";
+  await harness.evaluate('loadOffers(null, "B")');
+  brandRequest.resolve(["A", "B"]);
+  await routeLoad;
+
+  assert.equal(brandSelect.value, "B");
+  assert.equal(harness.evaluate("state.offers[0].name"), "Offer brand B 1");
+  assert.equal(
+    requests.filter((requestPath) => requestPath.startsWith("/api/offers?")).length,
+    1,
+  );
+});
+
+
+test("empty supplier lists keep both pagination boundaries disabled", () => {
+  const harness = supplierListsHarness(async () => []);
+
+  harness.evaluate("renderProducts(); renderOffers()");
+
+  assert.equal(harness.elements.get("#products-count").textContent, "显示 0–0 / 共 0 条");
+  assert.equal(harness.elements.get("#products-prev-page").disabled, true);
+  assert.equal(harness.elements.get("#products-next-page").disabled, true);
+  assert.equal(harness.elements.get("#offers-count").textContent, "显示 0–0 / 共 0 条");
+  assert.equal(harness.elements.get("#offers-prev-page").disabled, true);
+  assert.equal(harness.elements.get("#offers-next-page").disabled, true);
 });
 
 

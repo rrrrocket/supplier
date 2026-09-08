@@ -7,6 +7,8 @@ const state = {
   offerPage: 1,
   productRequestRevision: 0,
   offerRequestRevision: 0,
+  offerBrandRequestRevision: 0,
+  offerRouteRevision: 0,
   offerBrands: [],
   imports: [],
   profile: null,
@@ -76,6 +78,7 @@ function setRoute(route) {
 }
 
 async function renderRoute(route) {
+  const offerRouteRevision = ++state.offerRouteRevision;
   document.querySelectorAll(".app-view").forEach((node) => {
     node.classList.toggle("active", node.dataset.view === route);
   });
@@ -90,7 +93,8 @@ async function renderRoute(route) {
     if (route === "dashboard") await loadDashboard();
     if (route === "products") await loadProducts();
     if (route === "offers") {
-      await loadOfferBrands();
+      const brandsLoaded = await loadOfferBrands(offerRouteRevision);
+      if (!brandsLoaded || state.offerRouteRevision !== offerRouteRevision) return;
       await loadOffers();
     }
     if (route === "imports") await loadImports();
@@ -185,7 +189,13 @@ async function fetchAllListRows(path, params, isCurrent) {
     const chunkParams = new URLSearchParams(params);
     chunkParams.set("limit", String(listChunkSize));
     chunkParams.set("offset", String(offset));
-    const chunk = await Matrix.api(`${path}?${chunkParams.toString()}`);
+    let chunk;
+    try {
+      chunk = await Matrix.api(`${path}?${chunkParams.toString()}`);
+    } catch (error) {
+      if (!isCurrent()) return null;
+      throw error;
+    }
     if (!isCurrent()) return null;
     const signature = chunk.map((row) => row.id).join("\n");
     if (pageSignatures.has(signature)) break;
@@ -215,6 +225,7 @@ async function loadProducts(query = null) {
   if (products === null) return;
   state.products = products;
   renderProducts();
+  refreshOfferProductOptions();
 }
 
 function renderProducts() {
@@ -244,20 +255,27 @@ function renderProducts() {
   document.querySelector("#products-page").textContent = `第 ${state.productPage} / ${totalPages} 页`;
   document.querySelector("#products-prev-page").disabled = state.productPage === 1;
   document.querySelector("#products-next-page").disabled = state.productPage === totalPages;
-  refreshOfferProductOptions();
 }
 
-async function loadOfferBrands() {
+async function loadOfferBrands(expectedRouteRevision = state.offerRouteRevision) {
+  const revision = ++state.offerBrandRequestRevision;
   const select = document.querySelector("#offers-brand");
+  const offerBrands = await Matrix.api("/api/offers/brands");
+  if (
+    revision !== state.offerBrandRequestRevision
+    || expectedRouteRevision !== state.offerRouteRevision
+  ) return false;
   const selected = select.value;
-  state.offerBrands = await Matrix.api("/api/offers/brands");
+  state.offerBrands = offerBrands;
   select.innerHTML = '<option value="">全部品牌</option>' + state.offerBrands.map((brand) => `
     <option value="${Matrix.escapeHtml(brand)}">${Matrix.escapeHtml(brand)}</option>
   `).join("");
   if (state.offerBrands.includes(selected)) select.value = selected;
+  return true;
 }
 
 async function loadOffers(query = null, brand = null) {
+  if (query !== null || brand !== null) state.offerRouteRevision += 1;
   const revision = ++state.offerRequestRevision;
   const params = new URLSearchParams();
   const searchValue = query === null ? document.querySelector("#offers-search").value.trim() : query.trim();
@@ -451,8 +469,7 @@ async function submitOffer(event) {
     });
     document.querySelector("#offer-dialog").close();
     Matrix.toast(isEdit ? "报价已更新" : "报价已创建", "库存快照与审计事件已同步写入。", "success");
-    await loadOfferBrands();
-    await loadOffers();
+    if (await loadOfferBrands()) await loadOffers();
   } catch (error) {
     Matrix.toast("保存失败", error.message, "error");
   } finally {
@@ -944,8 +961,7 @@ async function confirmSmartImport() {
     document.querySelector("#analyze-import").classList.remove("hidden");
     document.querySelector("#analyze-import").disabled = true;
     await Promise.all([loadImports(), loadProducts()]);
-    await loadOfferBrands();
-    await loadOffers();
+    if (await loadOfferBrands()) await loadOffers();
   } catch (error) {
     if (!isCurrentImportWorkflow(workflowRevision)) return;
     Matrix.toast("导入失败", error.message, "error");
