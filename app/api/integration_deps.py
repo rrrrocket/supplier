@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated, Callable
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 
-from app.api.deps import DbSession
 from app.core.integration_security import verify_integration_token
 from app.db.session import SessionLocal
 from app.models.entities import IntegrationClient
@@ -20,14 +20,14 @@ def unauthorized() -> HTTPException:
     )
 
 
-def persist_last_used_at(client_id: str, used_at: datetime) -> None:
-    with SessionLocal.begin() as usage_db:
-        client = usage_db.get(IntegrationClient, client_id)
-        if client is not None:
-            client.last_used_at = used_at
+@dataclass(frozen=True, slots=True)
+class AuthenticatedIntegrationClient:
+    id: str
+    name: str
+    scopes: tuple[str, ...]
 
 
-def get_integration_principal(request: Request, db: DbSession) -> IntegrationClient:
+def get_integration_principal(request: Request) -> AuthenticatedIntegrationClient:
     authorization = request.headers.get("Authorization", "")
     parts = authorization.split()
     if len(parts) != 2 or parts[0].lower() != "bearer":
@@ -37,39 +37,48 @@ def get_integration_principal(request: Request, db: DbSession) -> IntegrationCli
     if not plaintext.startswith("m1i_") or len(plaintext) <= 12:
         raise unauthorized()
 
-    client = db.scalar(
-        select(IntegrationClient).where(
-            IntegrationClient.token_prefix == plaintext[:12]
+    with SessionLocal.begin() as auth_db:
+        client = auth_db.scalar(
+            select(IntegrationClient).where(
+                IntegrationClient.token_prefix == plaintext[:12]
+            )
         )
-    )
-    expected_hash = client.token_hash if client is not None else "0" * 64
-    valid_hash = verify_integration_token(plaintext, expected_hash)
-    now = datetime.now(timezone.utc)
-    if (
-        client is None
-        or not valid_hash
-        or not client.is_active
-        or (
-            client.expires_at is not None
-            and client.expires_at.astimezone(timezone.utc) <= now
-        )
-    ):
-        raise unauthorized()
+        expected_hash = client.token_hash if client is not None else "0" * 64
+        valid_hash = verify_integration_token(plaintext, expected_hash)
+        now = datetime.now(timezone.utc)
+        if (
+            client is None
+            or not valid_hash
+            or not client.is_active
+            or (
+                client.expires_at is not None
+                and client.expires_at.astimezone(timezone.utc) <= now
+            )
+        ):
+            raise unauthorized()
 
-    persist_last_used_at(client.id, now)
-    return client
+        client.last_used_at = now
+        principal = AuthenticatedIntegrationClient(
+            id=client.id,
+            name=client.name,
+            scopes=tuple(client.scopes),
+        )
+
+    return principal
 
 
 IntegrationPrincipal = Annotated[
-    IntegrationClient,
+    AuthenticatedIntegrationClient,
     Depends(get_integration_principal),
 ]
 
 
 def require_integration_scope(
     scope: str,
-) -> Callable[[IntegrationPrincipal], IntegrationClient]:
-    def dependency(principal: IntegrationPrincipal) -> IntegrationClient:
+) -> Callable[[IntegrationPrincipal], AuthenticatedIntegrationClient]:
+    def dependency(
+        principal: IntegrationPrincipal,
+    ) -> AuthenticatedIntegrationClient:
         if scope not in principal.scopes:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -81,18 +90,18 @@ def require_integration_scope(
 
 
 SupplierReader = Annotated[
-    IntegrationClient,
+    AuthenticatedIntegrationClient,
     Depends(require_integration_scope("suppliers:read")),
 ]
 BrandReader = Annotated[
-    IntegrationClient,
+    AuthenticatedIntegrationClient,
     Depends(require_integration_scope("supplier-brands:read")),
 ]
 SkuReader = Annotated[
-    IntegrationClient,
+    AuthenticatedIntegrationClient,
     Depends(require_integration_scope("supplier-skus:read")),
 ]
 CostReader = Annotated[
-    IntegrationClient,
+    AuthenticatedIntegrationClient,
     Depends(require_integration_scope("supplier-costs:read")),
 ]

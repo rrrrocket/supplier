@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import uuid4
@@ -10,16 +11,24 @@ import psycopg
 import pytest
 from fastapi import Depends, HTTPException, status
 from fastapi.testclient import TestClient
-from sqlalchemy import select, text
+from sqlalchemy import create_engine, select, text
+from sqlalchemy.orm import Session, sessionmaker
 
+from app.api import integration_deps
 from app.api.deps import DbSession
 from app.api.integration_deps import SupplierReader
 from app.api.routes import admin_catalog
 from app.core.integration_security import create_integration_token, verify_integration_token
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, get_db
 from app.main import app
 from app.models.entities import EventLog, IntegrationClient, Organization
-from tests.conftest import ADMIN_EMAIL, ADMIN_PASSWORD, SUPPLIER_EMAIL, SUPPLIER_PASSWORD
+from tests.conftest import (
+    ADMIN_EMAIL,
+    ADMIN_PASSWORD,
+    SUPPLIER_EMAIL,
+    SUPPLIER_PASSWORD,
+    TEST_DATABASE_URL,
+)
 from tests.migration_utils import connect, run_migrations, temporary_postgresql_database
 
 
@@ -36,6 +45,15 @@ ALL_SCOPES = [
 @app.get("/api/test/integration-supplier-reader", include_in_schema=False)
 def integration_supplier_reader(principal: SupplierReader) -> dict[str, str]:
     return {"client_id": principal.id}
+
+
+@app.get("/api/test/integration-principal-snapshot", include_in_schema=False)
+def integration_principal_snapshot(principal: SupplierReader) -> dict[str, object]:
+    return {
+        "client_id": principal.id,
+        "name": principal.name,
+        "scopes": principal.scopes,
+    }
 
 
 def stage_unrelated_supplier_change(db: DbSession) -> None:
@@ -344,6 +362,52 @@ def test_successful_read_persists_last_used_at(client: TestClient) -> None:
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {"client_id": client_id}
+    with SessionLocal() as db:
+        stored = db.get(IntegrationClient, client_id)
+        assert stored is not None
+        assert stored.last_used_at is not None
+
+
+def test_authentication_uses_one_short_lived_connection_and_returns_snapshot(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = create_client(client, scopes=["suppliers:read"])
+    client_id = str(created["id"])
+    single_connection_engine = create_engine(
+        TEST_DATABASE_URL,
+        pool_size=1,
+        max_overflow=0,
+        pool_timeout=0.1,
+    )
+    SingleConnectionSession = sessionmaker(
+        bind=single_connection_engine,
+        autoflush=False,
+        expire_on_commit=True,
+    )
+
+    def get_single_connection_db() -> Iterator[Session]:
+        with SingleConnectionSession() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = get_single_connection_db
+    monkeypatch.setattr(integration_deps, "SessionLocal", SingleConnectionSession)
+    try:
+        with TestClient(app, raise_server_exceptions=False) as isolated_client:
+            response = isolated_client.get(
+                "/api/test/integration-principal-snapshot",
+                headers=bearer(str(created["token"])),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        single_connection_engine.dispose()
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {
+        "client_id": client_id,
+        "name": created["name"],
+        "scopes": ["suppliers:read"],
+    }
     with SessionLocal() as db:
         stored = db.get(IntegrationClient, client_id)
         assert stored is not None
