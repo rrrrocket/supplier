@@ -131,6 +131,15 @@ def is_supplier_active(
     )
 
 
+def supplier_context_updated_at(
+    supplier: Organization,
+    profile: SupplierProfile | None,
+) -> datetime:
+    if profile is None:
+        return supplier.updated_at
+    return max(supplier.updated_at, profile.updated_at)
+
+
 def ranked_cooperations(supplier_id: str):
     active_first = case(
         (SupplierBrandCooperation.status == ACTIVE, 0),
@@ -253,6 +262,7 @@ def list_supplier_brands(
     supplier, profile = supplier_context(db, supplier_id)
     current = ranked_cooperations(supplier_id)
     effective_updated_at = func.greatest(
+        supplier_context_updated_at(supplier, profile),
         Brand.updated_at,
         current.c.cooperation_updated_at,
     ).label("effective_updated_at")
@@ -323,6 +333,7 @@ def list_supplier_skus(
     supplier, profile = supplier_context(db, supplier_id)
     current = ranked_cooperations(supplier_id)
     effective_updated_at = func.greatest(
+        supplier_context_updated_at(supplier, profile),
         SupplierSku.updated_at,
         Brand.updated_at,
         Product.updated_at,
@@ -356,11 +367,14 @@ def list_supplier_skus(
                 Product.created_by_organization_id == supplier_id,
             ),
         )
-        .join(current, current.c.brand_id == SupplierSku.brand_id)
-        .where(
-            SupplierSku.supplier_id == supplier_id,
-            current.c.cooperation_rank == 1,
+        .outerjoin(
+            current,
+            and_(
+                current.c.brand_id == SupplierSku.brand_id,
+                current.c.cooperation_rank == 1,
+            ),
         )
+        .where(SupplierSku.supplier_id == supplier_id)
     )
     if not include_inactive:
         statement = statement.where(active_condition)

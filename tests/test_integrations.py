@@ -8,8 +8,9 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.db.session import SessionLocal
 from app.models.entities import (
@@ -32,6 +33,33 @@ BASE_PATH = "/api/integrations/v1"
 
 def auth_headers(integration_client: dict[str, Any]) -> dict[str, str]:
     return {"Authorization": f"Bearer {integration_client['token']}"}
+
+
+def collect_integration_pages(
+    client: TestClient,
+    path: str,
+    integration_client: dict[str, Any],
+    *,
+    updated_since: datetime,
+) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {
+        "include_inactive": "true",
+        "updated_since": updated_since.isoformat(),
+        "limit": 1,
+    }
+    items: list[dict[str, Any]] = []
+    while True:
+        response = client.get(
+            path,
+            headers=auth_headers(integration_client),
+            params=params,
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        items.extend(payload["items"])
+        if payload["next_cursor"] is None:
+            return items
+        params["cursor"] = payload["next_cursor"]
 
 
 def test_cursor_is_compact_urlsafe_utc_json_and_requires_aware_time() -> None:
@@ -479,6 +507,46 @@ def test_brand_list_cursor_traverses_all_pages_without_duplicates(
     assert len(seen) == len(set(seen))
 
 
+def test_brand_updated_since_is_strict_for_visible_brand_changes(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    integration_catalog: dict[str, Any],
+) -> None:
+    brand_id = integration_catalog["active_brand_id"]
+    watermark = integration_catalog["profile_time"]
+    changed_at = watermark + timedelta(minutes=30)
+    with SessionLocal() as db:
+        brand = db.get(Brand, brand_id)
+        assert brand is not None
+        original_updated_at = brand.updated_at
+        brand.updated_at = changed_at
+        db.commit()
+
+    try:
+        response = client.get(
+            f"{BASE_PATH}/suppliers/{integration_catalog['first_supplier_id']}/brands",
+            headers=auth_headers(integration_client),
+            params={"updated_since": watermark.isoformat()},
+        )
+        strict_response = client.get(
+            f"{BASE_PATH}/suppliers/{integration_catalog['first_supplier_id']}/brands",
+            headers=auth_headers(integration_client),
+            params={"updated_since": changed_at.isoformat()},
+        )
+
+        assert response.status_code == 200
+        assert [item["brand_id"] for item in response.json()["items"]] == [brand_id]
+        assert datetime.fromisoformat(response.json()["items"][0]["updated_at"]) == changed_at
+        assert strict_response.status_code == 200
+        assert strict_response.json()["items"] == []
+    finally:
+        with SessionLocal() as db:
+            brand = db.get(Brand, brand_id)
+            assert brand is not None
+            brand.updated_at = original_updated_at
+            db.commit()
+
+
 def test_sku_list_derives_active_cooperation_and_include_inactive_snapshot(
     client: TestClient,
     integration_client: dict[str, Any],
@@ -529,6 +597,285 @@ def test_sku_list_derives_active_cooperation_and_include_inactive_snapshot(
     assert cooperation_inactive["status"] == "INACTIVE"
     assert cooperation_inactive["commercial_mode"] == "B2B"
     assert integration_catalog["other_sku_id"] not in inactive_items
+
+
+def test_sku_updated_since_cursor_uses_id_tiebreak_for_identical_timestamps(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    integration_catalog: dict[str, Any],
+) -> None:
+    supplier_id = integration_catalog["first_supplier_id"]
+    brand_id = integration_catalog["active_brand_id"]
+    watermark = integration_catalog["profile_time"]
+    changed_at = watermark + timedelta(minutes=45)
+    suffix = uuid4().hex[:8]
+    with SessionLocal() as db:
+        product = Product(
+            created_by_organization_id=supplier_id,
+            brand_id=brand_id,
+            brand=f"游标测试品牌 {suffix}",
+            name=f"游标测试商品 {suffix}",
+            model="CURSOR-MODEL",
+            category="集成测试",
+            created_at=watermark,
+            updated_at=watermark,
+        )
+        db.add(product)
+        db.flush()
+        sku_ids = [f"it-cursor-a-{suffix}", f"it-cursor-b-{suffix}"]
+        db.add_all(
+            [
+                SupplierSku(
+                    id=sku_id,
+                    supplier_id=supplier_id,
+                    brand_id=brand_id,
+                    product_id=product.id,
+                    supplier_sku_code=f"CURSOR-{index}-{suffix}",
+                    status=CatalogStatus.ACTIVE.value,
+                    created_at=watermark,
+                    updated_at=changed_at,
+                )
+                for index, sku_id in enumerate(sku_ids, start=1)
+            ]
+        )
+        db.commit()
+        product_id = product.id
+
+    try:
+        items = collect_integration_pages(
+            client,
+            f"{BASE_PATH}/suppliers/{supplier_id}/skus",
+            integration_client,
+            updated_since=watermark,
+        )
+        strict_items = collect_integration_pages(
+            client,
+            f"{BASE_PATH}/suppliers/{supplier_id}/skus",
+            integration_client,
+            updated_since=changed_at,
+        )
+
+        assert [item["supplier_sku_id"] for item in items] == sorted(sku_ids)
+        assert {datetime.fromisoformat(item["updated_at"]) for item in items} == {
+            changed_at
+        }
+        assert strict_items == []
+    finally:
+        with SessionLocal() as db:
+            db.execute(delete(SupplierSku).where(SupplierSku.id.in_(sku_ids)))
+            db.flush()
+            product = db.get(Product, product_id)
+            assert product is not None
+            db.delete(product)
+            db.commit()
+
+
+def test_nested_incremental_sync_tracks_supplier_and_profile_status_changes_once(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    integration_catalog: dict[str, Any],
+) -> None:
+    supplier_id = integration_catalog["first_supplier_id"]
+    brand_path = f"{BASE_PATH}/suppliers/{supplier_id}/brands"
+    sku_path = f"{BASE_PATH}/suppliers/{supplier_id}/skus"
+    initial_watermark = integration_catalog["profile_time"]
+    phase_times = [
+        initial_watermark + timedelta(hours=1),
+        initial_watermark + timedelta(hours=2),
+        initial_watermark + timedelta(hours=3),
+        initial_watermark + timedelta(hours=4),
+    ]
+
+    with SessionLocal() as db:
+        supplier = db.get(Organization, supplier_id)
+        profile = db.scalar(
+            select(SupplierProfile).where(
+                SupplierProfile.organization_id == supplier_id
+            )
+        )
+        assert supplier is not None
+        assert profile is not None
+        original_supplier_active = supplier.is_active
+        original_supplier_updated_at = supplier.updated_at
+        original_profile_status = profile.status
+        original_profile_updated_at = profile.updated_at
+
+    expected_brand_ids = {
+        integration_catalog["active_brand_id"],
+        integration_catalog["inactive_cooperation_brand_id"],
+    }
+    expected_sku_ids = {
+        integration_catalog["active_sku_id"],
+        integration_catalog["inactive_sku_id"],
+        integration_catalog["inactive_cooperation_sku_id"],
+    }
+
+    try:
+        phases = [
+            ("supplier", False, phase_times[0], "INACTIVE"),
+            ("supplier", True, phase_times[1], "ACTIVE"),
+            ("profile", SupplierStatus.PENDING.value, phase_times[2], "INACTIVE"),
+            ("profile", SupplierStatus.APPROVED.value, phase_times[3], "ACTIVE"),
+        ]
+        previous_watermark = initial_watermark
+        for source, value, changed_at, active_resource_status in phases:
+            with SessionLocal() as db:
+                supplier = db.get(Organization, supplier_id)
+                profile = db.scalar(
+                    select(SupplierProfile).where(
+                        SupplierProfile.organization_id == supplier_id
+                    )
+                )
+                assert supplier is not None
+                assert profile is not None
+                if source == "supplier":
+                    supplier.is_active = bool(value)
+                    supplier.updated_at = changed_at
+                else:
+                    profile.status = str(value)
+                    profile.updated_at = changed_at
+                db.commit()
+
+            brand_items = collect_integration_pages(
+                client,
+                brand_path,
+                integration_client,
+                updated_since=previous_watermark,
+            )
+            sku_items = collect_integration_pages(
+                client,
+                sku_path,
+                integration_client,
+                updated_since=previous_watermark,
+            )
+
+            assert {item["brand_id"] for item in brand_items} == expected_brand_ids
+            assert len(brand_items) == len(expected_brand_ids)
+            assert {datetime.fromisoformat(item["updated_at"]) for item in brand_items} == {
+                changed_at
+            }
+            assert {item["supplier_sku_id"] for item in sku_items} == expected_sku_ids
+            assert len(sku_items) == len(expected_sku_ids)
+            assert {datetime.fromisoformat(item["updated_at"]) for item in sku_items} == {
+                changed_at
+            }
+
+            brand_by_id = {item["brand_id"]: item for item in brand_items}
+            sku_by_id = {item["supplier_sku_id"]: item for item in sku_items}
+            assert (
+                brand_by_id[integration_catalog["active_brand_id"]]["status"]
+                == active_resource_status
+            )
+            assert (
+                sku_by_id[integration_catalog["active_sku_id"]]["status"]
+                == active_resource_status
+            )
+            previous_watermark = changed_at
+    finally:
+        with SessionLocal() as db:
+            supplier = db.get(Organization, supplier_id)
+            profile = db.scalar(
+                select(SupplierProfile).where(
+                    SupplierProfile.organization_id == supplier_id
+                )
+            )
+            assert supplier is not None
+            assert profile is not None
+            supplier.is_active = original_supplier_active
+            supplier.updated_at = original_supplier_updated_at
+            profile.status = original_profile_status
+            profile.updated_at = original_profile_updated_at
+            db.commit()
+
+
+def test_include_inactive_exposes_tenant_owned_sku_without_cooperation_history(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    integration_catalog: dict[str, Any],
+) -> None:
+    suffix = uuid4().hex[:8]
+    supplier_id = integration_catalog["first_supplier_id"]
+    with SessionLocal() as db:
+        brand = Brand(
+            code=f"IT-ORPHAN-{suffix}",
+            name=f"无合作历史品牌 {suffix}",
+            normalized_name=f"integration orphan {suffix}",
+            aliases=[],
+            status=CatalogStatus.ACTIVE.value,
+        )
+        db.add(brand)
+        db.flush()
+        product = Product(
+            created_by_organization_id=supplier_id,
+            brand=brand.name,
+            brand_id=brand.id,
+            name=f"无合作历史商品 {suffix}",
+            model="ORPHAN-MODEL",
+            category="集成测试",
+        )
+        db.add(product)
+        db.flush()
+        orphan_sku = SupplierSku(
+            supplier_id=supplier_id,
+            brand_id=brand.id,
+            product_id=product.id,
+            supplier_sku_code=f"ORPHAN-SKU-{suffix}",
+            status=CatalogStatus.ACTIVE.value,
+        )
+        db.add(orphan_sku)
+        db.commit()
+        orphan_sku_id = orphan_sku.id
+
+    path = f"{BASE_PATH}/suppliers/{supplier_id}/skus"
+    active_response = client.get(path, headers=auth_headers(integration_client))
+    inactive_response = client.get(
+        path,
+        headers=auth_headers(integration_client),
+        params={"include_inactive": "true"},
+    )
+    other_supplier_response = client.get(
+        f"{BASE_PATH}/suppliers/{integration_catalog['second_supplier_id']}/skus",
+        headers=auth_headers(integration_client),
+        params={"include_inactive": "true"},
+    )
+
+    assert active_response.status_code == 200
+    assert orphan_sku_id not in {
+        item["supplier_sku_id"] for item in active_response.json()["items"]
+    }
+    assert inactive_response.status_code == 200
+    orphan = next(
+        item
+        for item in inactive_response.json()["items"]
+        if item["supplier_sku_id"] == orphan_sku_id
+    )
+    assert orphan["status"] == "INACTIVE"
+    assert orphan["commercial_mode"] is None
+    assert other_supplier_response.status_code == 200
+    assert orphan_sku_id not in {
+        item["supplier_sku_id"] for item in other_supplier_response.json()["items"]
+    }
+
+
+def test_decode_cursor_rejects_noncanonical_equivalent_encodings() -> None:
+    timestamp = datetime(2031, 1, 1, 8, 0, tzinfo=timezone.utc)
+    canonical = encode_cursor(timestamp, "supplier-id")
+
+    def encoded(payload: bytes) -> str:
+        return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+    noncanonical_values = [
+        canonical + "=",
+        encoded(b'{"i":"supplier-id","u":"2031-01-01T08:00:00Z"}'),
+        encoded(b'{"u": "2031-01-01T08:00:00Z", "i": "supplier-id"}'),
+        encoded(b'{"u":"2031-01-01T08:00:00+00:00","i":"supplier-id"}'),
+    ]
+
+    for value in noncanonical_values:
+        with pytest.raises(HTTPException) as exc_info:
+            decode_cursor(value)
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail["code"] == "INVALID_CURSOR"
 
 
 @pytest.mark.parametrize(

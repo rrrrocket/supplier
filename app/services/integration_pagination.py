@@ -52,7 +52,10 @@ def decode_cursor(value: str) -> tuple[datetime, str]:
         updated_at = datetime.fromisoformat(raw_updated_at.replace("Z", "+00:00"))
         if updated_at.tzinfo is None or updated_at.utcoffset() is None:
             raise ValueError
+        updated_at = updated_at.astimezone(timezone.utc)
+        if encode_cursor(updated_at, entity_id) != value:
+            raise ValueError
     except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError):
         raise invalid_cursor() from None
 
-    return updated_at.astimezone(timezone.utc), entity_id
+    return updated_at, entity_id
