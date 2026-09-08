@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -11,10 +11,13 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, func, select
+from sqlalchemy import create_engine, delete, event, func, select
+from sqlalchemy.orm import Session, sessionmaker
 
+from app.api import integration_deps
 from app.api.routes import integrations as integration_routes
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, get_db
+from app.main import app
 from app.models.entities import (
     Brand,
     CatalogStatus,
@@ -31,6 +34,7 @@ from app.models.entities import (
     SupplierStatus,
 )
 from app.services.integration_pagination import decode_cursor, encode_cursor
+from tests.conftest import TEST_DATABASE_URL
 
 
 BASE_PATH = "/api/integrations/v1"
@@ -1403,6 +1407,140 @@ def test_cost_audit_uses_uuid_when_request_id_is_missing_or_blank(
     assert len(events) == 1
     fallback = events[0].payload["request_id"]
     assert str(UUID(fallback)) == fallback
+
+
+def test_cost_audit_waits_for_request_db_release_with_single_connection_pool(
+    integration_client: dict[str, Any],
+    cost_catalog: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    single_connection_engine = create_engine(
+        TEST_DATABASE_URL,
+        pool_size=1,
+        max_overflow=0,
+        pool_timeout=0.1,
+    )
+    SingleConnectionSession = sessionmaker(
+        bind=single_connection_engine,
+        autoflush=False,
+        expire_on_commit=False,
+    )
+    integration_client_updates = 0
+
+    @event.listens_for(single_connection_engine, "before_cursor_execute")
+    def count_integration_client_updates(
+        _connection: Any,
+        _cursor: Any,
+        statement: str,
+        _parameters: Any,
+        _context: Any,
+        _executemany: bool,
+    ) -> None:
+        nonlocal integration_client_updates
+        if statement.lower().startswith("update integration_clients"):
+            integration_client_updates += 1
+
+    def get_single_connection_db() -> Iterator[Session]:
+        with SingleConnectionSession() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = get_single_connection_db
+    monkeypatch.setattr(
+        integration_deps,
+        "SessionLocal",
+        SingleConnectionSession,
+    )
+    monkeypatch.setattr(
+        integration_routes,
+        "SessionLocal",
+        SingleConnectionSession,
+    )
+    try:
+        with TestClient(app, raise_server_exceptions=False) as isolated_client:
+            response = isolated_client.get(
+                f"{BASE_PATH}/suppliers/{cost_catalog['first_supplier_id']}"
+                f"/skus/{cost_catalog['active_sku_id']}/cost",
+                headers=auth_headers(integration_client),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        single_connection_engine.dispose()
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        events = db.scalars(
+            select(EventLog).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED",
+                EventLog.actor_id == integration_client["id"],
+            )
+        ).all()
+    assert len(events) == 1
+    assert integration_client_updates == 1
+
+
+def test_valid_client_malformed_json_is_authenticated_and_audited(
+    client: TestClient,
+    integration_client: dict[str, Any],
+) -> None:
+    headers = auth_headers(integration_client)
+    headers["Content-Type"] = "application/json"
+
+    response = client.post(
+        f"{BASE_PATH}/sku-costs/query",
+        headers=headers,
+        content=b'{"items": [',
+    )
+
+    assert response.status_code == 400
+    with SessionLocal() as db:
+        events = db.scalars(
+            select(EventLog).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED",
+                EventLog.actor_id == integration_client["id"],
+            )
+        ).all()
+    assert len(events) == 1
+    assert events[0].payload["result_count"] == 0
+    assert events[0].payload["error_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        None,
+        "Bearer invalid",
+        "Bearer m1i_unknown-token-value",
+    ],
+    ids=["missing", "malformed", "unknown"],
+)
+def test_unidentified_client_malformed_json_does_not_fabricate_audit_actor(
+    client: TestClient,
+    authorization: str | None,
+) -> None:
+    headers = {"Content-Type": "application/json"}
+    if authorization is not None:
+        headers["Authorization"] = authorization
+    with SessionLocal() as db:
+        before = db.scalar(
+            select(func.count(EventLog.id)).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED"
+            )
+        )
+
+    response = client.post(
+        f"{BASE_PATH}/sku-costs/query",
+        headers=headers,
+        content=b'{"items": [',
+    )
+
+    assert response.status_code == 400
+    with SessionLocal() as db:
+        after = db.scalar(
+            select(func.count(EventLog.id)).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED"
+            )
+        )
+    assert after == before
 
 
 @pytest.mark.parametrize(

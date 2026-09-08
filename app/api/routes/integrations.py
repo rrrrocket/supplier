@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -15,7 +16,9 @@ from pydantic import AwareDatetime
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
+from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.api.deps import DbSession
 from app.api.integration_deps import (
@@ -24,6 +27,7 @@ from app.api.integration_deps import (
     CostReader,
     SkuReader,
     SupplierReader,
+    authenticate_integration_client,
 )
 from app.db.session import SessionLocal
 from app.models.entities import (
@@ -61,25 +65,68 @@ logger = logging.getLogger(__name__)
 ACTIVE = CatalogStatus.ACTIVE.value
 INACTIVE = CatalogStatus.INACTIVE.value
 MISSING_COST_CODES = {"SUPPLIER_NOT_FOUND", "SKU_NOT_FOUND"}
+COST_BATCH_PATH = "/api/integrations/v1/sku-costs/query"
+COST_SINGLE_PATH_PATTERN = re.compile(
+    r"^/api/integrations/v1/suppliers/[^/]+/skus/[^/]+/cost$"
+)
 
 
-class CostAuditRoute(APIRoute):
+class CostValidationRoute(APIRoute):
     def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
         route_handler = super().get_route_handler()
 
         async def handle(request: Request) -> Response:
             try:
-                try:
-                    return await route_handler(request)
-                except RequestValidationError as exc:
-                    return JSONResponse(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        content={"detail": jsonable_encoder(exc.errors())},
-                    )
-            finally:
-                record_cost_query_event(request)
+                return await route_handler(request)
+            except RequestValidationError as exc:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"detail": jsonable_encoder(exc.errors())},
+                )
 
         return handle
+
+
+def is_cost_query_scope(scope: Scope) -> bool:
+    if scope["type"] != "http":
+        return False
+    method = scope.get("method")
+    path = scope.get("path", "")
+    return (method == "POST" and path == COST_BATCH_PATH) or (
+        method == "GET" and COST_SINGLE_PATH_PATTERN.fullmatch(path) is not None
+    )
+
+
+class CostAuditMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        if not is_cost_query_scope(scope):
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope)
+        try:
+            principal = await run_in_threadpool(
+                authenticate_integration_client,
+                request.headers.get("Authorization", ""),
+            )
+        except HTTPException as exc:
+            if exc.status_code != status.HTTP_401_UNAUTHORIZED:
+                raise
+        else:
+            request.state.integration_principal = principal
+
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            await run_in_threadpool(record_cost_query_event, request)
 
 
 def utc_value(value: datetime) -> datetime:
@@ -599,12 +646,12 @@ router.add_api_route(
     get_supplier_sku_cost,
     methods=["GET"],
     response_model=CurrentSkuCostView,
-    route_class_override=CostAuditRoute,
+    route_class_override=CostValidationRoute,
 )
 router.add_api_route(
     "/sku-costs/query",
     query_supplier_sku_costs,
     methods=["POST"],
     response_model=SkuCostBatchResponse,
-    route_class_override=CostAuditRoute,
+    route_class_override=CostValidationRoute,
 )

@@ -11,6 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.router import api_router
+from app.api.routes.integrations import CostAuditMiddleware
 from app.core.config import get_settings
 from app.db.bootstrap import sync_platform_admin
 from app.db.session import SessionLocal
@@ -68,6 +69,9 @@ async def security_headers(request: Request, call_next):
         "frame-ancestors 'none'; form-action 'self'; base-uri 'self'",
     )
     return response
+
+
+app.add_middleware(CostAuditMiddleware)
 
 
 app.mount("/assets", StaticFiles(directory=ASSETS), name="assets")

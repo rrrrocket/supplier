@@ -27,8 +27,9 @@ class AuthenticatedIntegrationClient:
     scopes: tuple[str, ...]
 
 
-def get_integration_principal(request: Request) -> AuthenticatedIntegrationClient:
-    authorization = request.headers.get("Authorization", "")
+def authenticate_integration_client(
+    authorization: str,
+) -> AuthenticatedIntegrationClient:
     parts = authorization.split()
     if len(parts) != 2 or parts[0].lower() != "bearer":
         raise unauthorized()
@@ -64,6 +65,17 @@ def get_integration_principal(request: Request) -> AuthenticatedIntegrationClien
             scopes=tuple(client.scopes),
         )
 
+    return principal
+
+
+def get_integration_principal(request: Request) -> AuthenticatedIntegrationClient:
+    principal = getattr(request.state, "integration_principal", None)
+    if isinstance(principal, AuthenticatedIntegrationClient):
+        return principal
+
+    principal = authenticate_integration_client(
+        request.headers.get("Authorization", "")
+    )
     request.state.integration_principal = principal
     return principal
 
