@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.api import integration_deps
 from app.api.routes import integrations as integration_routes
+from app.core.config import get_settings
 from app.core.integration_rate_limit import FixedWindowRateLimiter
 from app.db.session import SessionLocal, get_db
 from app.main import app
@@ -2055,6 +2057,15 @@ def test_resource_and_cost_routes_share_one_budget_and_cost_429_is_audited(
     assert limited_response.status_code == 429
     assert limited_response.json() == {"detail": "集成客户端请求频率超限"}
     assert limited_response.headers["retry-after"] == "60"
+    assert limited_response.headers["content-security-policy"].startswith(
+        "default-src 'self'"
+    )
+    assert limited_response.headers["x-frame-options"] == "DENY"
+    assert limited_response.headers["x-content-type-options"] == "nosniff"
+    assert limited_response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+    assert limited_response.headers["permissions-policy"] == (
+        "camera=(), microphone=(), geolocation=()"
+    )
     with SessionLocal() as db:
         events = db.scalars(
             select(EventLog).where(
@@ -2072,6 +2083,44 @@ def test_resource_and_cost_routes_share_one_budget_and_cost_429_is_audited(
     persisted_payload = json.dumps(events[0].payload)
     assert integration_client["token"] not in persisted_payload
     assert body_marker not in persisted_payload
+
+
+def test_production_trusted_host_rejects_cost_request_before_direct_rate_limit(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del client
+    limiter = FixedWindowRateLimiter(
+        max_requests=1,
+        window_seconds=60,
+        clock=MutableRateLimitClock(),
+    )
+    assert limiter.consume(str(integration_client["id"])) is None
+    monkeypatch.setattr(integration_deps, "integration_rate_limiter", limiter)
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("ALLOWED_HOSTS", "trusted.example")
+    get_settings.cache_clear()
+    main_module = importlib.import_module("app.main")
+    production_app = importlib.reload(main_module).app
+
+    production_client = TestClient(
+        production_app,
+        base_url="http://untrusted.example",
+        raise_server_exceptions=False,
+    )
+    try:
+        response = production_client.post(
+            f"{BASE_PATH}/sku-costs/query",
+            headers=auth_headers(integration_client),
+            json={"items": []},
+        )
+    finally:
+        production_client.close()
+        get_settings.cache_clear()
+
+    assert response.status_code == 400
+    assert "retry-after" not in response.headers
 
 
 def test_clients_have_independent_budgets_and_windows_reopen_without_limiting_web(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -84,11 +85,38 @@ def test_expired_client_windows_are_removed_opportunistically() -> None:
     )
 
     assert limiter.consume("expired-a") is None
+    clock.advance(1)
     assert limiter.consume("expired-b") is None
-    clock.advance(10)
+    clock.advance(9)
     assert limiter.consume("current") is None
+    assert set(limiter._windows) == {"expired-b", "current"}
 
-    assert set(limiter._windows) == {"current"}
+    clock.advance(10)
+    assert limiter.consume("next-window") is None
+    assert set(limiter._windows) == {"next-window"}
+
+
+def test_active_windows_are_not_scanned_on_every_request() -> None:
+    scan_count = 0
+
+    class CountingWindowMap(dict[str, Any]):
+        def items(self):
+            nonlocal scan_count
+            scan_count += 1
+            return super().items()
+
+    limiter = FixedWindowRateLimiter(
+        max_requests=1,
+        window_seconds=60,
+        clock=MutableClock(),
+    )
+    limiter._windows = CountingWindowMap()
+
+    assert limiter.consume("client-a") is None
+    for _ in range(5):
+        assert limiter.consume("client-a") == 60
+
+    assert scan_count == 1
 
 
 def test_rate_limit_settings_default_to_600_requests_per_60_seconds() -> None:

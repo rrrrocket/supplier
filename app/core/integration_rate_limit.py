@@ -32,12 +32,15 @@ class FixedWindowRateLimiter:
         self._clock = clock
         self._lock = Lock()
         self._windows: dict[str, _ClientWindow] = {}
+        self._next_cleanup_at = float("-inf")
 
     def consume(self, client_id: str) -> int | None:
         """Consume one request, returning Retry-After seconds when rejected."""
         with self._lock:
             now = self._clock()
-            self._remove_expired_windows(now)
+            if now >= self._next_cleanup_at:
+                self._remove_expired_windows(now)
+                self._next_cleanup_at = now + self._window_seconds
             window = self._windows.get(client_id)
             if window is None:
                 self._windows[client_id] = _ClientWindow(

@@ -40,6 +40,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(CostAuditMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     SessionMiddleware,
@@ -69,10 +70,6 @@ async def security_headers(request: Request, call_next):
         "frame-ancestors 'none'; form-action 'self'; base-uri 'self'",
     )
     return response
-
-
-app.add_middleware(CostAuditMiddleware)
-
 
 app.mount("/assets", StaticFiles(directory=ASSETS), name="assets")
 app.include_router(api_router, prefix="/api")
