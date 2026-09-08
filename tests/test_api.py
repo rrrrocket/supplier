@@ -22,9 +22,12 @@ from app.api.routes.imports import MAX_IMPORT_FORM_PART_SIZE
 from app.db.session import SessionLocal
 from app.models.entities import (
     Brand,
+    CatalogStatus,
+    CommercialMode,
     Organization,
     OrganizationType,
     Product,
+    SupplierBrandCooperation,
     SupplierOffer,
     SupplierSku,
 )
@@ -859,12 +862,66 @@ def test_offer_contract_rejects_legacy_supplier_sku_payload(
         "/api/offers",
         json={
             "product_id": product["id"],
+            "supplier_sku_code": f"FINAL-WORKBENCH-{suffix}",
             "supplier_sku": f"LEGACY-WORKBENCH-{suffix}",
             "price": "18.5000",
         },
     )
 
     assert response.status_code == 422
+    assert any(error["loc"][-1] == "supplier_sku" for error in response.json()["detail"])
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("supplier_sku", "LEGACY-PATCH"),
+        ("supplier_sku_id", str(uuid4())),
+        ("supplier_sku_code", "REPLACEMENT-PATCH"),
+        ("unknown", "unexpected"),
+    ],
+)
+def test_offer_patch_rejects_identity_and_unknown_fields_without_changes(
+    authenticated_client: TestClient,
+    field: str,
+    value: str,
+) -> None:
+    suffix = uuid4().hex[:8]
+    product = authenticated_client.post(
+        "/api/products",
+        json={
+            "name": f"报价身份不可变商品-{suffix}",
+            "brand": "TEST",
+            "model": suffix,
+            "category": "工业自动化",
+            "status": "ACTIVE",
+        },
+    ).json()
+    created = authenticated_client.post(
+        "/api/offers",
+        json={
+            "product_id": product["id"],
+            "supplier_sku_code": f"IMMUTABLE-{suffix}",
+            "price": "18.5000",
+        },
+    )
+    assert created.status_code == 201
+    original = created.json()
+
+    response = authenticated_client.patch(
+        f"/api/offers/{original['id']}",
+        json={"price": "19.5000", field: value},
+    )
+
+    assert response.status_code == 422
+    assert any(error["loc"][-1] == field for error in response.json()["detail"])
+    unchanged = authenticated_client.get(
+        "/api/offers", params={"q": original["supplier_sku_code"]}
+    ).json()
+    assert len(unchanged) == 1
+    assert unchanged[0]["supplier_sku_id"] == original["supplier_sku_id"]
+    assert unchanged[0]["supplier_sku_code"] == original["supplier_sku_code"]
+    assert unchanged[0]["price"] == original["price"]
 
 
 def test_offer_response_uses_only_stable_supplier_sku_fields(
@@ -896,6 +953,120 @@ def test_offer_response_uses_only_stable_supplier_sku_fields(
     assert str(UUID(body["supplier_sku_id"])) == body["supplier_sku_id"]
     assert "supplier_sku" not in body
     assert body["brand"] == "TEST"
+
+
+def test_offer_list_uses_only_current_tenant_active_cooperation_mode(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    shared_prefix = f"TENANT-MODE-{suffix}"
+    with SessionLocal() as db:
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+        )
+        assert supplier is not None
+        other_supplier = Organization(
+            code=f"OTHER-MODE-{suffix}",
+            name=f"其他租户-{suffix}",
+            organization_type=OrganizationType.SUPPLIER.value,
+        )
+        brand = Brand(
+            code=f"MODE-{suffix}",
+            name=f"合作模式隔离品牌-{suffix}",
+            normalized_name=f"合作模式隔离品牌-{suffix}".lower(),
+            aliases=[],
+            status=CatalogStatus.ACTIVE.value,
+        )
+        db.add_all([other_supplier, brand])
+        db.flush()
+        own_product = Product(
+            created_by_organization_id=supplier.id,
+            brand_id=brand.id,
+            name=f"本租户商品-{suffix}",
+            category="工业自动化",
+            status="ACTIVE",
+        )
+        other_product = Product(
+            created_by_organization_id=other_supplier.id,
+            brand_id=brand.id,
+            name=f"其他租户商品-{suffix}",
+            category="工业自动化",
+            status="ACTIVE",
+        )
+        db.add_all([own_product, other_product])
+        db.flush()
+        cooperations = [
+            SupplierBrandCooperation(
+                supplier_id=supplier.id,
+                brand_id=brand.id,
+                commercial_mode=CommercialMode.SELF_PURCHASE.value,
+                status=CatalogStatus.INACTIVE.value,
+            ),
+            SupplierBrandCooperation(
+                supplier_id=supplier.id,
+                brand_id=brand.id,
+                commercial_mode=CommercialMode.B2B.value,
+                status=CatalogStatus.ACTIVE.value,
+            ),
+            SupplierBrandCooperation(
+                supplier_id=other_supplier.id,
+                brand_id=brand.id,
+                commercial_mode=CommercialMode.JOINT_OPERATION.value,
+                status=CatalogStatus.ACTIVE.value,
+            ),
+        ]
+        own_sku = SupplierSku(
+            supplier_id=supplier.id,
+            brand_id=brand.id,
+            product_id=own_product.id,
+            supplier_sku_code=f"{shared_prefix}-OWN",
+            status=CatalogStatus.ACTIVE.value,
+        )
+        other_sku = SupplierSku(
+            supplier_id=other_supplier.id,
+            brand_id=brand.id,
+            product_id=other_product.id,
+            supplier_sku_code=f"{shared_prefix}-OTHER",
+            status=CatalogStatus.ACTIVE.value,
+        )
+        db.add_all([*cooperations, own_sku, other_sku])
+        db.flush()
+        own_offer = SupplierOffer(
+            organization_id=supplier.id,
+            product_id=own_product.id,
+            supplier_sku_id=own_sku.id,
+            price="10.0000",
+            currency="CNY",
+            moq=1,
+            stock_qty=0,
+            lead_time_days=3,
+            fulfillment_mode="PURCHASE",
+            status="ACTIVE",
+        )
+        other_offer = SupplierOffer(
+            organization_id=other_supplier.id,
+            product_id=other_product.id,
+            supplier_sku_id=other_sku.id,
+            price="20.0000",
+            currency="CNY",
+            moq=1,
+            stock_qty=0,
+            lead_time_days=3,
+            fulfillment_mode="PURCHASE",
+            status="ACTIVE",
+        )
+        db.add_all([own_offer, other_offer])
+        db.commit()
+        own_offer_id = own_offer.id
+        other_offer_id = other_offer.id
+
+    response = authenticated_client.get("/api/offers", params={"q": shared_prefix})
+
+    assert response.status_code == 200
+    assert [(item["id"], item["commercial_mode"]) for item in response.json()] == [
+        (own_offer_id, CommercialMode.B2B.value)
+    ]
+    assert all(item["id"] != other_offer_id for item in response.json())
 
 
 def test_supplier_workbench_uses_normalized_catalog_controls(

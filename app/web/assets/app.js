@@ -446,16 +446,36 @@ function refreshOfferPriceLabel(productId, commercialMode = null) {
 
 async function openProductDialog() {
   document.querySelector("#product-form").reset();
-  const cooperations = await loadBrandCooperations();
+  let cooperations;
+  try {
+    cooperations = await loadBrandCooperations();
+  } catch (error) {
+    Matrix.toast("品牌加载失败", error.message || "无法加载已分配品牌，请稍后重试。", "error");
+    return;
+  }
   if (cooperations === null) return;
+  if (!cooperations.length) {
+    Matrix.toast("暂无已分配有效品牌", "请联系平台分配并启用品牌合作关系。", "error");
+    return;
+  }
   refreshProductBrandOptions();
   document.querySelector("#product-dialog").showModal();
 }
 
 async function openOfferDialog(productId = "", offer = null) {
   if (!state.products.length) await loadProducts();
-  const cooperations = await loadBrandCooperations();
+  let cooperations;
+  try {
+    cooperations = await loadBrandCooperations();
+  } catch (error) {
+    Matrix.toast("品牌加载失败", error.message || "无法加载已分配品牌，请稍后重试。", "error");
+    return;
+  }
   if (cooperations === null) return;
+  if (!cooperations.length) {
+    Matrix.toast("暂无已分配有效品牌", "请联系平台分配并启用品牌合作关系。", "error");
+    return;
+  }
   state.editingOfferId = offer?.id || null;
   const form = document.querySelector("#offer-form");
   form.reset();

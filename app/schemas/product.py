@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class ProductCreate(BaseModel):
     name: str = Field(min_length=2, max_length=240)
-    brand: str = Field(min_length=1, max_length=120)
+    brand: str = Field(min_length=1, max_length=160)
     model: str | None = Field(default=None, max_length=120)
     category: str = Field(min_length=2, max_length=160)
     description: str | None = Field(default=None, max_length=4000)
@@ -64,6 +64,8 @@ class OfferCreate(BaseModel):
 
 
 class OfferUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     price: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=4)
     currency: str | None = Field(default=None, min_length=3, max_length=8)
     moq: int | None = Field(default=None, ge=1, le=10_000_000)

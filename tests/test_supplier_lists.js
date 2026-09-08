@@ -413,6 +413,86 @@ test("product dialog waits for assigned brands and renders their cooperation mod
 });
 
 
+test("product and offer dialogs catch current brand catalog failures with a clear toast", async () => {
+  for (const dialogType of ["product", "offer"]) {
+    const harness = supplierListsHarness(async (requestPath) => {
+      if (requestPath === "/api/supplier-catalog/brand-cooperations") {
+        throw new Error(`current ${dialogType} brand failure`);
+      }
+      return [];
+    });
+    if (dialogType === "offer") {
+      harness.evaluate('state.products = [{ id: "product-a", brand_id: "brand-a" }]');
+    }
+    const dialog = harness.evaluate(`document.querySelector("#${dialogType}-dialog")`);
+
+    await assert.doesNotReject(
+      harness.evaluate(dialogType === "product" ? "openProductDialog()" : "openOfferDialog()"),
+    );
+
+    assert.equal(dialog.modalOpened, false);
+    assert.equal(harness.toasts.length, 1);
+    assert.match(harness.toasts[0].join(" "), /品牌/);
+    assert.match(harness.toasts[0].join(" "), /加载失败/);
+  }
+});
+
+
+test("product and offer dialogs stay closed when no active assigned brand exists", async () => {
+  for (const dialogType of ["product", "offer"]) {
+    const harness = supplierListsHarness(async (requestPath) => {
+      if (requestPath === "/api/supplier-catalog/brand-cooperations") return [];
+      return [];
+    });
+    if (dialogType === "offer") {
+      harness.evaluate(`
+        state.products = [{ id: "product-a", brand_id: "brand-a" }];
+        document.querySelector("#offer-form").elements = {
+          product_id: { disabled: false },
+          supplier_sku_code: { disabled: false },
+        };
+      `);
+    }
+    const dialog = harness.evaluate(`document.querySelector("#${dialogType}-dialog")`);
+
+    await assert.doesNotReject(
+      harness.evaluate(dialogType === "product" ? "openProductDialog()" : "openOfferDialog()"),
+    );
+
+    assert.equal(dialog.modalOpened, false);
+    assert.equal(harness.toasts.length, 1);
+    assert.match(harness.toasts[0].join(" "), /暂无已分配有效品牌/);
+    assert.match(harness.toasts[0].join(" "), /联系平台/);
+  }
+});
+
+
+test("a stale rejected brand catalog dialog load remains silent", async () => {
+  const oldRequest = deferred();
+  let calls = 0;
+  const harness = supplierListsHarness((requestPath) => {
+    assert.equal(requestPath, "/api/supplier-catalog/brand-cooperations");
+    calls += 1;
+    if (calls === 1) return oldRequest.promise;
+    return Promise.resolve([{
+      brand_id: "brand-current",
+      brand_code: "CURRENT",
+      brand_name: "当前品牌",
+      commercial_mode: "B2B",
+      status: "ACTIVE",
+    }]);
+  });
+
+  const staleOpening = harness.evaluate("openProductDialog()");
+  await harness.evaluate("openProductDialog()");
+  oldRequest.reject(new Error("stale brand failure"));
+
+  await assert.doesNotReject(staleOpening);
+  assert.equal(harness.elements.get("#product-dialog").modalOpened, true);
+  assert.deepEqual(harness.toasts, []);
+});
+
+
 test("offer rows label mode A cost and show stable SKU IDs without truncating pages", () => {
   const harness = supplierListsHarness(async () => []);
   const offers = rows("Offer mode", 51);

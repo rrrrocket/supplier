@@ -358,6 +358,20 @@ def test_contract_migration_preserves_history_and_enforces_normalized_schema() -
             assert constraints["uq_supplier_offer_supplier_sku_id"] == (
                 "supplier_sku_id",
             )
+            active_index = connection.execute(
+                """
+                SELECT index_definition.indisunique,
+                       pg_get_expr(index_definition.indpred, index_definition.indrelid)
+                FROM pg_index AS index_definition
+                JOIN pg_class AS index_relation
+                  ON index_relation.oid = index_definition.indexrelid
+                WHERE index_relation.relname = 'uq_active_supplier_brand_cooperation'
+                """
+            ).fetchone()
+            assert active_index is not None
+            assert active_index[0] is True
+            assert "status" in active_index[1]
+            assert "ACTIVE" in active_index[1]
 
 
 @pytest.mark.parametrize(
@@ -410,6 +424,16 @@ def test_contract_migration_downgrade_backfills_legacy_display_strings() -> None
         run_downgrade(migration_url, PRE_CONTRACT_REVISION)
 
         with connect(migration_url, database_name) as connection:
+            brand_column = connection.execute(
+                """
+                SELECT data_type, character_maximum_length, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'products'
+                  AND column_name = 'brand'
+                """
+            ).fetchone()
+            assert brand_column == ("character varying", 120, "YES")
             assert list(
                 connection.execute(
                     "SELECT brand FROM products WHERE id = 'contract-product'"
@@ -420,6 +444,50 @@ def test_contract_migration_downgrade_backfills_legacy_display_strings() -> None
                     "SELECT supplier_sku FROM supplier_offers WHERE id = 'contract-offer'"
                 )
             ) == [("CANONICAL-SKU",)]
+
+
+def test_contract_downgrade_rejects_referenced_brand_names_over_120_without_mutation() -> None:
+    with temporary_postgresql_database("supplier_catalog_contract_long_brand") as migration_url:
+        database_name = migration_url.database
+        assert database_name is not None
+        run_migrations(migration_url, PRE_CONTRACT_REVISION)
+        with connect(migration_url, database_name) as connection:
+            _insert_contract_fixture(connection)
+
+        run_migrations(migration_url, CONTRACT_REVISION)
+        with connect(migration_url, database_name) as connection:
+            connection.execute(
+                "UPDATE brands SET name = %s WHERE id = 'contract-brand'",
+                ("L" * 121,),
+            )
+
+        with pytest.raises(subprocess.CalledProcessError) as exc_info:
+            run_downgrade(migration_url, PRE_CONTRACT_REVISION)
+
+        assert (
+            "1 product(s) reference brand names longer than 120 characters"
+            in exc_info.value.stderr
+        )
+        with connect(migration_url, database_name) as connection:
+            assert connection.execute(
+                "SELECT version_num FROM alembic_version"
+            ).fetchone()[0] == CONTRACT_REVISION
+            columns = {
+                row[0]
+                for row in connection.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name IN ('products', 'supplier_offers')
+                    """
+                )
+            }
+            assert "brand" not in columns
+            assert "supplier_sku" not in columns
+            assert connection.execute(
+                "SELECT length(name) FROM brands WHERE id = 'contract-brand'"
+            ).fetchone()[0] == 121
 
 
 def test_complete_upgrade_chain_reaches_contract_revision() -> None:

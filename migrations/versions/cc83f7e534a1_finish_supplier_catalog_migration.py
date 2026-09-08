@@ -88,9 +88,26 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    connection = op.get_bind()
+    oversized_brand_count = connection.execute(
+        sa.text(
+            """
+            SELECT count(*)
+            FROM products
+            JOIN brands ON brands.id = products.brand_id
+            WHERE char_length(brands.name) > 120
+            """
+        )
+    ).scalar_one()
+    if oversized_brand_count:
+        raise RuntimeError(
+            f"{oversized_brand_count} product(s) reference brand names longer than "
+            "120 characters; shorten those brand names before downgrade"
+        )
+
     op.add_column(
         "products",
-        sa.Column("brand", sa.String(length=160), nullable=True),
+        sa.Column("brand", sa.String(length=120), nullable=True),
     )
     op.execute(
         sa.text(

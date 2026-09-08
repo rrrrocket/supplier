@@ -188,6 +188,53 @@ def test_admin_can_create_deduplicate_and_search_brands(client: TestClient) -> N
         assert created_events == 1
 
 
+def test_supplier_can_create_product_for_assigned_brand_up_to_160_characters(
+    client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    long_brand_name = f"{'长' * 131}-{suffix}"
+    assert 121 <= len(long_brand_name) <= 160
+    login_admin(client)
+    created_brand = client.post(
+        "/api/admin/brands",
+        json={
+            "name": long_brand_name,
+            "code": f"LONG-{suffix}",
+        },
+    )
+    assert created_brand.status_code == 201
+    brand_id = created_brand.json()["id"]
+    with SessionLocal() as db:
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+        )
+        assert supplier is not None
+        supplier_id = supplier.id
+
+    assigned = client.put(
+        f"/api/admin/suppliers/{supplier_id}/brands/{brand_id}/cooperation",
+        json={"commercial_mode": "SELF_PURCHASE"},
+    )
+    assert assigned.status_code == 200
+    assert assigned.json()["status"] == "ACTIVE"
+
+    client.post("/api/auth/logout")
+    login_supplier(client)
+    product = client.post(
+        "/api/products",
+        json={
+            "name": f"长品牌商品-{suffix}",
+            "brand": long_brand_name,
+            "category": "工业自动化",
+            "status": "ACTIVE",
+        },
+    )
+
+    assert product.status_code == 201
+    assert product.json()["brand_id"] == brand_id
+    assert product.json()["brand"] == long_brand_name
+
+
 def test_create_brand_recovers_canonical_row_after_unique_insert_race(
     client: TestClient,
     monkeypatch,
