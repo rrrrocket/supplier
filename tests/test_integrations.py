@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.api import integration_deps
 from app.api.routes import integrations as integration_routes
+from app.core.integration_rate_limit import FixedWindowRateLimiter
 from app.db.session import SessionLocal, get_db
 from app.main import app
 from app.models.entities import (
@@ -38,6 +39,33 @@ from tests.conftest import TEST_DATABASE_URL
 
 
 BASE_PATH = "/api/integrations/v1"
+
+
+class MutableRateLimitClock:
+    def __init__(self) -> None:
+        self.current = 0.0
+
+    def __call__(self) -> float:
+        return self.current
+
+    def advance(self, seconds: float) -> None:
+        self.current += seconds
+
+
+@pytest.fixture()
+def low_rate_limit(monkeypatch: pytest.MonkeyPatch) -> MutableRateLimitClock:
+    clock = MutableRateLimitClock()
+    limiter = FixedWindowRateLimiter(
+        max_requests=2,
+        window_seconds=60,
+        clock=clock,
+    )
+    monkeypatch.setattr(
+        integration_deps,
+        "integration_rate_limiter",
+        limiter,
+    )
+    return clock
 
 
 def auth_headers(integration_client: dict[str, Any]) -> dict[str, str]:
@@ -1988,3 +2016,121 @@ def test_batch_cost_query_preserves_rows_isolates_errors_and_redacts_audit(
     assert all(client_sku_id not in persisted_payload for client_sku_id in client_sku_ids)
     assert "28.5000" not in persisted_payload
     assert integration_client["token"] not in persisted_payload
+
+
+def test_resource_and_cost_routes_share_one_budget_and_cost_429_is_audited(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    integration_catalog: dict[str, Any],
+    low_rate_limit: MutableRateLimitClock,
+) -> None:
+    del low_rate_limit
+    headers = auth_headers(integration_client)
+
+    suppliers_response = client.get(f"{BASE_PATH}/suppliers", headers=headers)
+    brands_response = client.get(
+        f"{BASE_PATH}/suppliers/{integration_catalog['first_supplier_id']}/brands",
+        headers=headers,
+    )
+    request_id = "rate-limited-cost-request"
+    cost_headers = {**headers, "X-Request-ID": request_id}
+    cost_path = f"{BASE_PATH}/sku-costs/query"
+    body_marker = "must-not-enter-the-audit"
+    limited_response = client.post(
+        cost_path,
+        headers=cost_headers,
+        json={
+            "items": [
+                {
+                    "client_sku_id": body_marker,
+                    "supplier_id": integration_catalog["first_supplier_id"],
+                    "supplier_sku_id": "missing-sku",
+                }
+            ]
+        },
+    )
+
+    assert suppliers_response.status_code == 200
+    assert brands_response.status_code == 200
+    assert limited_response.status_code == 429
+    assert limited_response.json() == {"detail": "集成客户端请求频率超限"}
+    assert limited_response.headers["retry-after"] == "60"
+    with SessionLocal() as db:
+        events = db.scalars(
+            select(EventLog).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED",
+                EventLog.actor_id == integration_client["id"],
+            )
+        ).all()
+    assert len(events) == 1
+    assert events[0].payload == {
+        "request_id": request_id,
+        "endpoint": cost_path,
+        "result_count": 0,
+        "error_count": 1,
+    }
+    persisted_payload = json.dumps(events[0].payload)
+    assert integration_client["token"] not in persisted_payload
+    assert body_marker not in persisted_payload
+
+
+def test_clients_have_independent_budgets_and_windows_reopen_without_limiting_web(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    integration_client_factory: Callable[[list[str]], dict[str, Any]],
+    low_rate_limit: MutableRateLimitClock,
+) -> None:
+    other_client = integration_client_factory(["suppliers:read"])
+    first_headers = auth_headers(integration_client)
+    other_headers = auth_headers(other_client)
+
+    assert client.get(f"{BASE_PATH}/suppliers", headers=first_headers).status_code == 200
+    assert client.get(f"{BASE_PATH}/suppliers", headers=first_headers).status_code == 200
+    limited = client.get(f"{BASE_PATH}/suppliers", headers=first_headers)
+    assert limited.status_code == 429
+    assert limited.headers["retry-after"] == "60"
+
+    assert client.get(f"{BASE_PATH}/suppliers", headers=other_headers).status_code == 200
+    assert client.get(f"{BASE_PATH}/suppliers", headers=other_headers).status_code == 200
+    for _ in range(4):
+        assert client.get("/api/health").status_code == 200
+
+    low_rate_limit.advance(60)
+    assert client.get(f"{BASE_PATH}/suppliers", headers=first_headers).status_code == 200
+
+
+def test_scope_failures_consume_budget_but_invalid_tokens_remain_actorless_401s(
+    client: TestClient,
+    integration_client_factory: Callable[[list[str]], dict[str, Any]],
+    low_rate_limit: MutableRateLimitClock,
+) -> None:
+    del low_rate_limit
+    scoped_client = integration_client_factory(["suppliers:read"])
+    scoped_headers = auth_headers(scoped_client)
+    cost_path = f"{BASE_PATH}/suppliers/any-supplier/skus/any-sku/cost"
+
+    first_scope_failure = client.get(cost_path, headers=scoped_headers)
+    second_scope_failure = client.get(cost_path, headers=scoped_headers)
+    limited_resource = client.get(f"{BASE_PATH}/suppliers", headers=scoped_headers)
+
+    assert first_scope_failure.status_code == 403
+    assert second_scope_failure.status_code == 403
+    assert limited_resource.status_code == 429
+    assert limited_resource.headers["retry-after"] == "60"
+
+    invalid_headers = {"Authorization": "Bearer m1i_unknown-token-value"}
+    for _ in range(3):
+        response = client.get(cost_path, headers=invalid_headers)
+        assert response.status_code == 401
+        assert "retry-after" not in response.headers
+
+    with SessionLocal() as db:
+        events = db.scalars(
+            select(EventLog).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED",
+                EventLog.actor_id == scoped_client["id"],
+            )
+        ).all()
+    assert len(events) == 2
+    assert all(event.payload["result_count"] == 0 for event in events)
+    assert all(event.payload["error_count"] == 1 for event in events)

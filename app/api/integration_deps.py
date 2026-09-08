@@ -7,9 +7,18 @@ from typing import Annotated, Callable
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 
+from app.core.config import get_settings
+from app.core.integration_rate_limit import FixedWindowRateLimiter
 from app.core.integration_security import verify_integration_token
 from app.db.session import SessionLocal
 from app.models.entities import IntegrationClient
+
+
+settings = get_settings()
+integration_rate_limiter = FixedWindowRateLimiter(
+    max_requests=settings.integration_rate_limit_requests,
+    window_seconds=settings.integration_rate_limit_window_seconds,
+)
 
 
 def unauthorized() -> HTTPException:
@@ -70,14 +79,31 @@ def authenticate_integration_client(
 
 def get_integration_principal(request: Request) -> AuthenticatedIntegrationClient:
     principal = getattr(request.state, "integration_principal", None)
-    if isinstance(principal, AuthenticatedIntegrationClient):
-        return principal
+    if not isinstance(principal, AuthenticatedIntegrationClient):
+        principal = authenticate_integration_client(
+            request.headers.get("Authorization", "")
+        )
+        request.state.integration_principal = principal
 
-    principal = authenticate_integration_client(
-        request.headers.get("Authorization", "")
-    )
-    request.state.integration_principal = principal
+    enforce_integration_rate_limit(request, principal)
     return principal
+
+
+def enforce_integration_rate_limit(
+    request: Request,
+    principal: AuthenticatedIntegrationClient,
+) -> None:
+    if getattr(request.state, "integration_rate_limit_checked", False):
+        return
+
+    retry_after = integration_rate_limiter.consume(principal.id)
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="集成客户端请求频率超限",
+            headers={"Retry-After": str(retry_after)},
+        )
+    request.state.integration_rate_limit_checked = True
 
 
 IntegrationPrincipal = Annotated[

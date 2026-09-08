@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     admin_password: str | None = Field(default=None, min_length=12)
     admin_name: str = "平台管理员"
     allowed_hosts: str = "localhost,127.0.0.1,supplier.matrix-one.tech"
+    integration_rate_limit_requests: int = Field(default=600, gt=0)
+    integration_rate_limit_window_seconds: int = Field(default=60, gt=0)
 
     @property
     def is_production(self) -> bool:

@@ -28,6 +28,7 @@ from app.api.integration_deps import (
     SkuReader,
     SupplierReader,
     authenticate_integration_client,
+    enforce_integration_rate_limit,
 )
 from app.db.session import SessionLocal
 from app.models.entities import (
@@ -124,6 +125,20 @@ class CostAuditMiddleware:
             request.state.integration_principal = principal
 
         try:
+            stored_principal = getattr(request.state, "integration_principal", None)
+            if isinstance(stored_principal, AuthenticatedIntegrationClient):
+                try:
+                    enforce_integration_rate_limit(request, stored_principal)
+                except HTTPException as exc:
+                    if exc.status_code != status.HTTP_429_TOO_MANY_REQUESTS:
+                        raise
+                    response = JSONResponse(
+                        status_code=exc.status_code,
+                        content={"detail": exc.detail},
+                        headers=exc.headers,
+                    )
+                    await response(scope, receive, send)
+                    return
             await self.app(scope, receive, send)
         finally:
             await run_in_threadpool(record_cost_query_event, request)
