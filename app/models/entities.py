@@ -110,6 +110,20 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     organization: Mapped[Organization] = relationship(back_populates="users")
 
 
+class IntegrationClient(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "integration_clients"
+
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    token_prefix: Mapped[str] = mapped_column(
+        String(24), unique=True, nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class SupplierProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "supplier_profiles"
 

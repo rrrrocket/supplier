@@ -4,6 +4,7 @@ const adminState = {
   suppliers: [],
   brands: [],
   brandCooperations: [],
+  integrationClients: [],
   selectedApplication: null,
   selectedSupplier: null,
   brandCooperationGeneration: 0,
@@ -19,6 +20,7 @@ const cooperationModeLabels = {
 const adminRoutes = {
   applications: ["入驻申请", "中国供应网络 / 平台管理 / 入驻申请"],
   suppliers: ["入驻供应商", "中国供应网络 / 平台管理 / 供应商"],
+  integrations: ["集成凭证", "中国供应网络 / 平台管理 / 集成凭证"],
   system: ["平台能力", "中国供应网络 / 平台管理 / 平台能力"],
 };
 
@@ -136,6 +138,118 @@ function renderBrandCooperations() {
       ${Matrix.statusBadge(item.status)}
     </div>
   `).join("");
+}
+
+function renderIntegrationClients() {
+  const tbody = document.querySelector("#integration-clients-tbody");
+  document.querySelector("#integration-clients-count").textContent = `共 ${adminState.integrationClients.length} 个`;
+  if (!adminState.integrationClients.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="table-empty"><strong>还没有集成调用方</strong>创建后，明文令牌只会显示一次。</td></tr>';
+    return;
+  }
+  tbody.innerHTML = adminState.integrationClients.map((item) => `
+    <tr>
+      <td><div class="table-primary">${Matrix.escapeHtml(item.name)}</div><div class="table-secondary">${Matrix.escapeHtml(item.id)}</div></td>
+      <td><code>${Matrix.escapeHtml(item.token_prefix)}</code></td>
+      <td><div class="tag-list">${(item.scopes || []).map((scope) => `<span class="tag">${Matrix.escapeHtml(scope)}</span>`).join("")}</div></td>
+      <td>${item.expires_at ? Matrix.formatDate(item.expires_at, true) : "永不过期"}</td>
+      <td>${item.last_used_at ? Matrix.formatDate(item.last_used_at, true) : "尚未使用"}</td>
+      <td>${Matrix.statusBadge(item.is_active ? "ACTIVE" : "INACTIVE")}</td>
+      <td class="text-right"><div class="row">
+        <button class="btn btn-secondary btn-sm" type="button" data-rotate-integration="${item.id}" ${item.is_active ? "" : "disabled"}>轮换</button>
+        <button class="btn btn-danger btn-sm" type="button" data-revoke-integration="${item.id}" ${item.is_active ? "" : "disabled"}>撤销</button>
+      </div></td>
+    </tr>
+  `).join("");
+  tbody.querySelectorAll("[data-rotate-integration]").forEach((button) => {
+    button.addEventListener("click", () => rotateIntegrationClient(button.dataset.rotateIntegration));
+  });
+  tbody.querySelectorAll("[data-revoke-integration]").forEach((button) => {
+    button.addEventListener("click", () => revokeIntegrationClient(button.dataset.revokeIntegration));
+  });
+}
+
+async function loadIntegrationClients() {
+  try {
+    adminState.integrationClients = await Matrix.api("/api/admin/integration-clients");
+    renderIntegrationClients();
+  } catch (error) {
+    document.querySelector("#integration-clients-tbody").innerHTML = `<tr><td colspan="7" class="table-empty"><strong>集成凭证加载失败</strong>${Matrix.escapeHtml(error.message)}</td></tr>`;
+  }
+}
+
+function showIntegrationToken(result) {
+  document.querySelector("#integration-token-dialog-subtitle").textContent = `${result.name} · ${result.token_prefix} · 关闭后将无法再次查看`;
+  document.querySelector("#integration-token-value").textContent = result.token;
+  document.querySelector("#copy-integration-token").onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(result.token);
+      Matrix.toast("已复制", "令牌已复制到剪贴板。", "success");
+    } catch {
+      Matrix.toast("复制失败", "请手动选择并复制令牌。", "error");
+    }
+  };
+  document.querySelector("#integration-token-dialog").showModal();
+}
+
+function closeIntegrationToken() {
+  document.querySelector("#integration-token-dialog").close();
+  document.querySelector("#integration-token-value").textContent = "";
+  document.querySelector("#copy-integration-token").onclick = null;
+}
+
+async function createIntegrationClient(event) {
+  event.preventDefault();
+  const nameInput = document.querySelector("#integration-client-name");
+  const expiresInput = document.querySelector("#integration-client-expires-at");
+  const scopeInputs = [...document.querySelector("#integration-client-scopes").querySelectorAll("input:checked")];
+  if (!scopeInputs.length) {
+    Matrix.toast("请选择权限范围", "调用方至少需要一个读取权限。", "error");
+    return;
+  }
+  const button = document.querySelector("#create-integration-client");
+  button.disabled = true;
+  try {
+    const result = await Matrix.api("/api/admin/integration-clients", {
+      method: "POST",
+      body: {
+        name: nameInput.value.trim(),
+        scopes: scopeInputs.map((input) => input.value),
+        expires_at: expiresInput.value ? new Date(expiresInput.value).toISOString() : null,
+      },
+    });
+    showIntegrationToken(result);
+    nameInput.value = "";
+    expiresInput.value = "";
+    scopeInputs.forEach((input) => { input.checked = false; });
+    await loadIntegrationClients();
+  } catch (error) {
+    Matrix.toast("创建失败", error.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function rotateIntegrationClient(clientId) {
+  if (!window.confirm("轮换后旧令牌会立即失效，确定继续？")) return;
+  try {
+    const result = await Matrix.api(`/api/admin/integration-clients/${clientId}/rotate`, { method: "POST" });
+    showIntegrationToken(result);
+    await loadIntegrationClients();
+  } catch (error) {
+    Matrix.toast("轮换失败", error.message, "error");
+  }
+}
+
+async function revokeIntegrationClient(clientId) {
+  if (!window.confirm("撤销后该调用方将立即无法访问集成 API，确定继续？")) return;
+  try {
+    await Matrix.api(`/api/admin/integration-clients/${clientId}/revoke`, { method: "POST" });
+    await loadIntegrationClients();
+    Matrix.toast("凭证已撤销", "该令牌已立即失效。", "success");
+  } catch (error) {
+    Matrix.toast("撤销失败", error.message, "error");
+  }
 }
 
 function syncBrandCooperationForm() {
@@ -375,19 +489,22 @@ async function bootAdmin() {
   document.querySelector("#logout-button").addEventListener("click", logout);
   document.querySelector("#refresh-applications").addEventListener("click", loadApplications);
   document.querySelector("#refresh-suppliers").addEventListener("click", loadSuppliers);
+  document.querySelector("#refresh-integration-clients").addEventListener("click", loadIntegrationClients);
   document.querySelector("#applications-search").addEventListener("input", renderApplications);
   document.querySelector("#applications-status").addEventListener("change", renderApplications);
   document.querySelector("#suppliers-search").addEventListener("input", renderSuppliers);
   document.querySelectorAll("[data-close-review]").forEach((button) => button.addEventListener("click", () => document.querySelector("#application-review-dialog").close()));
   document.querySelectorAll("[data-close-brand-cooperation]").forEach((button) => button.addEventListener("click", () => document.querySelector("#brand-cooperation-dialog").close()));
+  document.querySelectorAll("[data-close-integration-token]").forEach((button) => button.addEventListener("click", closeIntegrationToken));
   document.querySelector("#approve-application").addEventListener("click", approveSelectedApplication);
   document.querySelector("#reject-application").addEventListener("click", rejectSelectedApplication);
   document.querySelector("#brand-cooperation-brand").addEventListener("change", syncBrandCooperationForm);
   document.querySelector("#brand-cooperation-form").addEventListener("submit", saveBrandCooperation);
+  document.querySelector("#integration-client-form").addEventListener("submit", createIntegrationClient);
   window.addEventListener("hashchange", () => routeTo(window.location.hash.slice(1), false));
 
   routeTo(window.location.hash.slice(1) || "applications", false);
-  await Promise.all([loadApplications(), loadSuppliers()]);
+  await Promise.all([loadApplications(), loadSuppliers(), loadIntegrationClients()]);
 }
 
 document.addEventListener("DOMContentLoaded", bootAdmin);

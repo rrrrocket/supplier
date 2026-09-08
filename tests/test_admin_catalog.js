@@ -59,6 +59,25 @@ function adminHarness(api) {
   elements.set("#brand-cooperation-current", element());
   elements.set("#save-brand-cooperation", element());
 
+  let tokenDialogOpened = false;
+  const tokenDialog = element();
+  tokenDialog.showModal = () => { tokenDialogOpened = true; };
+  elements.set("#integration-token-dialog", tokenDialog);
+  elements.set("#integration-token-value", element());
+  elements.set("#integration-client-name", element());
+  elements.set("#integration-client-expires-at", element());
+  elements.set("#integration-client-scopes", element());
+  elements.set("#integration-clients-tbody", element());
+  elements.set("#integration-clients-count", element());
+  elements.set("#create-integration-client", element());
+
+  const storageWrites = [];
+  const storage = {
+    getItem() { return null; },
+    removeItem() {},
+    setItem(key, value) { storageWrites.push({ key, value }); },
+  };
+
   const document = {
     addEventListener() {},
     querySelector(selector) {
@@ -78,6 +97,8 @@ function adminHarness(api) {
       toast() {},
     },
     navigator: { clipboard: { writeText: async () => {} } },
+    localStorage: storage,
+    sessionStorage: storage,
     setTimeout,
     window: {
       addEventListener() {},
@@ -86,7 +107,12 @@ function adminHarness(api) {
     },
   });
   vm.runInContext(source, context);
-  return { context, elements };
+  return {
+    context,
+    elements,
+    storageWrites,
+    tokenDialogOpened: () => tokenDialogOpened,
+  };
 }
 
 
@@ -231,5 +257,58 @@ test("a stale supplier response cannot replace the latest dialog data or save ta
       method: "PUT",
     },
     path: "/api/admin/suppliers/supplier-b/brands/brand-b/cooperation",
+  });
+});
+
+
+test("creating an integration client shows the token only in the warning dialog", async () => {
+  const token = "m1i_once-only-secret-token";
+  const requests = [];
+  const api = async (requestPath, options = {}) => {
+    requests.push({ options, path: requestPath });
+    if (options.method === "POST") {
+      return {
+        id: "integration-a",
+        is_active: true,
+        name: "ERP 同步",
+        scopes: ["suppliers:read"],
+        token,
+        token_prefix: token.slice(0, 12),
+      };
+    }
+    return [{
+      id: "integration-a",
+      is_active: true,
+      name: "ERP 同步",
+      scopes: ["suppliers:read"],
+      token_prefix: token.slice(0, 12),
+    }];
+  };
+  const harness = adminHarness(api);
+  harness.elements.get("#integration-client-name").value = "ERP 同步";
+  harness.elements.get("#integration-client-expires-at").value = "";
+  const checkedScope = element();
+  checkedScope.value = "suppliers:read";
+  harness.elements.get("#integration-client-scopes").querySelectorAll = () => [checkedScope];
+
+  await vm.runInContext(
+    "createIntegrationClient({ preventDefault() {} })",
+    harness.context,
+  );
+
+  assert.equal(harness.tokenDialogOpened(), true);
+  assert.equal(harness.elements.get("#integration-token-value").textContent, token);
+  assert.equal(JSON.stringify(vm.runInContext("adminState", harness.context)).includes(token), false);
+  assert.deepEqual(harness.storageWrites, []);
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[0])), {
+    options: {
+      body: {
+        expires_at: null,
+        name: "ERP 同步",
+        scopes: ["suppliers:read"],
+      },
+      method: "POST",
+    },
+    path: "/api/admin/integration-clients",
   });
 });

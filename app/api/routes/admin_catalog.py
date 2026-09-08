@@ -6,19 +6,155 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import DbSession
 from app.api.routes.admin import PlatformAdmin
+from app.core.integration_security import create_integration_token
 from app.models.entities import (
     Brand,
     CatalogStatus,
+    IntegrationClient,
     Organization,
     OrganizationType,
     SupplierBrandCooperation,
 )
 from app.schemas.catalog import BrandCreate, BrandView, CooperationUpdate, CooperationView
+from app.schemas.integration import (
+    IntegrationClientCreate,
+    IntegrationClientCredential,
+    IntegrationClientView,
+)
 from app.services.catalog import normalize_brand_name, replace_active_cooperation, resolve_brand
 from app.services.events import record_event
 
 
 router = APIRouter(prefix="/admin", tags=["平台品牌管理"])
+
+
+def integration_client_view(client: IntegrationClient) -> IntegrationClientView:
+    return IntegrationClientView.model_validate(client)
+
+
+def integration_client_credential(
+    client: IntegrationClient,
+    token: str,
+) -> IntegrationClientCredential:
+    return IntegrationClientCredential(
+        **integration_client_view(client).model_dump(),
+        token=token,
+    )
+
+
+def require_integration_client(db: DbSession, client_id: str) -> IntegrationClient:
+    client = db.get(IntegrationClient, client_id)
+    if client is None:
+        raise HTTPException(status_code=404, detail="集成调用方不存在")
+    return client
+
+
+@router.get(
+    "/integration-clients",
+    response_model=list[IntegrationClientView],
+)
+def list_integration_clients(
+    db: DbSession,
+    _: PlatformAdmin,
+) -> list[IntegrationClientView]:
+    clients = db.scalars(
+        select(IntegrationClient).order_by(IntegrationClient.name, IntegrationClient.id)
+    ).all()
+    return [integration_client_view(client) for client in clients]
+
+
+@router.post(
+    "/integration-clients",
+    response_model=IntegrationClientCredential,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_integration_client(
+    payload: IntegrationClientCreate,
+    db: DbSession,
+    admin: PlatformAdmin,
+) -> IntegrationClientCredential:
+    name = " ".join(payload.name.strip().split())
+    if not name:
+        raise HTTPException(status_code=422, detail="调用方名称不能为空")
+
+    plaintext, prefix, token_hash = create_integration_token()
+    client = IntegrationClient(
+        name=name,
+        token_prefix=prefix,
+        token_hash=token_hash,
+        scopes=list(dict.fromkeys(payload.scopes)),
+        expires_at=payload.expires_at,
+    )
+    db.add(client)
+    db.flush()
+    record_event(
+        db,
+        event_type="INTEGRATION_CLIENT_CREATED",
+        entity_type="IntegrationClient",
+        entity_id=client.id,
+        organization_id=admin.organization_id,
+        actor_type="USER",
+        actor_id=admin.id,
+        payload={"client_name": client.name, "scopes": client.scopes},
+    )
+    db.commit()
+    db.refresh(client)
+    return integration_client_credential(client, plaintext)
+
+
+@router.post(
+    "/integration-clients/{client_id}/rotate",
+    response_model=IntegrationClientCredential,
+)
+def rotate_integration_client(
+    client_id: str,
+    db: DbSession,
+    admin: PlatformAdmin,
+) -> IntegrationClientCredential:
+    client = require_integration_client(db, client_id)
+    plaintext, prefix, token_hash = create_integration_token()
+    client.token_prefix = prefix
+    client.token_hash = token_hash
+    client.last_used_at = None
+    record_event(
+        db,
+        event_type="INTEGRATION_CLIENT_ROTATED",
+        entity_type="IntegrationClient",
+        entity_id=client.id,
+        organization_id=admin.organization_id,
+        actor_type="USER",
+        actor_id=admin.id,
+        payload={"client_name": client.name},
+    )
+    db.commit()
+    db.refresh(client)
+    return integration_client_credential(client, plaintext)
+
+
+@router.post(
+    "/integration-clients/{client_id}/revoke",
+    response_model=IntegrationClientView,
+)
+def revoke_integration_client(
+    client_id: str,
+    db: DbSession,
+    admin: PlatformAdmin,
+) -> IntegrationClientView:
+    client = require_integration_client(db, client_id)
+    client.is_active = False
+    record_event(
+        db,
+        event_type="INTEGRATION_CLIENT_REVOKED",
+        entity_type="IntegrationClient",
+        entity_id=client.id,
+        organization_id=admin.organization_id,
+        actor_type="USER",
+        actor_id=admin.id,
+        payload={"client_name": client.name},
+    )
+    db.commit()
+    db.refresh(client)
+    return integration_client_view(client)
 
 
 def brand_view(brand: Brand) -> BrandView:

@@ -6,9 +6,9 @@
   <meta name="robots" content="noindex,nofollow">
   <title>供应网络管理 · Matrix One</title>
   <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/styles.css?v=20260909-brand-cooperation">
-  <script src="/assets/common.js?v=20260909-brand-cooperation" defer></script>
-  <script src="/assets/admin.js?v=20260909-brand-cooperation" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260909-integration-clients">
+  <script src="/assets/common.js?v=20260909-integration-clients" defer></script>
+  <script src="/assets/admin.js?v=20260909-integration-clients" defer></script>
 </head>
 <body class="app-body">
   <div class="app-shell">
@@ -29,6 +29,10 @@
         </button>
 
         <span class="nav-section-label">平台底座</span>
+        <button class="nav-item" data-route="integrations" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h4M7 14h7M17 10h.01"/></svg>
+          集成凭证
+        </button>
         <button class="nav-item" data-route="system" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/></svg>
           平台能力
@@ -131,6 +135,43 @@
           </div>
           <section class="panel" style="margin-top:16px"><header class="panel-head"><div><h2>核心业务流程</h2><p>真实供给数据贯穿供应商接入、商品维护、报价更新和履约协同。</p></div></header><div class="panel-body"><div class="quote-box" style="margin-top:0">供应商申请 → 平台审核 → 组织开户 → 企业档案 → 商品主数据 → 供应报价 → 库存记录 → 交易结果</div></div></section>
         </section>
+
+        <section class="app-view" data-view="integrations">
+          <div class="view-heading">
+            <div><h1>集成调用方凭证</h1><p>为系统调用方签发最小权限的独立 Bearer 凭证；明文令牌只显示一次。</p></div>
+            <div class="view-actions"><button id="refresh-integration-clients" class="btn btn-secondary" type="button">刷新</button></div>
+          </div>
+          <section class="panel">
+            <header class="panel-head"><div><h2>创建调用方</h2><p>按调用用途勾选权限范围，可选设置到期时间。</p></div></header>
+            <div class="panel-body">
+              <form id="integration-client-form" class="stack">
+                <div class="form-grid two">
+                  <label class="form-group"><span class="form-label">调用方名称</span><input id="integration-client-name" class="input" maxlength="120" required placeholder="例如：ERP 主数据同步"></label>
+                  <label class="form-group"><span class="form-label">到期时间（可选）</span><input id="integration-client-expires-at" class="input" type="datetime-local"></label>
+                </div>
+                <fieldset id="integration-client-scopes" class="form-group">
+                  <legend class="form-label">权限范围</legend>
+                  <div class="tag-list">
+                    <label class="tag"><input type="checkbox" value="suppliers:read"> 供应商读取</label>
+                    <label class="tag"><input type="checkbox" value="supplier-brands:read"> 品牌合作读取</label>
+                    <label class="tag"><input type="checkbox" value="supplier-skus:read"> SKU 读取</label>
+                    <label class="tag"><input type="checkbox" value="supplier-costs:read"> 成本读取</label>
+                  </div>
+                </fieldset>
+                <div><button id="create-integration-client" class="btn btn-primary" type="submit">创建并显示令牌</button></div>
+              </form>
+            </div>
+          </section>
+          <section class="data-card" style="margin-top:16px">
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>调用方</th><th>令牌前缀</th><th>权限范围</th><th>到期时间</th><th>最近使用</th><th>状态</th><th></th></tr></thead>
+                <tbody id="integration-clients-tbody"><tr><td colspan="7" class="table-empty">正在加载…</td></tr></tbody>
+              </table>
+            </div>
+            <footer class="table-footer"><span id="integration-clients-count">共 0 个</span><span>列表不会返回明文令牌或令牌哈希</span></footer>
+          </section>
+        </section>
       </main>
     </section>
   </div>
@@ -174,6 +215,24 @@
     <footer class="dialog-actions">
       <button class="btn btn-secondary" type="button" data-close-brand-cooperation>关闭</button>
       <button id="save-brand-cooperation" class="btn btn-primary" type="submit" form="brand-cooperation-form">保存合作模式</button>
+    </footer>
+  </dialog>
+
+  <dialog id="integration-token-dialog">
+    <header class="dialog-head">
+      <div><h2>立即保存集成令牌</h2><p id="integration-token-dialog-subtitle">关闭后将无法再次查看；遗失时只能轮换。</p></div>
+      <button class="icon-btn" type="button" data-close-integration-token aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+    </header>
+    <div class="dialog-body">
+      <div class="credential-box">
+        <h3>仅显示这一次</h3>
+        <p>请复制到调用方的安全密钥存储中。不要粘贴到日志、工单或聊天记录。</p>
+        <div class="credential-row"><span>Bearer Token</span><code id="integration-token-value"></code></div>
+      </div>
+    </div>
+    <footer class="dialog-actions">
+      <button class="btn btn-secondary" type="button" data-close-integration-token>我已安全保存</button>
+      <button id="copy-integration-token" class="btn btn-primary" type="button">复制令牌</button>
     </footer>
   </dialog>
 </body>
