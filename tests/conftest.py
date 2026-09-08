@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
+from typing import Any
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -38,6 +41,12 @@ SUPPLIER_EMAIL = "supplier-test@example.com"
 SUPPLIER_PASSWORD = "SupplierTest123!"
 ADMIN_EMAIL = "admin-test@example.com"
 ADMIN_PASSWORD = "AdminTest123!"
+INTEGRATION_SCOPES = [
+    "suppliers:read",
+    "supplier-brands:read",
+    "supplier-skus:read",
+    "supplier-costs:read",
+]
 
 
 def create_test_accounts() -> None:
@@ -179,3 +188,33 @@ def authenticated_client(client: TestClient) -> TestClient:
     )
     assert response.status_code == 200
     return client
+
+
+@pytest.fixture()
+def integration_client_factory(
+    client: TestClient,
+) -> Callable[[list[str]], dict[str, Any]]:
+    def create(scopes: list[str]) -> dict[str, Any]:
+        login_response = client.post(
+            "/api/auth/login",
+            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+        )
+        assert login_response.status_code == 200
+        response = client.post(
+            "/api/admin/integration-clients",
+            json={
+                "name": f"资源同步测试-{uuid4().hex[:8]}",
+                "scopes": scopes,
+            },
+        )
+        assert response.status_code == 201
+        return response.json()
+
+    return create
+
+
+@pytest.fixture()
+def integration_client(
+    integration_client_factory: Callable[[list[str]], dict[str, Any]],
+) -> dict[str, Any]:
+    return integration_client_factory(INTEGRATION_SCOPES)

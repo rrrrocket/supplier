@@ -7,6 +7,7 @@ from app.api.routes import (
     dashboard,
     events,
     imports,
+    integrations,
     offers,
     products,
     profile,
@@ -27,3 +28,4 @@ api_router.include_router(offers.router)
 api_router.include_router(supplier_catalog.router)
 api_router.include_router(imports.router)
 api_router.include_router(events.router)
+api_router.include_router(integrations.router)
