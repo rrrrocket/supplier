@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
@@ -80,3 +81,40 @@ class SupplierBrandIntegrationPage(BaseModel):
 class SupplierSkuIntegrationPage(BaseModel):
     items: list[SupplierSkuIntegrationView]
     next_cursor: str | None
+
+
+class CurrentSkuCostView(BaseModel):
+    supplier_id: str
+    supplier_sku_id: str
+    supplier_sku_code: str
+    cost_price: Decimal
+    currency: str
+    cost_updated_at: datetime
+
+
+class SkuCostQueryItem(BaseModel):
+    client_sku_id: str = Field(min_length=1, max_length=200)
+    supplier_id: str
+    supplier_sku_id: str
+
+
+class SkuCostBatchRequest(BaseModel):
+    items: list[SkuCostQueryItem] = Field(min_length=1, max_length=500)
+
+
+class SkuCostBatchSuccess(CurrentSkuCostView):
+    client_sku_id: str
+    status: Literal["OK"] = "OK"
+
+
+class SkuCostBatchError(BaseModel):
+    client_sku_id: str
+    supplier_id: str
+    supplier_sku_id: str
+    status: Literal["ERROR"] = "ERROR"
+    error_code: str
+    message: str
+
+
+class SkuCostBatchResponse(BaseModel):
+    items: list[SkuCostBatchSuccess | SkuCostBatchError]

@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from pydantic import AwareDatetime
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
+from starlette.responses import Response
 
 from app.api.deps import DbSession
-from app.api.integration_deps import BrandReader, SkuReader, SupplierReader
+from app.api.integration_deps import BrandReader, CostReader, SkuReader, SupplierReader
 from app.models.entities import (
     Brand,
     CatalogStatus,
@@ -23,6 +30,11 @@ from app.models.entities import (
     SupplierStatus,
 )
 from app.schemas.integration import (
+    CurrentSkuCostView,
+    SkuCostBatchError,
+    SkuCostBatchRequest,
+    SkuCostBatchResponse,
+    SkuCostBatchSuccess,
     SupplierBrandIntegrationPage,
     SupplierBrandIntegrationView,
     SupplierIntegrationPage,
@@ -30,6 +42,8 @@ from app.schemas.integration import (
     SupplierSkuIntegrationPage,
     SupplierSkuIntegrationView,
 )
+from app.services.catalog import CurrentSkuCost, SkuCostError, resolve_current_sku_cost
+from app.services.events import record_event
 from app.services.integration_pagination import decode_cursor, encode_cursor
 
 
@@ -37,6 +51,23 @@ router = APIRouter(prefix="/integrations/v1", tags=["通用系统集成"])
 
 ACTIVE = CatalogStatus.ACTIVE.value
 INACTIVE = CatalogStatus.INACTIVE.value
+MISSING_COST_CODES = {"SUPPLIER_NOT_FOUND", "SKU_NOT_FOUND"}
+
+
+class BadRequestValidationRoute(APIRoute):
+    def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
+        route_handler = super().get_route_handler()
+
+        async def handle(request: Request) -> Response:
+            try:
+                return await route_handler(request)
+            except RequestValidationError as exc:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"detail": jsonable_encoder(exc.errors())},
+                )
+
+        return handle
 
 
 def utc_value(value: datetime) -> datetime:
@@ -138,6 +169,42 @@ def supplier_context_updated_at(
     if profile is None:
         return supplier.updated_at
     return max(supplier.updated_at, profile.updated_at)
+
+
+def cost_view(cost: CurrentSkuCost) -> CurrentSkuCostView:
+    return CurrentSkuCostView(
+        supplier_id=cost.supplier_id,
+        supplier_sku_id=cost.supplier_sku_id,
+        supplier_sku_code=cost.supplier_sku_code,
+        cost_price=cost.cost_price,
+        currency=cost.currency,
+        cost_updated_at=cost.cost_updated_at,
+    )
+
+
+def record_cost_query_event(
+    db: Session,
+    *,
+    client_id: str,
+    endpoint: str,
+    result_count: int,
+    error_count: int,
+) -> None:
+    record_event(
+        db,
+        event_type="INTEGRATION_SKU_COSTS_QUERIED",
+        entity_type="IntegrationClient",
+        entity_id=client_id,
+        organization_id=None,
+        actor_type="INTEGRATION_CLIENT",
+        actor_id=client_id,
+        payload={
+            "request_id": str(uuid4()),
+            "endpoint": endpoint,
+            "result_count": result_count,
+            "error_count": error_count,
+        },
+    )
 
 
 def ranked_cooperations(supplier_id: str):
@@ -412,3 +479,112 @@ def list_supplier_skus(
         ],
         next_cursor=next_cursor,
     )
+
+
+@router.get(
+    "/suppliers/{supplier_id}/skus/{supplier_sku_id}/cost",
+    response_model=CurrentSkuCostView,
+)
+def get_supplier_sku_cost(
+    supplier_id: str,
+    supplier_sku_id: str,
+    request: Request,
+    db: DbSession,
+    integration_client: CostReader,
+) -> CurrentSkuCostView | JSONResponse:
+    try:
+        cost = resolve_current_sku_cost(
+            db,
+            supplier_id=supplier_id,
+            supplier_sku_id=supplier_sku_id,
+        )
+    except SkuCostError as exc:
+        record_cost_query_event(
+            db,
+            client_id=integration_client.id,
+            endpoint=request.url.path,
+            result_count=0,
+            error_count=1,
+        )
+        db.commit()
+        error_status = (
+            status.HTTP_404_NOT_FOUND
+            if exc.code in MISSING_COST_CODES
+            else status.HTTP_409_CONFLICT
+        )
+        return JSONResponse(
+            status_code=error_status,
+            content={"detail": {"code": exc.code, "message": exc.message}},
+        )
+
+    record_cost_query_event(
+        db,
+        client_id=integration_client.id,
+        endpoint=request.url.path,
+        result_count=1,
+        error_count=0,
+    )
+    db.commit()
+    return cost_view(cost)
+
+
+def query_supplier_sku_costs(
+    payload: SkuCostBatchRequest,
+    request: Request,
+    db: DbSession,
+    integration_client: CostReader,
+) -> SkuCostBatchResponse:
+    results: list[SkuCostBatchSuccess | SkuCostBatchError] = []
+    result_count = 0
+    error_count = 0
+    for item in payload.items:
+        try:
+            cost = resolve_current_sku_cost(
+                db,
+                supplier_id=item.supplier_id,
+                supplier_sku_id=item.supplier_sku_id,
+            )
+        except SkuCostError as exc:
+            error_count += 1
+            results.append(
+                SkuCostBatchError(
+                    client_sku_id=item.client_sku_id,
+                    supplier_id=item.supplier_id,
+                    supplier_sku_id=item.supplier_sku_id,
+                    error_code=exc.code,
+                    message=exc.message,
+                )
+            )
+            continue
+
+        result_count += 1
+        results.append(
+            SkuCostBatchSuccess(
+                client_sku_id=item.client_sku_id,
+                supplier_id=cost.supplier_id,
+                supplier_sku_id=cost.supplier_sku_id,
+                supplier_sku_code=cost.supplier_sku_code,
+                cost_price=cost.cost_price,
+                currency=cost.currency,
+                cost_updated_at=cost.cost_updated_at,
+            )
+        )
+
+    record_cost_query_event(
+        db,
+        client_id=integration_client.id,
+        endpoint=request.url.path,
+        result_count=result_count,
+        error_count=error_count,
+    )
+    db.commit()
+    return SkuCostBatchResponse(items=results)
+
+
+router.add_api_route(
+    "/sku-costs/query",
+    query_supplier_sku_costs,
+    methods=["POST"],
+    response_model=SkuCostBatchResponse,
+    route_class_override=BadRequestValidationRoute,
+)

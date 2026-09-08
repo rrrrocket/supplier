@@ -16,6 +16,7 @@
 
   const eventLabels = {
     BRAND_CREATED: ["新建品牌", "平台品牌目录已更新"],
+    INTEGRATION_SKU_COSTS_QUERIED: ["查询 SKU 成本", "集成调用方已查询当前成本"],
     OFFER_CREATED: ["新建报价", "报价已进入供应网络"],
     OFFER_UPDATED: ["更新报价", "价格、库存或交期发生更新"],
     PRODUCT_CREATED: ["新建商品", "商品主数据已创建"],

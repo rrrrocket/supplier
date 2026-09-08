@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
 from hashlib import md5
 
 from sqlalchemy import select
@@ -8,12 +11,34 @@ from sqlalchemy.orm import Session
 from app.models.entities import (
     Brand,
     CatalogStatus,
+    CommercialMode,
+    OfferStatus,
+    Organization,
+    OrganizationType,
     Product,
     ProductVariant,
     SupplierBrandCooperation,
+    SupplierOffer,
     SupplierSku,
 )
 from app.services.events import record_event
+
+
+@dataclass(frozen=True)
+class CurrentSkuCost:
+    supplier_id: str
+    supplier_sku_id: str
+    supplier_sku_code: str
+    cost_price: Decimal
+    currency: str
+    cost_updated_at: datetime
+
+
+class SkuCostError(Exception):
+    def __init__(self, code: str, message: str):
+        self.code = code
+        self.message = message
+        super().__init__(message)
 
 
 def normalize_brand_name(value: str) -> str:
@@ -168,3 +193,63 @@ def ensure_supplier_sku(
     db.add(supplier_sku)
     db.flush()
     return supplier_sku
+
+
+def resolve_current_sku_cost(
+    db: Session,
+    *,
+    supplier_id: str,
+    supplier_sku_id: str,
+) -> CurrentSkuCost:
+    supplier = db.get(Organization, supplier_id)
+    if (
+        supplier is None
+        or supplier.organization_type != OrganizationType.SUPPLIER.value
+    ):
+        raise SkuCostError("SUPPLIER_NOT_FOUND", "供应商不存在")
+    if not supplier.is_active:
+        raise SkuCostError("SUPPLIER_INACTIVE", "供应商已停用")
+
+    supplier_sku = db.get(SupplierSku, supplier_sku_id)
+    if supplier_sku is None:
+        raise SkuCostError("SKU_NOT_FOUND", "Supplier SKU 不存在")
+    if supplier_sku.supplier_id != supplier_id:
+        raise SkuCostError(
+            "SKU_SUPPLIER_MISMATCH", "Supplier SKU 不属于该供应商"
+        )
+    if supplier_sku.status != CatalogStatus.ACTIVE.value:
+        raise SkuCostError("SKU_INACTIVE", "Supplier SKU 已停用")
+
+    cooperation = db.scalar(
+        select(SupplierBrandCooperation).where(
+            SupplierBrandCooperation.supplier_id == supplier_id,
+            SupplierBrandCooperation.brand_id == supplier_sku.brand_id,
+            SupplierBrandCooperation.status == CatalogStatus.ACTIVE.value,
+        )
+    )
+    if cooperation is None:
+        raise SkuCostError(
+            "BRAND_COOPERATION_INACTIVE", "品牌合作关系未启用"
+        )
+    if cooperation.commercial_mode != CommercialMode.SELF_PURCHASE.value:
+        raise SkuCostError(
+            "NOT_SELF_PURCHASE", "该货号所属品牌不是自营采购模式"
+        )
+
+    offer = db.scalar(
+        select(SupplierOffer).where(
+            SupplierOffer.supplier_sku_id == supplier_sku_id,
+            SupplierOffer.status == OfferStatus.ACTIVE.value,
+        )
+    )
+    if offer is None or offer.price is None:
+        raise SkuCostError("COST_PRICE_MISSING", "当前成本价不存在")
+
+    return CurrentSkuCost(
+        supplier_id=supplier_id,
+        supplier_sku_id=supplier_sku_id,
+        supplier_sku_code=supplier_sku.supplier_sku_code,
+        cost_price=offer.price,
+        currency=offer.currency,
+        cost_updated_at=offer.updated_at,
+    )

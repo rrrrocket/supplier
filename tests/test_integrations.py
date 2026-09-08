@@ -4,6 +4,7 @@ import base64
 import json
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
@@ -17,10 +18,13 @@ from app.models.entities import (
     Brand,
     CatalogStatus,
     CommercialMode,
+    EventLog,
+    OfferStatus,
     Organization,
     OrganizationType,
     Product,
     SupplierBrandCooperation,
+    SupplierOffer,
     SupplierProfile,
     SupplierSku,
     SupplierStatus,
@@ -318,6 +322,303 @@ def integration_catalog(client: TestClient) -> dict[str, Any]:
             "old_time": old_time,
             "page_time": page_time,
             "profile_time": profile_time,
+        }
+
+
+@pytest.fixture(scope="module")
+def cost_catalog(client: TestClient) -> dict[str, Any]:
+    del client
+    suffix = uuid4().hex[:8]
+    base_time = datetime(2032, 1, 1, 8, 0, tzinfo=timezone.utc)
+    cost_updated_at = base_time + timedelta(hours=1)
+
+    with SessionLocal() as db:
+        first_supplier = Organization(
+            code=f"COST-SUP-A-{suffix}",
+            name=f"成本供应商 A {suffix}",
+            organization_type=OrganizationType.SUPPLIER.value,
+            is_active=True,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        second_supplier = Organization(
+            code=f"COST-SUP-C-{suffix}",
+            name=f"成本供应商 C {suffix}",
+            organization_type=OrganizationType.SUPPLIER.value,
+            is_active=True,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        disabled_supplier = Organization(
+            code=f"COST-SUP-OFF-{suffix}",
+            name=f"停用成本供应商 {suffix}",
+            organization_type=OrganizationType.SUPPLIER.value,
+            is_active=False,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        platform = Organization(
+            code=f"COST-PLATFORM-{suffix}",
+            name=f"非供应商成本组织 {suffix}",
+            organization_type=OrganizationType.PLATFORM.value,
+            is_active=True,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        db.add_all([first_supplier, second_supplier, disabled_supplier, platform])
+        db.flush()
+
+        active_brand = Brand(
+            code=f"COST-BRAND-A-{suffix}",
+            name=f"成本模式 A 品牌 {suffix}",
+            normalized_name=f"cost mode a brand {suffix}",
+            aliases=[],
+            status=CatalogStatus.ACTIVE.value,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        b2b_brand = Brand(
+            code=f"COST-BRAND-B-{suffix}",
+            name=f"成本模式 B 品牌 {suffix}",
+            normalized_name=f"cost mode b brand {suffix}",
+            aliases=[],
+            status=CatalogStatus.ACTIVE.value,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        joint_brand = Brand(
+            code=f"COST-BRAND-C-{suffix}",
+            name=f"成本模式 C 品牌 {suffix}",
+            normalized_name=f"cost mode c brand {suffix}",
+            aliases=[],
+            status=CatalogStatus.ACTIVE.value,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        inactive_cooperation_brand = Brand(
+            code=f"COST-BRAND-OFF-{suffix}",
+            name=f"失效成本合作品牌 {suffix}",
+            normalized_name=f"cost inactive cooperation brand {suffix}",
+            aliases=[],
+            status=CatalogStatus.ACTIVE.value,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        db.add_all(
+            [
+                active_brand,
+                b2b_brand,
+                joint_brand,
+                inactive_cooperation_brand,
+            ]
+        )
+        db.flush()
+
+        db.add_all(
+            [
+                SupplierBrandCooperation(
+                    supplier_id=first_supplier.id,
+                    brand_id=active_brand.id,
+                    commercial_mode=CommercialMode.SELF_PURCHASE.value,
+                    status=CatalogStatus.ACTIVE.value,
+                    created_at=base_time,
+                    updated_at=base_time,
+                ),
+                SupplierBrandCooperation(
+                    supplier_id=first_supplier.id,
+                    brand_id=b2b_brand.id,
+                    commercial_mode=CommercialMode.B2B.value,
+                    status=CatalogStatus.ACTIVE.value,
+                    created_at=base_time,
+                    updated_at=base_time,
+                ),
+                SupplierBrandCooperation(
+                    supplier_id=second_supplier.id,
+                    brand_id=joint_brand.id,
+                    commercial_mode=CommercialMode.JOINT_OPERATION.value,
+                    status=CatalogStatus.ACTIVE.value,
+                    created_at=base_time,
+                    updated_at=base_time,
+                ),
+                SupplierBrandCooperation(
+                    supplier_id=first_supplier.id,
+                    brand_id=inactive_cooperation_brand.id,
+                    commercial_mode=CommercialMode.SELF_PURCHASE.value,
+                    status=CatalogStatus.INACTIVE.value,
+                    created_at=base_time,
+                    updated_at=base_time,
+                ),
+            ]
+        )
+
+        active_product = Product(
+            created_by_organization_id=first_supplier.id,
+            brand=active_brand.name,
+            brand_id=active_brand.id,
+            name=f"成本模式 A 商品 {suffix}",
+            model="COST-A",
+            category="集成测试",
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        b2b_product = Product(
+            created_by_organization_id=first_supplier.id,
+            brand=b2b_brand.name,
+            brand_id=b2b_brand.id,
+            name=f"成本模式 B 商品 {suffix}",
+            model="COST-B",
+            category="集成测试",
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        joint_product = Product(
+            created_by_organization_id=second_supplier.id,
+            brand=joint_brand.name,
+            brand_id=joint_brand.id,
+            name=f"成本模式 C 商品 {suffix}",
+            model="COST-C",
+            category="集成测试",
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        inactive_cooperation_product = Product(
+            created_by_organization_id=first_supplier.id,
+            brand=inactive_cooperation_brand.name,
+            brand_id=inactive_cooperation_brand.id,
+            name=f"失效成本合作商品 {suffix}",
+            model="COST-OFF",
+            category="集成测试",
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        db.add_all(
+            [
+                active_product,
+                b2b_product,
+                joint_product,
+                inactive_cooperation_product,
+            ]
+        )
+        db.flush()
+
+        active_sku = SupplierSku(
+            supplier_id=first_supplier.id,
+            brand_id=active_brand.id,
+            product_id=active_product.id,
+            supplier_sku_code=f"COST-A-{suffix}",
+            status=CatalogStatus.ACTIVE.value,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        inactive_sku = SupplierSku(
+            supplier_id=first_supplier.id,
+            brand_id=active_brand.id,
+            product_id=active_product.id,
+            supplier_sku_code=f"COST-INACTIVE-{suffix}",
+            status=CatalogStatus.INACTIVE.value,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        inactive_cooperation_sku = SupplierSku(
+            supplier_id=first_supplier.id,
+            brand_id=inactive_cooperation_brand.id,
+            product_id=inactive_cooperation_product.id,
+            supplier_sku_code=f"COST-COOP-OFF-{suffix}",
+            status=CatalogStatus.ACTIVE.value,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        b2b_sku = SupplierSku(
+            supplier_id=first_supplier.id,
+            brand_id=b2b_brand.id,
+            product_id=b2b_product.id,
+            supplier_sku_code=f"COST-B2B-{suffix}",
+            status=CatalogStatus.ACTIVE.value,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        joint_sku = SupplierSku(
+            supplier_id=second_supplier.id,
+            brand_id=joint_brand.id,
+            product_id=joint_product.id,
+            supplier_sku_code=f"COST-JOINT-{suffix}",
+            status=CatalogStatus.ACTIVE.value,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        missing_offer_sku = SupplierSku(
+            supplier_id=first_supplier.id,
+            brand_id=active_brand.id,
+            product_id=active_product.id,
+            supplier_sku_code=f"COST-NO-OFFER-{suffix}",
+            status=CatalogStatus.ACTIVE.value,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        paused_offer_sku = SupplierSku(
+            supplier_id=first_supplier.id,
+            brand_id=active_brand.id,
+            product_id=active_product.id,
+            supplier_sku_code=f"COST-PAUSED-{suffix}",
+            status=CatalogStatus.ACTIVE.value,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        db.add_all(
+            [
+                active_sku,
+                inactive_sku,
+                inactive_cooperation_sku,
+                b2b_sku,
+                joint_sku,
+                missing_offer_sku,
+                paused_offer_sku,
+            ]
+        )
+        db.flush()
+
+        db.add_all(
+            [
+                SupplierOffer(
+                    organization_id=first_supplier.id,
+                    product_id=active_product.id,
+                    supplier_sku=active_sku.supplier_sku_code,
+                    supplier_sku_id=active_sku.id,
+                    price=Decimal("28.5000"),
+                    currency="CNY",
+                    status=OfferStatus.ACTIVE.value,
+                    created_at=base_time,
+                    updated_at=cost_updated_at,
+                ),
+                SupplierOffer(
+                    organization_id=first_supplier.id,
+                    product_id=active_product.id,
+                    supplier_sku=paused_offer_sku.supplier_sku_code,
+                    supplier_sku_id=paused_offer_sku.id,
+                    price=Decimal("99.9900"),
+                    currency="CNY",
+                    status=OfferStatus.PAUSED.value,
+                    created_at=base_time,
+                    updated_at=cost_updated_at,
+                ),
+            ]
+        )
+        db.commit()
+
+        return {
+            "first_supplier_id": first_supplier.id,
+            "second_supplier_id": second_supplier.id,
+            "disabled_supplier_id": disabled_supplier.id,
+            "platform_id": platform.id,
+            "active_sku_id": active_sku.id,
+            "inactive_sku_id": inactive_sku.id,
+            "inactive_cooperation_sku_id": inactive_cooperation_sku.id,
+            "b2b_sku_id": b2b_sku.id,
+            "other_sku_id": joint_sku.id,
+            "missing_offer_sku_id": missing_offer_sku.id,
+            "paused_offer_sku_id": paused_offer_sku.id,
+            "active_sku_code": active_sku.supplier_sku_code,
+            "cost_updated_at": cost_updated_at,
         }
 
 
@@ -981,3 +1282,361 @@ def test_nested_resources_reject_non_supplier_and_unknown_ids_identically(
         assert supplier_response.status_code == 200
         assert platform_response.status_code == 404
         assert platform_response.json() == missing_response.json()
+
+
+def test_single_cost_returns_exact_current_mode_a_offer_and_aggregate_audit(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    cost_catalog: dict[str, Any],
+) -> None:
+    response = client.get(
+        f"{BASE_PATH}/suppliers/{cost_catalog['first_supplier_id']}"
+        f"/skus/{cost_catalog['active_sku_id']}/cost",
+        headers=auth_headers(integration_client),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == {
+        "supplier_id": cost_catalog["first_supplier_id"],
+        "supplier_sku_id": cost_catalog["active_sku_id"],
+        "supplier_sku_code": cost_catalog["active_sku_code"],
+        "cost_price": "28.5000",
+        "currency": "CNY",
+        "cost_updated_at": cost_catalog["cost_updated_at"].isoformat().replace(
+            "+00:00", "Z"
+        ),
+    }
+
+    with SessionLocal() as db:
+        events = db.scalars(
+            select(EventLog).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED",
+                EventLog.actor_id == integration_client["id"],
+            )
+        ).all()
+    assert len(events) == 1
+    event = events[0]
+    assert event.organization_id is None
+    assert event.actor_type == "INTEGRATION_CLIENT"
+    assert event.entity_type == "IntegrationClient"
+    assert event.entity_id == integration_client["id"]
+    assert event.payload["endpoint"] == (
+        f"{BASE_PATH}/suppliers/{cost_catalog['first_supplier_id']}"
+        f"/skus/{cost_catalog['active_sku_id']}/cost"
+    )
+    assert event.payload["result_count"] == 1
+    assert event.payload["error_count"] == 0
+    assert set(event.payload) == {
+        "request_id",
+        "endpoint",
+        "result_count",
+        "error_count",
+    }
+    assert "28.5000" not in json.dumps(event.payload)
+    assert integration_client["token"] not in json.dumps(event.payload)
+
+
+@pytest.mark.parametrize(
+    (
+        "supplier_key",
+        "sku_key",
+        "expected_status",
+        "expected_code",
+        "expected_message",
+    ),
+    [
+        (
+            "missing",
+            "active_sku_id",
+            404,
+            "SUPPLIER_NOT_FOUND",
+            "供应商不存在",
+        ),
+        (
+            "platform_id",
+            "active_sku_id",
+            404,
+            "SUPPLIER_NOT_FOUND",
+            "供应商不存在",
+        ),
+        (
+            "disabled_supplier_id",
+            "missing",
+            409,
+            "SUPPLIER_INACTIVE",
+            "供应商已停用",
+        ),
+        (
+            "first_supplier_id",
+            "missing",
+            404,
+            "SKU_NOT_FOUND",
+            "Supplier SKU 不存在",
+        ),
+        (
+            "first_supplier_id",
+            "other_sku_id",
+            409,
+            "SKU_SUPPLIER_MISMATCH",
+            "Supplier SKU 不属于该供应商",
+        ),
+        (
+            "first_supplier_id",
+            "inactive_sku_id",
+            409,
+            "SKU_INACTIVE",
+            "Supplier SKU 已停用",
+        ),
+        (
+            "first_supplier_id",
+            "inactive_cooperation_sku_id",
+            409,
+            "BRAND_COOPERATION_INACTIVE",
+            "品牌合作关系未启用",
+        ),
+        (
+            "first_supplier_id",
+            "b2b_sku_id",
+            409,
+            "NOT_SELF_PURCHASE",
+            "该货号所属品牌不是自营采购模式",
+        ),
+        (
+            "second_supplier_id",
+            "other_sku_id",
+            409,
+            "NOT_SELF_PURCHASE",
+            "该货号所属品牌不是自营采购模式",
+        ),
+        (
+            "first_supplier_id",
+            "missing_offer_sku_id",
+            409,
+            "COST_PRICE_MISSING",
+            "当前成本价不存在",
+        ),
+        (
+            "first_supplier_id",
+            "paused_offer_sku_id",
+            409,
+            "COST_PRICE_MISSING",
+            "当前成本价不存在",
+        ),
+    ],
+    ids=[
+        "supplier-not-found",
+        "non-supplier-organization",
+        "supplier-inactive-before-missing-sku",
+        "sku-not-found",
+        "supplier-mismatch-before-sku-status",
+        "sku-inactive",
+        "cooperation-inactive",
+        "mode-b",
+        "mode-c",
+        "offer-missing",
+        "offer-not-active",
+    ],
+)
+def test_single_cost_maps_each_business_failure_after_ordered_validation(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    cost_catalog: dict[str, Any],
+    supplier_key: str,
+    sku_key: str,
+    expected_status: int,
+    expected_code: str,
+    expected_message: str,
+) -> None:
+    supplier_id = (
+        "00000000-0000-0000-0000-000000000001"
+        if supplier_key == "missing"
+        else cost_catalog[supplier_key]
+    )
+    supplier_sku_id = (
+        "00000000-0000-0000-0000-000000000002"
+        if sku_key == "missing"
+        else cost_catalog[sku_key]
+    )
+
+    response = client.get(
+        f"{BASE_PATH}/suppliers/{supplier_id}/skus/{supplier_sku_id}/cost",
+        headers=auth_headers(integration_client),
+    )
+
+    assert response.status_code == expected_status
+    assert response.json() == {
+        "detail": {"code": expected_code, "message": expected_message}
+    }
+    with SessionLocal() as db:
+        events = db.scalars(
+            select(EventLog).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED",
+                EventLog.actor_id == integration_client["id"],
+            )
+        ).all()
+    assert len(events) == 1
+    assert events[0].payload["result_count"] == 0
+    assert events[0].payload["error_count"] == 1
+
+
+def test_cost_endpoints_require_supplier_cost_read_scope(
+    client: TestClient,
+    integration_client_factory: Callable[[list[str]], dict[str, Any]],
+    cost_catalog: dict[str, Any],
+) -> None:
+    scoped_client = integration_client_factory(["supplier-skus:read"])
+    headers = auth_headers(scoped_client)
+
+    single_response = client.get(
+        f"{BASE_PATH}/suppliers/{cost_catalog['first_supplier_id']}"
+        f"/skus/{cost_catalog['active_sku_id']}/cost",
+        headers=headers,
+    )
+    batch_response = client.post(
+        f"{BASE_PATH}/sku-costs/query",
+        headers=headers,
+        json={
+            "items": [
+                {
+                    "client_sku_id": "scope-test",
+                    "supplier_id": cost_catalog["first_supplier_id"],
+                    "supplier_sku_id": cost_catalog["active_sku_id"],
+                }
+            ]
+        },
+    )
+
+    assert single_response.status_code == 403
+    assert batch_response.status_code == 403
+    with SessionLocal() as db:
+        assert db.scalars(
+            select(EventLog).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED",
+                EventLog.actor_id == scoped_client["id"],
+            )
+        ).all() == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"items": []},
+        {
+            "items": [
+                {
+                    "client_sku_id": "",
+                    "supplier_id": "supplier-id",
+                    "supplier_sku_id": "supplier-sku-id",
+                }
+            ]
+        },
+        {
+            "items": [
+                {
+                    "client_sku_id": str(index),
+                    "supplier_id": "supplier-id",
+                    "supplier_sku_id": "supplier-sku-id",
+                }
+                for index in range(501)
+            ]
+        },
+    ],
+    ids=["empty-items", "empty-client-sku-id", "more-than-500-items"],
+)
+def test_batch_cost_query_rejects_invalid_request_structure_with_400(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    payload: dict[str, Any],
+) -> None:
+    response = client.post(
+        f"{BASE_PATH}/sku-costs/query",
+        headers=auth_headers(integration_client),
+        json=payload,
+    )
+
+    assert response.status_code == 400
+
+
+def test_batch_cost_query_preserves_rows_isolates_errors_and_redacts_audit(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    cost_catalog: dict[str, Any],
+) -> None:
+    client_sku_ids = ["client-valid", "client-mode-b", "client-mismatch"]
+    items = [
+        {
+            "client_sku_id": client_sku_ids[0],
+            "supplier_id": cost_catalog["first_supplier_id"],
+            "supplier_sku_id": cost_catalog["active_sku_id"],
+        },
+        {
+            "client_sku_id": client_sku_ids[1],
+            "supplier_id": cost_catalog["first_supplier_id"],
+            "supplier_sku_id": cost_catalog["b2b_sku_id"],
+        },
+        {
+            "client_sku_id": client_sku_ids[2],
+            "supplier_id": cost_catalog["first_supplier_id"],
+            "supplier_sku_id": cost_catalog["other_sku_id"],
+        },
+    ]
+
+    response = client.post(
+        f"{BASE_PATH}/sku-costs/query",
+        headers=auth_headers(integration_client),
+        json={"items": items},
+    )
+
+    assert response.status_code == 200
+    results = response.json()["items"]
+    assert [item["client_sku_id"] for item in results] == client_sku_ids
+    assert results[0] == {
+        "client_sku_id": client_sku_ids[0],
+        "supplier_id": cost_catalog["first_supplier_id"],
+        "supplier_sku_id": cost_catalog["active_sku_id"],
+        "supplier_sku_code": cost_catalog["active_sku_code"],
+        "cost_price": "28.5000",
+        "currency": "CNY",
+        "cost_updated_at": cost_catalog["cost_updated_at"].isoformat().replace(
+            "+00:00", "Z"
+        ),
+        "status": "OK",
+    }
+    assert results[1] == {
+        "client_sku_id": client_sku_ids[1],
+        "supplier_id": cost_catalog["first_supplier_id"],
+        "supplier_sku_id": cost_catalog["b2b_sku_id"],
+        "status": "ERROR",
+        "error_code": "NOT_SELF_PURCHASE",
+        "message": "该货号所属品牌不是自营采购模式",
+    }
+    assert results[2] == {
+        "client_sku_id": client_sku_ids[2],
+        "supplier_id": cost_catalog["first_supplier_id"],
+        "supplier_sku_id": cost_catalog["other_sku_id"],
+        "status": "ERROR",
+        "error_code": "SKU_SUPPLIER_MISMATCH",
+        "message": "Supplier SKU 不属于该供应商",
+    }
+
+    with SessionLocal() as db:
+        events = db.scalars(
+            select(EventLog).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED",
+                EventLog.actor_id == integration_client["id"],
+            )
+        ).all()
+    assert len(events) == 1
+    event = events[0]
+    assert event.organization_id is None
+    assert event.actor_type == "INTEGRATION_CLIENT"
+    assert event.entity_type == "IntegrationClient"
+    assert event.entity_id == integration_client["id"]
+    assert event.payload["endpoint"] == f"{BASE_PATH}/sku-costs/query"
+    assert event.payload["result_count"] == 1
+    assert event.payload["error_count"] == 2
+    persisted_payload = json.dumps(event.payload)
+    assert all(client_sku_id not in persisted_payload for client_sku_id in client_sku_ids)
+    assert "28.5000" not in persisted_payload
+    assert integration_client["token"] not in persisted_payload
