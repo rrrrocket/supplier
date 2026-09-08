@@ -10,12 +10,14 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     Numeric,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -51,6 +53,17 @@ class OfferStatus(str, Enum):
     ACTIVE = "ACTIVE"
     PAUSED = "PAUSED"
     EXPIRED = "EXPIRED"
+
+
+class CommercialMode(str, Enum):
+    SELF_PURCHASE = "SELF_PURCHASE"
+    JOINT_OPERATION = "JOINT_OPERATION"
+    B2B = "B2B"
+
+
+class CatalogStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
 
 
 class ImportStatus(str, Enum):
@@ -163,6 +176,77 @@ class SupplierApplication(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class Brand(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "brands"
+
+    code: Mapped[str] = mapped_column(String(60), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    aliases: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(30), default=CatalogStatus.ACTIVE.value, nullable=False, index=True
+    )
+
+
+class SupplierBrandCooperation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "supplier_brand_cooperations"
+    __table_args__ = (
+        Index(
+            "uq_active_supplier_brand_cooperation",
+            "supplier_id",
+            "brand_id",
+            unique=True,
+            postgresql_where=text("status = 'ACTIVE'"),
+        ),
+    )
+
+    supplier_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    brand_id: Mapped[str] = mapped_column(
+        ForeignKey("brands.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    commercial_mode: Mapped[str] = mapped_column(
+        String(40), default=CommercialMode.SELF_PURCHASE.value, nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(30), default=CatalogStatus.ACTIVE.value, nullable=False, index=True
+    )
+    valid_from: Mapped[date | None] = mapped_column(Date)
+    valid_to: Mapped[date | None] = mapped_column(Date)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
+class SupplierSku(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "supplier_skus"
+    __table_args__ = (
+        UniqueConstraint(
+            "supplier_id", "supplier_sku_code", name="uq_supplier_sku_code"
+        ),
+    )
+
+    supplier_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    brand_id: Mapped[str] = mapped_column(
+        ForeignKey("brands.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    product_id: Mapped[str] = mapped_column(
+        ForeignKey("products.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    variant_id: Mapped[str | None] = mapped_column(
+        ForeignKey("product_variants.id", ondelete="SET NULL"), index=True
+    )
+    supplier_sku_code: Mapped[str] = mapped_column(
+        String(120), nullable=False, index=True
+    )
+    manufacturer_part_number: Mapped[str | None] = mapped_column(String(160), index=True)
+    barcode: Mapped[str | None] = mapped_column(String(80), index=True)
+    status: Mapped[str] = mapped_column(
+        String(30), default=CatalogStatus.ACTIVE.value, nullable=False, index=True
+    )
+
+
 class Product(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "products"
     __table_args__ = (
@@ -180,6 +264,9 @@ class Product(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     name: Mapped[str] = mapped_column(String(240), nullable=False, index=True)
     brand: Mapped[str | None] = mapped_column(String(120), index=True)
+    brand_id: Mapped[str | None] = mapped_column(
+        ForeignKey("brands.id", ondelete="SET NULL"), index=True
+    )
     model: Mapped[str | None] = mapped_column(String(120), index=True)
     category: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(Text)
@@ -224,6 +311,9 @@ class SupplierOffer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("product_variants.id", ondelete="SET NULL"), index=True
     )
     supplier_sku: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    supplier_sku_id: Mapped[str | None] = mapped_column(
+        ForeignKey("supplier_skus.id", ondelete="RESTRICT"), unique=True, index=True
+    )
     price: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
     currency: Mapped[str] = mapped_column(String(8), default="CNY", nullable=False)
     moq: Mapped[int] = mapped_column(Integer, default=1, nullable=False)

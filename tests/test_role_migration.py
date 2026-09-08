@@ -1,55 +1,13 @@
-from __future__ import annotations
-
-import os
-import subprocess
-import sys
-from pathlib import Path
-from uuid import uuid4
-
-import psycopg
-from psycopg import sql
-from sqlalchemy.engine import URL, make_url
+from tests.migration_utils import connect, run_migrations, temporary_postgresql_database
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INITIAL_REVISION = "4d4ef4adb60c"
 
 
-def connect(database_url: URL, database_name: str) -> psycopg.Connection:
-    return psycopg.connect(
-        host=database_url.host,
-        port=database_url.port,
-        user=database_url.username,
-        password=database_url.password,
-        dbname=database_name,
-        autocommit=True,
-    )
-
-
-def run_migrations(database_url: URL, revision: str) -> None:
-    environment = os.environ.copy()
-    environment["DATABASE_URL"] = database_url.render_as_string(hide_password=False)
-    subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", revision],
-        cwd=PROJECT_ROOT,
-        env=environment,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-
 def test_upgrade_collapses_legacy_supplier_roles_to_supplier() -> None:
-    test_server_url = make_url(os.environ["DATABASE_URL"])
-    database_name = f"supplier_role_migration_{uuid4().hex}_test"
-    migration_url = test_server_url.set(database=database_name)
-
-    with connect(test_server_url, "postgres") as admin_connection:
-        admin_connection.execute(
-            sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name))
-        )
-
-    try:
+    with temporary_postgresql_database("supplier_role_migration") as migration_url:
+        database_name = migration_url.database
+        assert database_name is not None
         run_migrations(migration_url, INITIAL_REVISION)
         with connect(migration_url, database_name) as connection:
             connection.execute(
@@ -100,12 +58,3 @@ def test_upgrade_collapses_legacy_supplier_roles_to_supplier() -> None:
             "platform-finance@example.com": ("platform-finance", "platform-org", "FINANCE", "hash-platform-finance"),
             "platform-operator@example.com": ("platform-operator", "platform-org", "OPERATOR", "hash-platform-operator"),
         }
-    finally:
-        with connect(test_server_url, "postgres") as admin_connection:
-            admin_connection.execute(
-                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %s",
-                (database_name,),
-            )
-            admin_connection.execute(
-                sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(database_name))
-            )
