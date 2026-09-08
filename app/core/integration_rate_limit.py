@@ -42,7 +42,10 @@ class FixedWindowRateLimiter:
                 self._remove_expired_windows(now)
                 self._next_cleanup_at = now + self._window_seconds
             window = self._windows.get(client_id)
-            if window is None:
+            if (
+                window is None
+                or now - window.started_at >= self._window_seconds
+            ):
                 self._windows[client_id] = _ClientWindow(
                     started_at=now,
                     request_count=1,

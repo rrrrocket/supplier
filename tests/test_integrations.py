@@ -2097,30 +2097,38 @@ def test_production_trusted_host_rejects_cost_request_before_direct_rate_limit(
         clock=MutableRateLimitClock(),
     )
     assert limiter.consume(str(integration_client["id"])) is None
-    monkeypatch.setattr(integration_deps, "integration_rate_limiter", limiter)
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("ALLOWED_HOSTS", "trusted.example")
-    get_settings.cache_clear()
     main_module = importlib.import_module("app.main")
-    production_app = importlib.reload(main_module).app
-
-    production_client = TestClient(
-        production_app,
-        base_url="http://untrusted.example",
-        raise_server_exceptions=False,
-    )
     try:
-        response = production_client.post(
-            f"{BASE_PATH}/sku-costs/query",
-            headers=auth_headers(integration_client),
-            json={"items": []},
-        )
+        with monkeypatch.context() as production_context:
+            production_context.setattr(
+                integration_deps,
+                "integration_rate_limiter",
+                limiter,
+            )
+            production_context.setenv("APP_ENV", "production")
+            production_context.setenv("ALLOWED_HOSTS", "trusted.example")
+            get_settings.cache_clear()
+            production_app = importlib.reload(main_module).app
+            production_client = TestClient(
+                production_app,
+                base_url="http://untrusted.example",
+                raise_server_exceptions=False,
+            )
+            try:
+                response = production_client.post(
+                    f"{BASE_PATH}/sku-costs/query",
+                    headers=auth_headers(integration_client),
+                    json={"items": []},
+                )
+            finally:
+                production_client.close()
     finally:
-        production_client.close()
         get_settings.cache_clear()
+        restored_main_module = importlib.reload(main_module)
 
     assert response.status_code == 400
     assert "retry-after" not in response.headers
+    assert restored_main_module.settings.app_env == "testing"
 
 
 def test_clients_have_independent_budgets_and_windows_reopen_without_limiting_web(

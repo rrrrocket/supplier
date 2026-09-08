@@ -96,6 +96,40 @@ def test_expired_client_windows_are_removed_opportunistically() -> None:
     assert set(limiter._windows) == {"next-window"}
 
 
+def test_late_client_reopens_at_its_exact_boundary_between_global_sweeps() -> None:
+    clock = MutableClock()
+    limiter = FixedWindowRateLimiter(
+        max_requests=1,
+        window_seconds=60,
+        clock=clock,
+    )
+
+    assert limiter.consume("anchor") is None
+    clock.advance(59)
+    assert limiter.consume("late-client") is None
+    clock.advance(1)
+    assert limiter.consume("sweep-trigger") is None
+    assert limiter.consume("late-client") == 59
+
+    clock.advance(59)
+    assert limiter.consume("late-client") is None
+    assert limiter.consume("late-client") == 60
+
+
+def test_large_clock_jump_starts_a_fresh_client_window() -> None:
+    clock = MutableClock(initial=5.0)
+    limiter = FixedWindowRateLimiter(
+        max_requests=1,
+        window_seconds=60,
+        clock=clock,
+    )
+
+    assert limiter.consume("client-a") is None
+    clock.advance(10_000)
+    assert limiter.consume("client-a") is None
+    assert limiter.consume("client-a") == 60
+
+
 def test_active_windows_are_not_scanned_on_every_request() -> None:
     scan_count = 0
 
