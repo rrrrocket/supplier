@@ -181,7 +181,9 @@ class Brand(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     code: Mapped[str] = mapped_column(String(60), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
-    normalized_name: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    normalized_name: Mapped[str] = mapped_column(
+        String(160), unique=True, nullable=False, index=True
+    )
     aliases: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     status: Mapped[str] = mapped_column(
         String(30), default=CatalogStatus.ACTIVE.value, nullable=False, index=True

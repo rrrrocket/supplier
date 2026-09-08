@@ -2,18 +2,23 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from fastapi import Response
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.db.session import SessionLocal
 from app.models.entities import (
+    Brand,
     CatalogStatus,
     EventLog,
     Organization,
     Product,
     SupplierBrandCooperation,
     SupplierSku,
+    User,
 )
+from app.schemas.catalog import BrandCreate
 from tests.conftest import ADMIN_EMAIL, ADMIN_PASSWORD, SUPPLIER_EMAIL, SUPPLIER_PASSWORD
 
 
@@ -157,6 +162,12 @@ def test_admin_can_create_deduplicate_and_search_brands(client: TestClient) -> N
     assert duplicate.status_code == 200
     assert duplicate.json()["id"] == brand["id"]
 
+    normalized_name_conflict = client.post(
+        "/api/admin/brands",
+        json={"name": f" 测试 品牌  {suffix} ", "code": f"OTHER-{suffix}"},
+    )
+    assert normalized_name_conflict.status_code == 409
+
     search = client.get("/api/admin/brands", params={"q": f"品牌 {suffix}"})
     assert search.status_code == 200
     assert [item["id"] for item in search.json()] == [brand["id"]]
@@ -175,6 +186,56 @@ def test_admin_can_create_deduplicate_and_search_brands(client: TestClient) -> N
             )
         )
         assert created_events == 1
+
+
+def test_create_brand_recovers_canonical_row_after_unique_insert_race(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    del client
+    from app.api.routes.admin_catalog import create_brand
+
+    suffix = uuid4().hex[:8]
+    name = f"并发品牌 {suffix}"
+    code = f"RACE-{suffix}"
+    canonical_id: str | None = None
+
+    with SessionLocal() as db:
+        admin = db.scalar(select(User).where(User.email == ADMIN_EMAIL))
+        assert admin is not None
+        original_flush = db.flush
+
+        def lose_insert_race(*args, **kwargs) -> None:
+            nonlocal canonical_id
+            monkeypatch.setattr(db, "flush", original_flush)
+            with SessionLocal() as winner:
+                canonical = Brand(
+                    code=code,
+                    name=name,
+                    normalized_name=name.lower(),
+                    aliases=[],
+                    status=CatalogStatus.ACTIVE.value,
+                )
+                winner.add(canonical)
+                winner.commit()
+                canonical_id = canonical.id
+            raise IntegrityError("INSERT INTO brands", {}, Exception("duplicate key"))
+
+        monkeypatch.setattr(db, "flush", lose_insert_race)
+        response = Response(status_code=201)
+        result = create_brand(
+            BrandCreate(name=name, code=code),
+            response,
+            db,
+            admin,
+        )
+
+        assert canonical_id is not None
+        assert result.id == canonical_id
+        assert response.status_code == 200
+        assert db.scalar(
+            select(func.count(EventLog.id)).where(EventLog.entity_id == canonical_id)
+        ) == 0
 
 
 def test_admin_replaces_brand_cooperation_without_changing_supplier_sku(
@@ -350,3 +411,15 @@ def test_admin_page_exposes_brand_cooperation_controls(client: TestClient) -> No
     assert "/api/admin/brands" in script.text
     assert "/brand-cooperations" in script.text
     assert "/cooperation" in script.text
+
+
+def test_supplier_profile_labels_cooperation_intent_without_formal_mode_editor(
+    client: TestClient,
+) -> None:
+    page = client.get("/app")
+    assert page.status_code == 200
+    assert "合作意向（非平台确认模式）" in page.text
+    assert 'name="cooperation_modes"' in page.text
+    assert 'name="commercial_mode"' not in page.text
+    assert 'id="brand-cooperation-mode"' not in page.text
+    assert "模式 A · 自营采购" not in page.text

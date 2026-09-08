@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import DbSession
 from app.api.routes.admin import PlatformAdmin
@@ -106,24 +107,43 @@ def create_brand(
         response.status_code = status.HTTP_200_OK
         return brand_view(existing_name)
 
-    if code is not None:
-        existing_code = db.scalar(
+    try:
+        if code is not None:
+            existing_code = db.scalar(
+                select(Brand).where(func.lower(Brand.code) == code.lower())
+            )
+            if existing_code is not None:
+                raise HTTPException(status_code=409, detail="品牌编码已存在")
+            brand = Brand(
+                code=code,
+                name=name,
+                normalized_name=normalized_name,
+                aliases=clean_aliases(name, payload.aliases),
+                status=CatalogStatus.ACTIVE.value,
+            )
+            db.add(brand)
+            db.flush()
+        else:
+            brand = resolve_brand(db, name)
+            brand.aliases = clean_aliases(name, payload.aliases)
+    except IntegrityError as exc:
+        db.rollback()
+        canonical = db.scalar(
+            select(Brand).where(Brand.normalized_name == normalized_name)
+        )
+        if canonical is not None:
+            if code is not None and canonical.code.lower() != code.lower():
+                raise HTTPException(
+                    status_code=409,
+                    detail="品牌名称已关联其他品牌编码",
+                ) from exc
+            response.status_code = status.HTTP_200_OK
+            return brand_view(canonical)
+        if code is not None and db.scalar(
             select(Brand).where(func.lower(Brand.code) == code.lower())
-        )
-        if existing_code is not None:
-            raise HTTPException(status_code=409, detail="品牌编码已存在")
-        brand = Brand(
-            code=code,
-            name=name,
-            normalized_name=normalized_name,
-            aliases=clean_aliases(name, payload.aliases),
-            status=CatalogStatus.ACTIVE.value,
-        )
-        db.add(brand)
-        db.flush()
-    else:
-        brand = resolve_brand(db, name)
-        brand.aliases = clean_aliases(name, payload.aliases)
+        ) is not None:
+            raise HTTPException(status_code=409, detail="品牌编码已存在") from exc
+        raise HTTPException(status_code=409, detail="品牌名称或编码已存在") from exc
 
     record_event(
         db,

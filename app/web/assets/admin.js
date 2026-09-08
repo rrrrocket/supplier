@@ -6,6 +6,8 @@ const adminState = {
   brandCooperations: [],
   selectedApplication: null,
   selectedSupplier: null,
+  brandCooperationGeneration: 0,
+  loadedBrandCooperationSupplierId: null,
 };
 
 const cooperationModeLabels = {
@@ -145,10 +147,14 @@ function syncBrandCooperationForm() {
     : "当前合作：尚未配置";
 }
 
-async function loadBrandCooperations() {
-  const supplier = adminState.selectedSupplier;
-  if (!supplier) return;
-  adminState.brandCooperations = await Matrix.api(`/api/admin/suppliers/${supplier.organization_id}/brand-cooperations`);
+async function loadBrandCooperations(supplierId, generation) {
+  const cooperations = await Matrix.api(`/api/admin/suppliers/${supplierId}/brand-cooperations`);
+  if (
+    generation !== adminState.brandCooperationGeneration
+    || adminState.selectedSupplier?.organization_id !== supplierId
+    || adminState.loadedBrandCooperationSupplierId !== supplierId
+  ) return;
+  adminState.brandCooperations = cooperations;
   renderBrandCooperations();
   syncBrandCooperationForm();
 }
@@ -156,8 +162,13 @@ async function loadBrandCooperations() {
 async function openBrandCooperation(supplierId) {
   const supplier = adminState.suppliers.find((item) => item.organization_id === supplierId);
   if (!supplier) return;
+  const generation = adminState.brandCooperationGeneration + 1;
+  adminState.brandCooperationGeneration = generation;
   adminState.selectedSupplier = supplier;
+  adminState.loadedBrandCooperationSupplierId = null;
   adminState.brandCooperations = [];
+  document.querySelector("#brand-cooperation-brand").innerHTML = "";
+  document.querySelector("#save-brand-cooperation").disabled = true;
   document.querySelector("#brand-cooperation-dialog-title").textContent = "管理品牌合作";
   document.querySelector("#brand-cooperation-dialog-subtitle").textContent = `${supplier.organization_name} · ${supplier.organization_code}`;
   document.querySelector("#brand-cooperation-list").innerHTML = '<div class="cooperation-empty">正在加载品牌合作…</div>';
@@ -167,14 +178,20 @@ async function openBrandCooperation(supplierId) {
       Matrix.api("/api/admin/brands"),
       Matrix.api(`/api/admin/suppliers/${supplier.organization_id}/brand-cooperations`),
     ]);
+    if (
+      generation !== adminState.brandCooperationGeneration
+      || adminState.selectedSupplier?.organization_id !== supplier.organization_id
+    ) return;
     adminState.brands = brands;
     adminState.brandCooperations = cooperations;
+    adminState.loadedBrandCooperationSupplierId = supplier.organization_id;
     const select = document.querySelector("#brand-cooperation-brand");
     select.innerHTML = brands.map((brand) => `<option value="${brand.id}">${Matrix.escapeHtml(brand.name)} · ${Matrix.escapeHtml(brand.code)}</option>`).join("");
     document.querySelector("#save-brand-cooperation").disabled = !brands.length;
     renderBrandCooperations();
     syncBrandCooperationForm();
   } catch (error) {
+    if (generation !== adminState.brandCooperationGeneration) return;
     document.querySelector("#brand-cooperation-list").innerHTML = `<div class="cooperation-empty">${Matrix.escapeHtml(error.message)}</div>`;
     Matrix.toast("品牌合作加载失败", error.message, "error");
   }
@@ -183,21 +200,26 @@ async function openBrandCooperation(supplierId) {
 async function saveBrandCooperation(event) {
   event.preventDefault();
   const supplier = adminState.selectedSupplier;
+  const supplierId = adminState.loadedBrandCooperationSupplierId;
+  const generation = adminState.brandCooperationGeneration;
   const brandId = document.querySelector("#brand-cooperation-brand").value;
-  if (!supplier || !brandId) return;
+  if (!supplier || supplier.organization_id !== supplierId || !brandId) return;
   const button = document.querySelector("#save-brand-cooperation");
   button.disabled = true;
   try {
-    await Matrix.api(`/api/admin/suppliers/${supplier.organization_id}/brands/${brandId}/cooperation`, {
+    await Matrix.api(`/api/admin/suppliers/${supplierId}/brands/${brandId}/cooperation`, {
       method: "PUT",
       body: { commercial_mode: document.querySelector("#brand-cooperation-mode").value },
     });
-    await loadBrandCooperations();
+    await loadBrandCooperations(supplierId, generation);
+    if (generation !== adminState.brandCooperationGeneration) return;
     Matrix.toast("品牌合作已保存", "当前合作模式已更新并保留历史记录。", "success");
   } catch (error) {
     Matrix.toast("品牌合作保存失败", error.message, "error");
   } finally {
-    button.disabled = false;
+    if (generation === adminState.brandCooperationGeneration) {
+      button.disabled = !adminState.brands.length;
+    }
   }
 }
 
