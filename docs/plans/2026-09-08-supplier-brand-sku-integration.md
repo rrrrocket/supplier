@@ -823,6 +823,57 @@ git add app/services/catalog.py app/api/routes/integrations.py app/schemas/integ
 git commit -m "feat: expose current supplier SKU costs"
 ```
 
+### Task 6A: Enforce Integration Client Rate Limits
+
+**Files:**
+- Create: `app/core/integration_rate_limit.py`
+- Modify: `app/core/config.py`
+- Modify: `app/api/integration_deps.py`
+- Modify: `app/api/routes/integrations.py`
+- Modify: `docker-compose.yml`
+- Modify: `.env.example`
+- Create: `tests/test_integration_rate_limit.py`
+- Modify: `tests/test_integrations.py`
+
+**Interfaces:**
+- Consumes: Task 4 authenticated Integration Client identity and Task 6 cost audit middleware.
+- Produces: per-client fixed-window request limiting for every `/api/integrations/v1` route.
+- Produces: HTTP 429 responses with integer `Retry-After` seconds.
+
+- [ ] **Step 1: Write failing limiter unit tests**
+
+Use an injected monotonic clock. Assert that one client can consume the configured request count, the next request is rejected with a ceiling-rounded positive retry delay, a different client has an independent window, and the first client can call again after the window expires.
+
+- [ ] **Step 2: Write failing integration behavior tests**
+
+Temporarily install a low-limit limiter and assert:
+
+- authenticated integration calls return 429 after the configured count and include `Retry-After`;
+- all integration resource and cost scopes share the same per-client budget;
+- different Integration Clients have independent budgets;
+- ordinary web/session endpoints are not rate limited;
+- a rate-limited cost request writes exactly one redacted cost-query audit event with the caller `X-Request-ID` and zero results/one error;
+- invalid bearer credentials still return 401 and never receive a rate-limit identity;
+- advancing the injected clock reopens the window.
+
+- [ ] **Step 3: Run tests and verify RED**
+
+Run the focused unit and integration tests. Expected: FAIL because the limiter and 429 wiring do not exist.
+
+- [ ] **Step 4: Implement a bounded, thread-safe fixed-window limiter**
+
+Add configurable positive settings `integration_rate_limit_requests` (default `600`) and `integration_rate_limit_window_seconds` (default `60`). Implement an in-process limiter keyed only by the authenticated Integration Client ID, protected by a lock and using monotonic time. Remove expired client windows opportunistically so the key map cannot grow without bound. Return a ceiling-rounded positive `Retry-After` value without persisting bearer tokens or request bodies.
+
+The deployed runtime currently starts one Uvicorn worker, so an in-process budget is authoritative for the supported topology. Task 8 must document that multi-worker or multi-replica deployments require a shared limiter at the gateway or data-store layer.
+
+- [ ] **Step 5: Enforce once per authenticated integration request**
+
+After authentication identifies the client, set the principal on request state, enforce the limiter before scope authorization, and mark the request as checked so the Task 6 cost pre-authentication and the route dependency cannot consume twice. For a cost request rejected before entering FastAPI body parsing, send the same 429 JSON/headers from the pure-ASGI layer and let its existing post-request audit hook record exactly one event. Unauthenticated clients remain actorless and are not assigned a budget.
+
+- [ ] **Step 6: Expose deployment configuration and verify**
+
+Pass both settings through `docker-compose.yml` and list them in `.env.example`. Run focused tests, `./start.sh test`, compile checks, Compose validation, and `git diff --check` before committing.
+
 ### Task 7: Update Supplier Workbench Semantics and Contract Legacy Columns
 
 **Files:**
