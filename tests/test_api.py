@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from io import BytesIO
 from uuid import UUID, uuid4
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -725,6 +726,118 @@ def test_create_product_and_offer(
 
     assert updated["supplier_sku_id"] == supplier_sku_id
     assert updated["supplier_sku_code"] == f"SKU-{suffix}"
+
+
+def test_product_offset_pages_are_stable_and_filter_before_pagination(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    active_ids = []
+    for index in range(3):
+        response = authenticated_client.post(
+            "/api/products",
+            json={
+                "name": f"分页商品-{suffix}-{index}",
+                "brand": "TEST",
+                "model": f"PAGE-{suffix}-{index}",
+                "category": "分页测试",
+                "status": "ACTIVE",
+            },
+        )
+        assert response.status_code == 201
+        active_ids.append(response.json()["id"])
+    excluded = authenticated_client.post(
+        "/api/products",
+        json={
+            "name": f"分页商品-{suffix}-excluded",
+            "brand": "TEST",
+            "model": f"PAGE-{suffix}-excluded",
+            "category": "分页测试",
+            "status": "DRAFT",
+        },
+    ).json()
+
+    with SessionLocal() as db:
+        for product_id in active_ids:
+            db.get(Product, product_id).updated_at = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        db.get(Product, excluded["id"]).updated_at = datetime(2001, 1, 1, tzinfo=timezone.utc)
+        db.commit()
+
+    first = authenticated_client.get(
+        "/api/products",
+        params={"q": f"分页商品-{suffix}", "status": "ACTIVE", "limit": 2, "offset": 0},
+    )
+    second = authenticated_client.get(
+        "/api/products",
+        params={"q": f"分页商品-{suffix}", "status": "ACTIVE", "limit": 2, "offset": 2},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert isinstance(first.json(), list)
+    page_ids = [item["id"] for item in first.json() + second.json()]
+    assert page_ids == sorted(active_ids, reverse=True)
+    assert len(page_ids) == len(set(page_ids)) == 3
+
+
+def test_offer_offset_pages_are_stable_and_filter_before_pagination(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    product = authenticated_client.post(
+        "/api/products",
+        json={
+            "name": f"报价分页商品-{suffix}",
+            "brand": "TEST",
+            "model": f"OFFER-PAGE-{suffix}",
+            "category": "分页测试",
+            "status": "ACTIVE",
+        },
+    ).json()
+    active_ids = []
+    for index in range(3):
+        response = authenticated_client.post(
+            "/api/offers",
+            json={
+                "product_id": product["id"],
+                "supplier_sku_code": f"OFFSET-{suffix}-{index}",
+                "price": 10 + index,
+                "status": "ACTIVE",
+            },
+        )
+        assert response.status_code == 201
+        active_ids.append(response.json()["id"])
+    excluded = authenticated_client.post(
+        "/api/offers",
+        json={
+            "product_id": product["id"],
+            "supplier_sku_code": f"OFFSET-{suffix}-excluded",
+            "price": 99,
+            "status": "PAUSED",
+        },
+    ).json()
+
+    with SessionLocal() as db:
+        for offer_id in active_ids:
+            db.get(SupplierOffer, offer_id).updated_at = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        db.get(SupplierOffer, excluded["id"]).updated_at = datetime(2001, 1, 1, tzinfo=timezone.utc)
+        db.commit()
+
+    first = authenticated_client.get(
+        "/api/offers",
+        params={"q": f"OFFSET-{suffix}", "status": "ACTIVE", "limit": 2, "offset": 0},
+    )
+    second = authenticated_client.get(
+        "/api/offers",
+        params={"q": f"OFFSET-{suffix}", "status": "ACTIVE", "limit": 2, "offset": 2},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert isinstance(first.json(), list)
+    page_ids = [item["id"] for item in first.json() + second.json()]
+    assert page_ids == sorted(active_ids, reverse=True)
+    assert len(page_ids) == len(set(page_ids)) == 3
 
 
 def test_legacy_supplier_sku_offer_payload_and_response_remain_compatible(

@@ -48,6 +48,7 @@ def list_products(
     q: str | None = Query(default=None, max_length=120),
     product_status: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ) -> list[ProductView]:
     offer_count = (
         select(SupplierOffer.product_id, func.count(SupplierOffer.id).label("offer_count"))
@@ -60,8 +61,6 @@ def list_products(
         .outerjoin(Brand, Brand.id == Product.brand_id)
         .outerjoin(offer_count, offer_count.c.product_id == Product.id)
         .where(Product.created_by_organization_id == user.organization_id)
-        .order_by(Product.updated_at.desc())
-        .limit(limit)
     )
     if q:
         pattern = f"%{q.strip()}%"
@@ -75,6 +74,11 @@ def list_products(
         )
     if product_status:
         stmt = stmt.where(Product.status == product_status)
+    stmt = (
+        stmt.order_by(Product.updated_at.desc(), Product.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
 
     rows = db.execute(stmt).all()
     return [

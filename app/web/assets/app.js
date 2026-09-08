@@ -3,6 +3,10 @@ const state = {
   dashboard: null,
   products: [],
   offers: [],
+  productPage: 1,
+  offerPage: 1,
+  productRequestRevision: 0,
+  offerRequestRevision: 0,
   offerBrands: [],
   imports: [],
   profile: null,
@@ -14,6 +18,8 @@ const state = {
 };
 
 const ImportWorkbook = window.MatrixImportWorkbook;
+const listChunkSize = 500;
+const tablePageSize = 50;
 
 const importFields = [
   ["product_name", "商品名称", true],
@@ -171,18 +177,56 @@ function renderEvent(event) {
   `;
 }
 
-async function loadProducts(query = "") {
-  const url = query ? `/api/products?q=${encodeURIComponent(query)}` : "/api/products";
-  state.products = await Matrix.api(url);
+async function fetchAllListRows(path, params, isCurrent) {
+  const rowsById = new Map();
+  const pageSignatures = new Set();
+  let offset = 0;
+  while (true) {
+    const chunkParams = new URLSearchParams(params);
+    chunkParams.set("limit", String(listChunkSize));
+    chunkParams.set("offset", String(offset));
+    const chunk = await Matrix.api(`${path}?${chunkParams.toString()}`);
+    if (!isCurrent()) return null;
+    const signature = chunk.map((row) => row.id).join("\n");
+    if (pageSignatures.has(signature)) break;
+    pageSignatures.add(signature);
+    let added = 0;
+    chunk.forEach((row) => {
+      if (!rowsById.has(row.id)) added += 1;
+      rowsById.set(row.id, row);
+    });
+    if (chunk.length < listChunkSize || added === 0) break;
+    offset += listChunkSize;
+  }
+  return [...rowsById.values()];
+}
+
+async function loadProducts(query = null) {
+  const revision = ++state.productRequestRevision;
+  const searchValue = query === null ? document.querySelector("#products-search").value.trim() : query.trim();
+  if (query !== null) state.productPage = 1;
+  const params = new URLSearchParams();
+  if (searchValue) params.set("q", searchValue);
+  const products = await fetchAllListRows(
+    "/api/products",
+    params,
+    () => state.productRequestRevision === revision,
+  );
+  if (products === null) return;
+  state.products = products;
   renderProducts();
 }
 
 function renderProducts() {
   const tbody = document.querySelector("#products-tbody");
+  const totalPages = Math.max(1, Math.ceil(state.products.length / tablePageSize));
+  state.productPage = Math.min(Math.max(1, state.productPage), totalPages);
+  const start = (state.productPage - 1) * tablePageSize;
+  const visibleProducts = state.products.slice(start, start + tablePageSize);
   if (!state.products.length) {
     tbody.innerHTML = '<tr><td colspan="7" class="table-empty"><strong>尚未建立商品主数据</strong>新增单个商品，或通过模板批量导入。</td></tr>';
   } else {
-    tbody.innerHTML = state.products.map((product) => `
+    tbody.innerHTML = visibleProducts.map((product) => `
       <tr>
         <td><div class="table-primary">${Matrix.escapeHtml(product.name)}</div><div class="table-secondary">ID ${Matrix.escapeHtml(product.id.slice(0, 8))}</div></td>
         <td>${Matrix.escapeHtml(product.brand || "—")}</td>
@@ -194,7 +238,12 @@ function renderProducts() {
       </tr>
     `).join("");
   }
-  document.querySelector("#products-count").textContent = `共 ${state.products.length} 条`;
+  const visibleStart = state.products.length ? start + 1 : 0;
+  const visibleEnd = state.products.length ? start + visibleProducts.length : 0;
+  document.querySelector("#products-count").textContent = `显示 ${visibleStart}–${visibleEnd} / 共 ${state.products.length} 条`;
+  document.querySelector("#products-page").textContent = `第 ${state.productPage} / ${totalPages} 页`;
+  document.querySelector("#products-prev-page").disabled = state.productPage === 1;
+  document.querySelector("#products-next-page").disabled = state.productPage === totalPages;
   refreshOfferProductOptions();
 }
 
@@ -209,22 +258,33 @@ async function loadOfferBrands() {
 }
 
 async function loadOffers(query = null, brand = null) {
+  const revision = ++state.offerRequestRevision;
   const params = new URLSearchParams();
   const searchValue = query === null ? document.querySelector("#offers-search").value.trim() : query.trim();
   const brandValue = brand === null ? document.querySelector("#offers-brand").value : brand;
+  if (query !== null || brand !== null) state.offerPage = 1;
   if (searchValue) params.set("q", searchValue);
   if (brandValue) params.set("brand", brandValue);
-  const suffix = params.toString();
-  state.offers = await Matrix.api(suffix ? `/api/offers?${suffix}` : "/api/offers");
+  const offers = await fetchAllListRows(
+    "/api/offers",
+    params,
+    () => state.offerRequestRevision === revision,
+  );
+  if (offers === null) return;
+  state.offers = offers;
   renderOffers();
 }
 
 function renderOffers() {
   const tbody = document.querySelector("#offers-tbody");
+  const totalPages = Math.max(1, Math.ceil(state.offers.length / tablePageSize));
+  state.offerPage = Math.min(Math.max(1, state.offerPage), totalPages);
+  const start = (state.offerPage - 1) * tablePageSize;
+  const visibleOffers = state.offers.slice(start, start + tablePageSize);
   if (!state.offers.length) {
     tbody.innerHTML = '<tr><td colspan="10" class="table-empty"><strong>暂无供应报价</strong>报价必须包含采购价、MOQ、库存和交期。</td></tr>';
   } else {
-    tbody.innerHTML = state.offers.map((offer) => `
+    tbody.innerHTML = visibleOffers.map((offer) => `
       <tr>
         <td><div class="table-primary">${Matrix.escapeHtml(offer.product_name)}</div><div class="table-secondary">${Matrix.escapeHtml(offer.brand || "—")} · ${Matrix.escapeHtml(offer.model || "—")}</div></td>
         <td>${Matrix.escapeHtml(offer.supplier_sku)}</td>
@@ -239,7 +299,12 @@ function renderOffers() {
       </tr>
     `).join("");
   }
-  document.querySelector("#offers-count").textContent = `共 ${state.offers.length} 条`;
+  const visibleStart = state.offers.length ? start + 1 : 0;
+  const visibleEnd = state.offers.length ? start + visibleOffers.length : 0;
+  document.querySelector("#offers-count").textContent = `显示 ${visibleStart}–${visibleEnd} / 共 ${state.offers.length} 条`;
+  document.querySelector("#offers-page").textContent = `第 ${state.offerPage} / ${totalPages} 页`;
+  document.querySelector("#offers-prev-page").disabled = state.offerPage === 1;
+  document.querySelector("#offers-next-page").disabled = state.offerPage === totalPages;
 }
 
 function fulfillmentLabel(value) {
@@ -954,6 +1019,22 @@ function bindEvents() {
   document.querySelector("#products-search").addEventListener("input", debounce((event) => loadProducts(event.target.value)));
   document.querySelector("#offers-search").addEventListener("input", debounce((event) => loadOffers(event.target.value)));
   document.querySelector("#offers-brand").addEventListener("change", (event) => loadOffers(null, event.target.value));
+  document.querySelector("#products-prev-page").addEventListener("click", () => {
+    state.productPage = Math.max(1, state.productPage - 1);
+    renderProducts();
+  });
+  document.querySelector("#products-next-page").addEventListener("click", () => {
+    state.productPage += 1;
+    renderProducts();
+  });
+  document.querySelector("#offers-prev-page").addEventListener("click", () => {
+    state.offerPage = Math.max(1, state.offerPage - 1);
+    renderOffers();
+  });
+  document.querySelector("#offers-next-page").addEventListener("click", () => {
+    state.offerPage += 1;
+    renderOffers();
+  });
 
   document.querySelector("#products-tbody").addEventListener("click", (event) => {
     const button = event.target.closest("[data-add-offer]");

@@ -52,6 +52,7 @@ def list_offers(
     brand: str | None = Query(default=None, max_length=120),
     offer_status: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
 ) -> list[OfferView]:
     stmt = (
         select(SupplierOffer, Product, Brand, SupplierSku)
@@ -59,8 +60,6 @@ def list_offers(
         .join(Brand, Brand.id == Product.brand_id)
         .join(SupplierSku, SupplierSku.id == SupplierOffer.supplier_sku_id)
         .where(SupplierOffer.organization_id == user.organization_id)
-        .order_by(SupplierOffer.updated_at.desc())
-        .limit(limit)
     )
     if q:
         pattern = f"%{q.strip()}%"
@@ -76,6 +75,11 @@ def list_offers(
         stmt = stmt.where(SupplierOffer.status == offer_status)
     if brand:
         stmt = stmt.where(Product.brand == brand.strip())
+    stmt = (
+        stmt.order_by(SupplierOffer.updated_at.desc(), SupplierOffer.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
 
     return [
         offer_view(offer, product, brand, supplier_sku)

@@ -432,6 +432,7 @@ img, svg { display: block; }
 .badge-paused, .badge-partial { color: var(--purple); background: var(--purple-soft); }
 .badge-archived, .badge-expired, .badge-failed, .badge-rejected, .badge-suspended { color: var(--danger); background: var(--danger-soft); }
 .table-footer { padding: 11px 14px; display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 11px; border-top: 1px solid var(--line); }
+.table-pagination { display: flex; align-items: center; gap: 9px; }
 
 .import-process-panel { margin-bottom: 16px; }
 .import-source-panel { margin-bottom: 16px; }
