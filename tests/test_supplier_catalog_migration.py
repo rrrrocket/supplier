@@ -57,6 +57,57 @@ def test_catalog_migration_rejects_offered_products_with_empty_brands() -> None:
         assert "1 offered product(s) have an empty brand" in exc_info.value.stderr
 
 
+def test_catalog_migration_creates_one_active_cooperation_for_multiple_brand_offers() -> None:
+    with temporary_postgresql_database("supplier_catalog_duplicate_cooperation") as migration_url:
+        database_name = migration_url.database
+        assert database_name is not None
+        run_migrations(migration_url, PREVIOUS_REVISION)
+
+        with connect(migration_url, database_name) as connection:
+            connection.execute(
+                """
+                INSERT INTO organizations
+                    (id, code, name, organization_type, is_active, created_at, updated_at)
+                VALUES
+                    ('supplier-org', 'SUPPLIER-1', '供应商甲', 'SUPPLIER', true,
+                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO products
+                    (id, created_by_organization_id, name, brand, category,
+                     attributes, status, created_at, updated_at)
+                VALUES
+                    ('product-a', 'supplier-org', '商品A', '品牌A', '测试',
+                     '{}', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO supplier_offers
+                    (id, organization_id, product_id, supplier_sku, price,
+                     currency, moq, stock_qty, lead_time_days, fulfillment_mode,
+                     status, created_at, updated_at)
+                VALUES
+                    ('offer-a-1', 'supplier-org', 'product-a', 'SKU-A-1', 10.0000,
+                     'CNY', 1, 12, 3, 'PURCHASE', 'ACTIVE',
+                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    ('offer-a-2', 'supplier-org', 'product-a', 'SKU-A-2', 11.0000,
+                     'CNY', 1, 10, 3, 'PURCHASE', 'ACTIVE',
+                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+
+        run_migrations(migration_url, CATALOG_REVISION)
+
+        with connect(migration_url, database_name) as connection:
+            assert connection.execute(
+                "SELECT count(*) FROM supplier_brand_cooperations "
+                "WHERE supplier_id = 'supplier-org' AND status = 'ACTIVE'"
+            ).fetchone()[0] == 1
+
+
 def test_catalog_migration_backfills_new_identities_without_changing_legacy_data() -> None:
     with temporary_postgresql_database("supplier_catalog_migration") as migration_url:
         database_name = migration_url.database

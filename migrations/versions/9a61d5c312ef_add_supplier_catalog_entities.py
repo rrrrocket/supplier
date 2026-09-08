@@ -214,13 +214,20 @@ def upgrade() -> None:
     op.execute(
         sa.text(
             """
+            WITH distinct_supplier_brands AS (
+                SELECT DISTINCT
+                    offers.organization_id AS supplier_id,
+                    products.brand_id
+                FROM supplier_offers AS offers
+                JOIN products ON products.id = offers.product_id
+            )
             INSERT INTO supplier_brand_cooperations
                 (id, supplier_id, brand_id, commercial_mode, status,
                  valid_from, valid_to, notes, created_at, updated_at)
-            SELECT DISTINCT
+            SELECT
                 gen_random_uuid()::text,
-                offers.organization_id,
-                products.brand_id,
+                supplier_id,
+                brand_id,
                 'SELF_PURCHASE',
                 'ACTIVE',
                 NULL::date,
@@ -228,8 +235,7 @@ def upgrade() -> None:
                 NULL::text,
                 CURRENT_TIMESTAMP,
                 CURRENT_TIMESTAMP
-            FROM supplier_offers AS offers
-            JOIN products ON products.id = offers.product_id
+            FROM distinct_supplier_brands
             """
         )
     )
