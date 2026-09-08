@@ -840,7 +840,7 @@ def test_offer_offset_pages_are_stable_and_filter_before_pagination(
     assert len(page_ids) == len(set(page_ids)) == 3
 
 
-def test_legacy_supplier_sku_offer_payload_and_response_remain_compatible(
+def test_offer_contract_rejects_legacy_supplier_sku_payload(
     authenticated_client: TestClient,
 ) -> None:
     suffix = uuid4().hex[:8]
@@ -864,9 +864,51 @@ def test_legacy_supplier_sku_offer_payload_and_response_remain_compatible(
         },
     )
 
+    assert response.status_code == 422
+
+
+def test_offer_response_uses_only_stable_supplier_sku_fields(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    product = authenticated_client.post(
+        "/api/products",
+        json={
+            "name": f"最终报价契约商品-{suffix}",
+            "brand": "TEST",
+            "model": suffix,
+            "category": "工业自动化",
+            "status": "ACTIVE",
+        },
+    ).json()
+    response = authenticated_client.post(
+        "/api/offers",
+        json={
+            "product_id": product["id"],
+            "supplier_sku_code": f"FINAL-WORKBENCH-{suffix}",
+            "price": "18.5000",
+        },
+    )
+
     assert response.status_code == 201
-    assert response.json()["supplier_sku"] == f"LEGACY-WORKBENCH-{suffix}"
-    assert response.json()["supplier_sku_code"] == f"LEGACY-WORKBENCH-{suffix}"
+    body = response.json()
+    assert body["supplier_sku_code"] == f"FINAL-WORKBENCH-{suffix}"
+    assert str(UUID(body["supplier_sku_id"])) == body["supplier_sku_id"]
+    assert "supplier_sku" not in body
+    assert body["brand"] == "TEST"
+
+
+def test_supplier_workbench_uses_normalized_catalog_controls(
+    authenticated_client: TestClient,
+) -> None:
+    response = authenticated_client.get("/app")
+
+    assert response.status_code == 200
+    assert '<select id="product-brand" class="select" name="brand" required>' in response.text
+    assert 'id="offer-supplier-sku-id"' in response.text
+    assert 'id="offer-price-label"' in response.text
+    assert 'name="commercial_mode"' not in response.text
+    assert 'name="supplier_sku_id"' not in response.text
 
 
 def test_product_requires_an_assigned_non_empty_brand(
@@ -1026,7 +1068,6 @@ def test_import_does_not_update_mismatched_other_tenant_offer(
             organization_id=other_supplier.id,
             product_id=product.id,
             supplier_sku_id=supplier_sku.id,
-            supplier_sku=sku_code,
             price="99.0000",
             currency="CNY",
             moq=1,

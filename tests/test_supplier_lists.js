@@ -35,6 +35,9 @@ function element() {
       this.innerHTMLWrites += 1;
     },
     innerHTMLWrites: 0,
+    modalOpened: false,
+    reset() {},
+    showModal() { this.modalOpened = true; },
     textContent: "",
     value: "",
   };
@@ -93,7 +96,9 @@ function rows(prefix, count) {
     category: "测试",
     status: "ACTIVE",
     offer_count: 1,
-    supplier_sku: `SKU-${index + 1}`,
+    supplier_sku_code: `SKU-${index + 1}`,
+    supplier_sku_id: `supplier-sku-${String(index + 1).padStart(4, "0")}`,
+    commercial_mode: "SELF_PURCHASE",
     price: "10.0000",
     currency: "CNY",
     moq: 1,
@@ -363,4 +368,85 @@ test("chunk loading deduplicates IDs and stops if a full page makes no progress"
 
   assert.equal(calls, 2);
   assert.equal(harness.evaluate("state.products.length"), 500);
+});
+
+
+test("product dialog waits for assigned brands and renders their cooperation modes", async () => {
+  const cooperations = deferred();
+  const requests = [];
+  const harness = supplierListsHarness((requestPath) => {
+    requests.push(requestPath);
+    if (requestPath === "/api/supplier-catalog/brand-cooperations") {
+      return cooperations.promise;
+    }
+    return Promise.resolve([]);
+  });
+  const dialog = harness.evaluate('document.querySelector("#product-dialog")');
+
+  const opening = harness.evaluate("openProductDialog()");
+  await Promise.resolve();
+  assert.equal(dialog.modalOpened, false);
+
+  cooperations.resolve([
+    {
+      brand_id: "brand-a",
+      brand_code: "BRAND-A",
+      brand_name: "品牌 A",
+      commercial_mode: "SELF_PURCHASE",
+      status: "ACTIVE",
+    },
+    {
+      brand_id: "brand-b",
+      brand_code: "BRAND-B",
+      brand_name: "品牌 B",
+      commercial_mode: "B2B",
+      status: "ACTIVE",
+    },
+  ]);
+  await opening;
+
+  assert.deepEqual(requests, ["/api/supplier-catalog/brand-cooperations"]);
+  assert.equal(dialog.modalOpened, true);
+  const options = harness.elements.get("#product-brand").innerHTML;
+  assert.match(options, /品牌 A · A 模式（自营采购）/);
+  assert.match(options, /品牌 B · C 模式（B2B）/);
+});
+
+
+test("offer rows label mode A cost and show stable SKU IDs without truncating pages", () => {
+  const harness = supplierListsHarness(async () => []);
+  const offers = rows("Offer mode", 51);
+  offers[1].commercial_mode = "B2B";
+  harness.evaluate(`state.offers = ${JSON.stringify(offers)}; renderOffers()`);
+
+  const firstPage = harness.elements.get("#offers-tbody").innerHTML;
+  assert.equal((firstPage.match(/<tr>/g) || []).length, 50);
+  assert.match(firstPage, /SKU-1/);
+  assert.match(firstPage, /supplier-sku-0001/);
+  assert.match(firstPage, /成本价/);
+  assert.match(firstPage, /供货价/);
+
+  harness.evaluate("state.offerPage = 2; renderOffers()");
+  assert.equal((harness.elements.get("#offers-tbody").innerHTML.match(/<tr>/g) || []).length, 1);
+});
+
+
+test("offer form price label follows the selected product cooperation mode", () => {
+  const harness = supplierListsHarness(async () => []);
+  harness.evaluate(`
+    state.products = [
+      { id: "product-a", brand_id: "brand-a" },
+      { id: "product-c", brand_id: "brand-c" },
+    ];
+    state.brandCooperations = [
+      { brand_id: "brand-a", commercial_mode: "SELF_PURCHASE", status: "ACTIVE" },
+      { brand_id: "brand-c", commercial_mode: "B2B", status: "ACTIVE" },
+    ];
+  `);
+
+  harness.evaluate('refreshOfferPriceLabel("product-a")');
+  assert.equal(harness.elements.get("#offer-price-label").textContent, "成本价");
+
+  harness.evaluate('refreshOfferPriceLabel("product-c")');
+  assert.equal(harness.elements.get("#offer-price-label").textContent, "供货价");
 });

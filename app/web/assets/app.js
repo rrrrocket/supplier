@@ -10,6 +10,8 @@ const state = {
   offerBrandRequestRevision: 0,
   offerRouteRevision: 0,
   offerBrands: [],
+  brandCooperations: [],
+  brandCooperationRequestRevision: 0,
   imports: [],
   profile: null,
   editingOfferId: null,
@@ -309,13 +311,13 @@ function renderOffers() {
   const start = (state.offerPage - 1) * tablePageSize;
   const visibleOffers = state.offers.slice(start, start + tablePageSize);
   if (!state.offers.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="table-empty"><strong>暂无供应报价</strong>报价必须包含采购价、MOQ、库存和交期。</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="table-empty"><strong>暂无供应报价</strong>报价必须包含价格、MOQ、库存和交期。</td></tr>';
   } else {
     tbody.innerHTML = visibleOffers.map((offer) => `
       <tr>
         <td><div class="table-primary">${Matrix.escapeHtml(offer.product_name)}</div><div class="table-secondary">${Matrix.escapeHtml(offer.brand || "—")} · ${Matrix.escapeHtml(offer.model || "—")}</div></td>
-        <td>${Matrix.escapeHtml(offer.supplier_sku)}</td>
-        <td>${Matrix.formatMoney(offer.price, offer.currency)}</td>
+        <td><div class="table-primary">${Matrix.escapeHtml(offer.supplier_sku_code)}</div><div class="table-secondary">ID ${Matrix.escapeHtml(offer.supplier_sku_id)}</div></td>
+        <td><div class="table-primary">${Matrix.formatMoney(offer.price, offer.currency)}</div><div class="table-secondary">${offerPriceLabel(offer.commercial_mode)}</div></td>
         <td>${Number(offer.moq)}</td>
         <td class="${Number(offer.stock_qty) <= 10 ? "text-warning" : ""}">${Number(offer.stock_qty)}</td>
         <td>${Number(offer.lead_time_days)} 天</td>
@@ -337,6 +339,19 @@ function renderOffers() {
 function fulfillmentLabel(value) {
   const labels = { PURCHASE: "采购", DROPSHIP: "一件代发", CONSIGNMENT: "寄售", JOINT_OPERATION: "联营" };
   return labels[value] || value || "—";
+}
+
+function cooperationModeLabel(value) {
+  const labels = {
+    SELF_PURCHASE: "A 模式（自营采购）",
+    JOINT_OPERATION: "B 模式（联营）",
+    B2B: "C 模式（B2B）",
+  };
+  return labels[value] || "未确认模式";
+}
+
+function offerPriceLabel(commercialMode) {
+  return commercialMode === "SELF_PURCHASE" ? "成本价" : "供货价";
 }
 
 async function loadImports() {
@@ -398,23 +413,63 @@ function refreshOfferProductOptions(selectedId = "") {
   `).join("");
 }
 
+async function loadBrandCooperations() {
+  const revision = ++state.brandCooperationRequestRevision;
+  let cooperations;
+  try {
+    cooperations = await Matrix.api("/api/supplier-catalog/brand-cooperations");
+  } catch (error) {
+    if (revision !== state.brandCooperationRequestRevision) return null;
+    throw error;
+  }
+  if (revision !== state.brandCooperationRequestRevision) return null;
+  state.brandCooperations = cooperations.filter((item) => item.status === "ACTIVE");
+  return state.brandCooperations;
+}
+
+function refreshProductBrandOptions() {
+  const select = document.querySelector("#product-brand");
+  select.innerHTML = '<option value="">请选择已分配品牌</option>' + state.brandCooperations.map((cooperation) => `
+    <option value="${Matrix.escapeHtml(cooperation.brand_name)}">${Matrix.escapeHtml(cooperation.brand_name)} · ${cooperationModeLabel(cooperation.commercial_mode)}</option>
+  `).join("");
+}
+
+function refreshOfferPriceLabel(productId, commercialMode = null) {
+  const product = state.products.find((item) => item.id === productId);
+  const cooperation = product
+    ? state.brandCooperations.find((item) => item.brand_id === product.brand_id)
+    : null;
+  document.querySelector("#offer-price-label").textContent = offerPriceLabel(
+    commercialMode || cooperation?.commercial_mode,
+  );
+}
+
 async function openProductDialog() {
   document.querySelector("#product-form").reset();
+  const cooperations = await loadBrandCooperations();
+  if (cooperations === null) return;
+  refreshProductBrandOptions();
   document.querySelector("#product-dialog").showModal();
 }
 
 async function openOfferDialog(productId = "", offer = null) {
   if (!state.products.length) await loadProducts();
+  const cooperations = await loadBrandCooperations();
+  if (cooperations === null) return;
   state.editingOfferId = offer?.id || null;
   const form = document.querySelector("#offer-form");
   form.reset();
   refreshOfferProductOptions(productId || offer?.product_id || "");
   form.elements.product_id.disabled = Boolean(offer);
-  form.elements.supplier_sku.disabled = Boolean(offer);
+  form.elements.supplier_sku_code.disabled = Boolean(offer);
+  document.querySelector("#offer-supplier-sku-id").textContent = offer
+    ? `稳定 ID：${offer.supplier_sku_id}`
+    : "稳定 ID 将在创建后生成";
+  refreshOfferPriceLabel(productId || offer?.product_id || "", offer?.commercial_mode);
   document.querySelector("#offer-dialog-title").textContent = offer ? "编辑供应报价" : "新增供应报价";
   document.querySelector("#offer-dialog-submit").textContent = offer ? "保存修改" : "创建报价";
   if (offer) {
-    ["supplier_sku", "price", "currency", "moq", "stock_qty", "lead_time_days", "fulfillment_mode", "status", "notes"].forEach((name) => {
+    ["supplier_sku_code", "price", "currency", "moq", "stock_qty", "lead_time_days", "fulfillment_mode", "status", "notes"].forEach((name) => {
       if (form.elements[name]) form.elements[name].value = offer[name] ?? "";
     });
   }
@@ -470,7 +525,7 @@ async function submitOffer(event) {
     };
     if (!isEdit) {
       body.product_id = data.product_id;
-      body.supplier_sku = data.supplier_sku;
+      body.supplier_sku_code = data.supplier_sku_code;
     }
     await Matrix.api(isEdit ? `/api/offers/${state.editingOfferId}` : "/api/offers", {
       method: isEdit ? "PATCH" : "POST",
@@ -1034,6 +1089,9 @@ function bindEvents() {
 
   document.querySelectorAll("[data-open-product]").forEach((button) => button.addEventListener("click", openProductDialog));
   document.querySelectorAll("[data-open-offer]").forEach((button) => button.addEventListener("click", () => openOfferDialog()));
+  document.querySelector("#offer-product-id").addEventListener("change", (event) => {
+    refreshOfferPriceLabel(event.target.value);
+  });
   document.querySelector("#product-form").addEventListener("submit", submitProduct);
   document.querySelector("#offer-form").addEventListener("submit", submitOffer);
   document.querySelector("#profile-form").addEventListener("submit", saveProfile);

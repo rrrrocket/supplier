@@ -22,14 +22,14 @@ router = APIRouter(prefix="/products", tags=["商品主数据"])
 
 def product_view(
     product: Product,
-    brand: Brand | None,
+    brand: Brand,
     offer_count: int = 0,
 ) -> ProductView:
     return ProductView(
         id=product.id,
         name=product.name,
         brand_id=product.brand_id,
-        brand=brand.name if brand is not None else product.brand,
+        brand=brand.name,
         model=product.model,
         category=product.category,
         description=product.description,
@@ -58,7 +58,7 @@ def list_products(
     )
     stmt = (
         select(Product, Brand, func.coalesce(offer_count.c.offer_count, 0))
-        .outerjoin(Brand, Brand.id == Product.brand_id)
+        .join(Brand, Brand.id == Product.brand_id)
         .outerjoin(offer_count, offer_count.c.product_id == Product.id)
         .where(Product.created_by_organization_id == user.organization_id)
     )
@@ -67,7 +67,7 @@ def list_products(
         stmt = stmt.where(
             or_(
                 Product.name.ilike(pattern),
-                Product.brand.ilike(pattern),
+                Brand.name.ilike(pattern),
                 Product.model.ilike(pattern),
                 Product.category.ilike(pattern),
             )
@@ -111,7 +111,6 @@ def create_product(
         created_by_organization_id=user.organization_id,
         name=payload.name.strip(),
         brand_id=brand.id,
-        brand=brand.name,
         model=(payload.model or "").strip() or None,
         category=payload.category.strip(),
         description=(payload.description or "").strip() or None,
@@ -159,5 +158,7 @@ def get_product(product_id: str, db: DbSession, user: SupplierUser) -> ProductVi
             SupplierOffer.product_id == product.id,
         )
     ) or 0
-    brand = db.get(Brand, product.brand_id) if product.brand_id is not None else None
+    brand = db.get(Brand, product.brand_id)
+    if brand is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="品牌不存在")
     return product_view(product, brand, int(count))

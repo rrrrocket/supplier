@@ -269,7 +269,6 @@ def integration_catalog(client: TestClient) -> dict[str, Any]:
 
         active_product = Product(
             created_by_organization_id=first_supplier.id,
-            brand=active_brand.name,
             brand_id=active_brand.id,
             name=f"集成商品 A {suffix}",
             model="MODEL-A",
@@ -279,7 +278,6 @@ def integration_catalog(client: TestClient) -> dict[str, Any]:
         )
         inactive_product = Product(
             created_by_organization_id=first_supplier.id,
-            brand=inactive_cooperation_brand.name,
             brand_id=inactive_cooperation_brand.id,
             name=f"失效合作商品 {suffix}",
             model=None,
@@ -289,7 +287,6 @@ def integration_catalog(client: TestClient) -> dict[str, Any]:
         )
         other_product = Product(
             created_by_organization_id=second_supplier.id,
-            brand=other_supplier_brand.name,
             brand_id=other_supplier_brand.id,
             name=f"其他租户商品 {suffix}",
             model="OTHER",
@@ -488,7 +485,6 @@ def cost_catalog(client: TestClient) -> dict[str, Any]:
 
         active_product = Product(
             created_by_organization_id=first_supplier.id,
-            brand=active_brand.name,
             brand_id=active_brand.id,
             name=f"成本模式 A 商品 {suffix}",
             model="COST-A",
@@ -498,7 +494,6 @@ def cost_catalog(client: TestClient) -> dict[str, Any]:
         )
         b2b_product = Product(
             created_by_organization_id=first_supplier.id,
-            brand=b2b_brand.name,
             brand_id=b2b_brand.id,
             name=f"成本模式 B 商品 {suffix}",
             model="COST-B",
@@ -508,7 +503,6 @@ def cost_catalog(client: TestClient) -> dict[str, Any]:
         )
         joint_product = Product(
             created_by_organization_id=second_supplier.id,
-            brand=joint_brand.name,
             brand_id=joint_brand.id,
             name=f"成本模式 C 商品 {suffix}",
             model="COST-C",
@@ -518,7 +512,6 @@ def cost_catalog(client: TestClient) -> dict[str, Any]:
         )
         inactive_cooperation_product = Product(
             created_by_organization_id=first_supplier.id,
-            brand=inactive_cooperation_brand.name,
             brand_id=inactive_cooperation_brand.id,
             name=f"失效成本合作商品 {suffix}",
             model="COST-OFF",
@@ -617,7 +610,6 @@ def cost_catalog(client: TestClient) -> dict[str, Any]:
                 SupplierOffer(
                     organization_id=first_supplier.id,
                     product_id=active_product.id,
-                    supplier_sku=active_sku.supplier_sku_code,
                     supplier_sku_id=active_sku.id,
                     price=Decimal("28.5000"),
                     currency="CNY",
@@ -628,7 +620,6 @@ def cost_catalog(client: TestClient) -> dict[str, Any]:
                 SupplierOffer(
                     organization_id=first_supplier.id,
                     product_id=active_product.id,
-                    supplier_sku=paused_offer_sku.supplier_sku_code,
                     supplier_sku_id=paused_offer_sku.id,
                     price=Decimal("99.9900"),
                     currency="CNY",
@@ -949,7 +940,6 @@ def test_sku_updated_since_cursor_uses_id_tiebreak_for_identical_timestamps(
         product = Product(
             created_by_organization_id=supplier_id,
             brand_id=brand_id,
-            brand=f"游标测试品牌 {suffix}",
             name=f"游标测试商品 {suffix}",
             model="CURSOR-MODEL",
             category="集成测试",
@@ -1143,7 +1133,6 @@ def test_include_inactive_exposes_tenant_owned_sku_without_cooperation_history(
         db.flush()
         product = Product(
             created_by_organization_id=supplier_id,
-            brand=brand.name,
             brand_id=brand.id,
             name=f"无合作历史商品 {suffix}",
             model="ORPHAN-MODEL",

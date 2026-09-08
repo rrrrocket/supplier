@@ -259,7 +259,6 @@ def test_admin_replaces_brand_cooperation_without_changing_supplier_sku(
         product = Product(
             created_by_organization_id=supplier.id,
             brand_id=brand_id,
-            brand=f"合作品牌 {suffix}",
             name=f"合作模式测试商品 {suffix}",
             category="测试类目",
         )

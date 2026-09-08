@@ -268,7 +268,7 @@ class Product(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint(
             "created_by_organization_id",
-            "brand",
+            "brand_id",
             "model",
             "name",
             name="uq_product_supplier_brand_model_name",
@@ -279,9 +279,8 @@ class Product(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(240), nullable=False, index=True)
-    brand: Mapped[str | None] = mapped_column(String(120), index=True)
-    brand_id: Mapped[str | None] = mapped_column(
-        ForeignKey("brands.id", ondelete="SET NULL"), index=True
+    brand_id: Mapped[str] = mapped_column(
+        ForeignKey("brands.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     model: Mapped[str | None] = mapped_column(String(120), index=True)
     category: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
@@ -314,7 +313,10 @@ class ProductVariant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class SupplierOffer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "supplier_offers"
     __table_args__ = (
-        UniqueConstraint("organization_id", "supplier_sku", name="uq_supplier_offer_sku"),
+        UniqueConstraint(
+            "supplier_sku_id",
+            name="uq_supplier_offer_supplier_sku_id",
+        ),
     )
 
     organization_id: Mapped[str] = mapped_column(
@@ -326,9 +328,8 @@ class SupplierOffer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     variant_id: Mapped[str | None] = mapped_column(
         ForeignKey("product_variants.id", ondelete="SET NULL"), index=True
     )
-    supplier_sku: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
-    supplier_sku_id: Mapped[str | None] = mapped_column(
-        ForeignKey("supplier_skus.id", ondelete="RESTRICT"), unique=True, index=True
+    supplier_sku_id: Mapped[str] = mapped_column(
+        ForeignKey("supplier_skus.id", ondelete="RESTRICT"), nullable=False
     )
     price: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
     currency: Mapped[str] = mapped_column(String(8), default="CNY", nullable=False)

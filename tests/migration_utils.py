@@ -54,16 +54,24 @@ def temporary_postgresql_database(prefix: str) -> Iterator[URL]:
             )
 
 
-def run_migrations(database_url: URL, revision: str) -> None:
+def run_alembic(database_url: URL, command: str, revision: str) -> None:
     environment = os.environ.copy()
     environment["DATABASE_URL"] = database_url.render_as_string(
         hide_password=False
     )
     subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", revision],
+        [sys.executable, "-m", "alembic", command, revision],
         cwd=PROJECT_ROOT,
         env=environment,
         check=True,
         capture_output=True,
         text=True,
     )
+
+
+def run_migrations(database_url: URL, revision: str) -> None:
+    run_alembic(database_url, "upgrade", revision)
+
+
+def run_downgrade(database_url: URL, revision: str) -> None:
+    run_alembic(database_url, "downgrade", revision)

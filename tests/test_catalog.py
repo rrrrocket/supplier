@@ -46,7 +46,6 @@ def test_ensure_supplier_sku_rejects_product_owned_by_another_supplier(
         product = Product(
             created_by_organization_id=other_supplier.id,
             brand_id=brand.id,
-            brand=brand.name,
             name=f"跨租户商品-{suffix}",
             category="测试类目",
         )
@@ -102,7 +101,6 @@ def test_ensure_supplier_sku_rejects_brand_not_assigned_to_supplier(
         product = Product(
             created_by_organization_id=supplier.id,
             brand_id=brand.id,
-            brand=brand.name,
             name=f"未分配品牌商品-{suffix}",
             category="测试类目",
         )
@@ -144,15 +142,16 @@ def test_replace_active_cooperation_is_idempotent_and_keeps_sku_identity(
             aliases=[],
             status=CatalogStatus.ACTIVE.value,
         )
+        db.add(brand)
+        db.flush()
         product = Product(
             created_by_organization_id=supplier.id,
-            brand=f"服务测试品牌 {suffix}",
+            brand_id=brand.id,
             name=f"服务测试商品 {suffix}",
             category="测试类目",
         )
-        db.add_all([brand, product])
+        db.add(product)
         db.flush()
-        product.brand_id = brand.id
         current = SupplierBrandCooperation(
             supplier_id=supplier.id,
             brand_id=brand.id,

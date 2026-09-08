@@ -5,7 +5,15 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import DbSession, SupplierUser
-from app.models.entities import Brand, InventorySnapshot, Product, SupplierOffer, SupplierSku
+from app.models.entities import (
+    Brand,
+    CatalogStatus,
+    InventorySnapshot,
+    Product,
+    SupplierBrandCooperation,
+    SupplierOffer,
+    SupplierSku,
+)
 from app.schemas.product import OfferCreate, OfferUpdate, OfferView
 from app.services.catalog import ensure_supplier_sku
 from app.services.events import record_event
@@ -19,16 +27,17 @@ def offer_view(
     product: Product,
     brand: Brand,
     supplier_sku: SupplierSku,
+    commercial_mode: str | None,
 ) -> OfferView:
     return OfferView(
         id=offer.id,
         supplier_sku_id=supplier_sku.id,
         supplier_sku_code=supplier_sku.supplier_sku_code,
-        supplier_sku=supplier_sku.supplier_sku_code,
         product_id=offer.product_id,
         product_name=product.name,
         brand_id=brand.id,
         brand=brand.name,
+        commercial_mode=commercial_mode,
         model=product.model,
         category=product.category,
         price=offer.price,
@@ -55,26 +64,38 @@ def list_offers(
     offset: int = Query(default=0, ge=0),
 ) -> list[OfferView]:
     stmt = (
-        select(SupplierOffer, Product, Brand, SupplierSku)
+        select(
+            SupplierOffer,
+            Product,
+            Brand,
+            SupplierSku,
+            SupplierBrandCooperation.commercial_mode,
+        )
         .join(Product, Product.id == SupplierOffer.product_id)
         .join(Brand, Brand.id == Product.brand_id)
         .join(SupplierSku, SupplierSku.id == SupplierOffer.supplier_sku_id)
+        .outerjoin(
+            SupplierBrandCooperation,
+            (SupplierBrandCooperation.supplier_id == SupplierOffer.organization_id)
+            & (SupplierBrandCooperation.brand_id == Product.brand_id)
+            & (SupplierBrandCooperation.status == CatalogStatus.ACTIVE.value),
+        )
         .where(SupplierOffer.organization_id == user.organization_id)
     )
     if q:
         pattern = f"%{q.strip()}%"
         stmt = stmt.where(
             or_(
-                SupplierOffer.supplier_sku.ilike(pattern),
+                SupplierSku.supplier_sku_code.ilike(pattern),
                 Product.name.ilike(pattern),
-                Product.brand.ilike(pattern),
+                Brand.name.ilike(pattern),
                 Product.model.ilike(pattern),
             )
         )
     if offer_status:
         stmt = stmt.where(SupplierOffer.status == offer_status)
     if brand:
-        stmt = stmt.where(Product.brand == brand.strip())
+        stmt = stmt.where(Brand.name == brand.strip())
     stmt = (
         stmt.order_by(SupplierOffer.updated_at.desc(), SupplierOffer.id.desc())
         .offset(offset)
@@ -82,8 +103,8 @@ def list_offers(
     )
 
     return [
-        offer_view(offer, product, brand, supplier_sku)
-        for offer, product, brand, supplier_sku in db.execute(stmt).all()
+        offer_view(offer, product, brand, supplier_sku, commercial_mode)
+        for offer, product, brand, supplier_sku, commercial_mode in db.execute(stmt).all()
     ]
 
 
@@ -91,15 +112,15 @@ def list_offers(
 def list_offer_brands(db: DbSession, user: SupplierUser) -> list[str]:
     return list(
         db.scalars(
-            select(Product.brand)
-            .join(SupplierOffer, SupplierOffer.product_id == Product.id)
+            select(Brand.name)
+            .select_from(SupplierOffer)
+            .join(Product, Product.id == SupplierOffer.product_id)
+            .join(Brand, Brand.id == Product.brand_id)
             .where(
                 SupplierOffer.organization_id == user.organization_id,
-                Product.brand.is_not(None),
-                Product.brand != "",
             )
             .distinct()
-            .order_by(Product.brand)
+            .order_by(Brand.name)
         ).all()
     )
 
@@ -118,19 +139,6 @@ def create_offer(
     )
     if product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="商品不存在")
-    if product.brand_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="product does not belong to brand",
-        )
-
-    supplier_sku_code = payload.supplier_sku_code
-    if supplier_sku_code is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="supplier_sku_code or supplier_sku is required",
-        )
-
     try:
         supplier_sku = ensure_supplier_sku(
             db,
@@ -138,7 +146,7 @@ def create_offer(
             brand_id=product.brand_id,
             product_id=product.id,
             variant_id=None,
-            supplier_sku_code=supplier_sku_code,
+            supplier_sku_code=payload.supplier_sku_code,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -151,12 +159,23 @@ def create_offer(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="product does not belong to brand",
         )
+    cooperation = db.scalar(
+        select(SupplierBrandCooperation).where(
+            SupplierBrandCooperation.supplier_id == user.organization_id,
+            SupplierBrandCooperation.brand_id == brand.id,
+            SupplierBrandCooperation.status == CatalogStatus.ACTIVE.value,
+        )
+    )
+    if cooperation is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="brand is not assigned to supplier",
+        )
 
     offer = SupplierOffer(
         organization_id=user.organization_id,
         product_id=product.id,
         supplier_sku_id=supplier_sku.id,
-        supplier_sku=supplier_sku.supplier_sku_code,
         price=payload.price,
         currency=payload.currency,
         moq=payload.moq,
@@ -192,11 +211,20 @@ def create_offer(
         organization_id=user.organization_id,
         actor_type="USER",
         actor_id=user.id,
-        payload={"supplier_sku": offer.supplier_sku, "product_name": product.name},
+        payload={
+            "supplier_sku_code": supplier_sku.supplier_sku_code,
+            "product_name": product.name,
+        },
     )
     db.commit()
     db.refresh(offer)
-    return offer_view(offer, product, brand, supplier_sku)
+    return offer_view(
+        offer,
+        product,
+        brand,
+        supplier_sku,
+        cooperation.commercial_mode,
+    )
 
 
 @router.patch("/{offer_id}", response_model=OfferView)
@@ -207,10 +235,22 @@ def update_offer(
     user: SupplierUser,
 ) -> OfferView:
     row = db.execute(
-        select(SupplierOffer, Product, Brand, SupplierSku)
+        select(
+            SupplierOffer,
+            Product,
+            Brand,
+            SupplierSku,
+            SupplierBrandCooperation.commercial_mode,
+        )
         .join(Product, Product.id == SupplierOffer.product_id)
         .join(Brand, Brand.id == Product.brand_id)
         .join(SupplierSku, SupplierSku.id == SupplierOffer.supplier_sku_id)
+        .outerjoin(
+            SupplierBrandCooperation,
+            (SupplierBrandCooperation.supplier_id == SupplierOffer.organization_id)
+            & (SupplierBrandCooperation.brand_id == Product.brand_id)
+            & (SupplierBrandCooperation.status == CatalogStatus.ACTIVE.value),
+        )
         .where(
             SupplierOffer.id == offer_id,
             SupplierOffer.organization_id == user.organization_id,
@@ -218,7 +258,7 @@ def update_offer(
     ).first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报价不存在")
-    offer, product, brand, supplier_sku = row
+    offer, product, brand, supplier_sku, commercial_mode = row
 
     before_stock = offer.stock_qty
     changes = payload.model_dump(exclude_unset=True)
@@ -248,4 +288,4 @@ def update_offer(
     )
     db.commit()
     db.refresh(offer)
-    return offer_view(offer, product, brand, supplier_sku)
+    return offer_view(offer, product, brand, supplier_sku, commercial_mode)

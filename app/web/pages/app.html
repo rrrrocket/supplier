@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/assets/styles.css?v=20260908-multi-sheet">
   <script src="/assets/common.js?v=20260908-supplier-role" defer></script>
   <script src="/assets/import-workbook.js?v=20260908-multi-sheet" defer></script>
-  <script src="/assets/app.js?v=20260908-multi-sheet-fix1" defer></script>
+  <script src="/assets/app.js?v=20260909-stable-sku" defer></script>
 </head>
 <body class="app-body">
   <div class="app-shell">
@@ -67,7 +67,7 @@
           <div class="view-heading"><div><h1>供应报价</h1><p>报价用于描述某个供应商在特定时间能够提供的价格、库存、MOQ 和交期。</p></div><div class="view-actions"><a class="btn btn-secondary" href="#imports">批量导入</a><button class="btn btn-primary" data-open-offer>新增报价</button></div></div>
           <section class="data-card">
             <div class="toolbar"><div class="toolbar-left"><label class="search-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="offers-search" class="input" placeholder="搜索商品、SKU、品牌或型号"></label><select id="offers-brand" class="select toolbar-filter" aria-label="按品牌筛选"><option value="">全部品牌</option></select></div><div class="toolbar-right"><span class="badge badge-active">库存 ≤ 10 自动提醒</span></div></div>
-            <div class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>供应商 SKU</th><th>供货价</th><th>MOQ</th><th>库存</th><th>交期</th><th>履约</th><th>状态</th><th>更新时间</th><th></th></tr></thead><tbody id="offers-tbody"><tr><td colspan="10" class="table-empty">正在加载…</td></tr></tbody></table></div>
+            <div class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>供应商 SKU</th><th>价格</th><th>MOQ</th><th>库存</th><th>交期</th><th>履约</th><th>状态</th><th>更新时间</th><th></th></tr></thead><tbody id="offers-tbody"><tr><td colspan="10" class="table-empty">正在加载…</td></tr></tbody></table></div>
             <footer class="table-footer"><span id="offers-count">显示 0–0 / 共 0 条</span><div class="table-pagination"><button id="offers-prev-page" class="btn btn-ghost btn-sm" type="button" disabled>上一页</button><span id="offers-page">第 1 / 1 页</span><button id="offers-next-page" class="btn btn-ghost btn-sm" type="button" disabled>下一页</button></div></footer>
           </section>
         </section>
@@ -198,7 +198,7 @@
       <header class="dialog-head"><div><h2>新增商品主数据</h2><p>商品实体与供应报价分开维护。</p></div><button class="icon-btn" type="button" data-close-dialog aria-label="关闭">×</button></header>
       <div class="dialog-body form-grid">
         <label class="form-group full"><span class="form-label">商品名称 *</span><input class="input" name="name" minlength="2" maxlength="240" required></label>
-        <label class="form-group"><span class="form-label">品牌</span><input class="input" name="brand" maxlength="120"></label>
+        <label class="form-group"><span class="form-label">品牌 *</span><select id="product-brand" class="select" name="brand" required><option value="">请选择已分配品牌</option></select><span class="form-hint">合作模式由平台确认，仅供查看。</span></label>
         <label class="form-group"><span class="form-label">型号</span><input class="input" name="model" maxlength="120"></label>
         <label class="form-group full"><span class="form-label">标准类目 *</span><input class="input" name="category" minlength="2" maxlength="160" required placeholder="例如：工业自动化/接近传感器"></label>
         <label class="form-group"><span class="form-label">状态</span><select class="select" name="status"><option value="DRAFT">草稿</option><option value="ACTIVE">有效</option></select></label>
@@ -215,8 +215,8 @@
       <header class="dialog-head"><div><h2 id="offer-dialog-title">新增供应报价</h2><p>报价变化会保留库存快照与操作事件。</p></div><button class="icon-btn" type="button" data-close-dialog aria-label="关闭">×</button></header>
       <div class="dialog-body form-grid">
         <label class="form-group full"><span class="form-label">对应商品 *</span><select id="offer-product-id" class="select" name="product_id" required><option value="">请选择商品</option></select></label>
-        <label class="form-group"><span class="form-label">供应商 SKU *</span><input class="input" name="supplier_sku" maxlength="120" required></label>
-        <label class="form-group"><span class="form-label">供货价 *</span><input class="input" type="number" name="price" min="0.0001" step="0.01" required></label>
+        <label class="form-group"><span class="form-label">供应商 SKU *</span><input class="input" name="supplier_sku_code" maxlength="120" required><span id="offer-supplier-sku-id" class="form-hint">稳定 ID 将在创建后生成</span></label>
+        <label class="form-group"><span id="offer-price-label" class="form-label">供货价</span><input class="input" type="number" name="price" min="0.0001" step="0.01" required></label>
         <label class="form-group"><span class="form-label">币种</span><select class="select" name="currency"><option value="CNY">CNY 人民币</option><option value="USD">USD 美元</option><option value="EUR">EUR 欧元</option></select></label>
         <label class="form-group"><span class="form-label">最小起订量 MOQ</span><input class="input" type="number" name="moq" value="1" min="1" required></label>
         <label class="form-group"><span class="form-label">可用库存</span><input class="input" type="number" name="stock_qty" value="0" min="0" required></label>
