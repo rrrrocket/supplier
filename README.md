@@ -10,11 +10,14 @@
 - 供应商账号登录与组织数据隔离
 - 企业供应能力档案
 - 统一商品主数据（Product）
-- 独立供应报价（Supplier Offer）
+- 规范化品牌、平台确认的供应商—品牌合作模式
+- 稳定 Supplier SKU 身份与独立供应报价（Supplier Offer）
 - 价格、MOQ、库存、交期与履约方式
 - CSV / XLSX / XLS / PDF 智能表格导入、字段匹配、预览校验与 Upsert
 - 库存快照
 - 关键操作事件审计
+- 独立 Integration Client、scope、轮换/停用和默认 600 次/60 秒限流
+- `/api/integrations/v1` 通用供应商、品牌、SKU 和模式 A 成本接口
 - 自动生成 OpenAPI 文档
 
 ## 1. 一键启动
@@ -86,7 +89,7 @@ ADMIN_NAME=平台管理员
 5. Excel 文件会先扫描工作簿并默认选择活动 Sheet；可继续单选、多选或全选 Sheet；
 6. 为每个选中 Sheet 分别确认表头行、字段映射和默认值；
 7. 检查合并后的标准商品列表；页面每次渲染 50 行，翻页和编辑始终作用于完整预览数据；
-8. 手工排除重复记录或修改供应商 SKU，所有重复 SKU 冲突解决后才能确认导入；
+8. 按需筛选需修正行并批量排除；排除只改变 `included` 状态，可一键恢复且不会删除原行；也可逐行修改供应商 SKU，所有已包含行的重复 SKU 冲突解决后才能确认导入；
 9. 确认后提交完整的已编辑列表，导入商品、供应商 SKU、报价、库存、MOQ 和交期；
 10. 查看商品、报价、库存快照与审计事件。
 
@@ -109,7 +112,7 @@ Excel 多 Sheet 流程会把每行的来源 Sheet 和原始行号带入预览及
 
 PDF 会优先提取表格并合并跨页同结构数据。纯扫描图片 PDF 为避免误读价格，需先完成 OCR 后再上传。
 
-同一组织内，`供应商 SKU` 是供应报价的唯一更新键。再次导入同一 SKU 时会更新报价，而不是重复创建。
+同一组织内，`supplier_sku_code` 是稳定 Supplier SKU 的业务唯一键。再次导入同一货号时复用相同 `supplier_sku_id` 并更新当前报价，而不是重复创建。工作簿中的 `supplier_sku` 是兼容输入列名，不是最终数据库列或 Offer API 字段。
 
 ## 3. 当前技术结构
 
@@ -117,6 +120,7 @@ PDF 会优先提取表格并合并跨页同结构数据。纯扫描图片 PDF �
 FastAPI
 ├─ API-first 业务接口
 ├─ Session 登录与角色权限
+├─ Integration Client Bearer 认证与 scope
 ├─ SQLAlchemy 2 数据模型
 ├─ PostgreSQL 统一数据存储
 ├─ Alembic 数据库迁移
@@ -146,10 +150,15 @@ tests/           API、权限、安全与审核闭环测试
 - **Supplier Application**：未入驻企业的公开申请；审核通过后关联新组织。
 - **Organization**：平台或供应商的数据隔离边界。
 - **Product**：描述商品是什么；不直接存供应商价格和库存。
-- **Supplier Offer**：描述某供应商在特定时间能以什么价格、MOQ、库存和交期供货。
+- **Brand / Supplier Brand Cooperation**：规范化品牌，以及由平台确认的当前/历史正式合作模式。
+- **Supplier SKU**：供应商货号的稳定身份；成本、库存和交期变化不改变 ID。
+- **Supplier Offer**：描述一个 Supplier SKU 当前能以什么价格、MOQ、库存和交期供货。
 - **Inventory Snapshot**：保留库存变化事实。
 - **Event Log**：记录谁在什么时候对什么实体执行了什么操作。
+- **Integration Client**：外部系统独立机器凭证；明文令牌只展示一次，数据库只保存哈希。
 - **Organization ID**：所有供应商业务数据按组织隔离，客户端不能自行指定数据归属。
+
+通用集成接口统一使用 `/api/integrations/v1`，提供六条供应商/品牌/Supplier SKU/成本路径。列表支持 `updated_since`、`cursor`、`include_inactive` 和 1..500 的 `limit`；批量成本接受 1..500 行并原样回传调用方的 `client_sku_id`。完整接入契约见 [通用系统接入指南](docs/integrations/system-integration-guide.md)。
 
 详细说明见 [文档索引](docs/README.md)、[系统架构](docs/architecture/overview.md) 和 [数据字典](docs/architecture/data-dictionary.md)。
 
@@ -163,7 +172,7 @@ Python 测试在独立的 PostgreSQL 16 服务和持久命名卷中执行，使�
 
 ## 7. 数据库迁移
 
-`./start.sh` 和 `./start.sh restart` 都会在应用启动前自动执行现有 Alembic 升级，常规使用无需单独操作数据库迁移。
+`./start.sh` 和 `./start.sh restart` 都会在应用启动前自动执行现有 Alembic 升级，常规使用无需单独操作数据库迁移。当前 Alembic head 是 `cc83f7e534a1`；最终表只保留非空 `products.brand_id` 和 `supplier_offers.supplier_sku_id`，不再保留对应的历史文本列。
 
 ## 8. PostgreSQL 运行环境
 
@@ -187,4 +196,5 @@ Nginx 示例见 `deploy/nginx-supplier.conf`。配置 DNS、HTTPS 证书、真�
 - 增加申请补充材料和多级审核能力；
 - 增加限流、防暴力登录、会话撤销与更完整安全审计；
 - 配置 HTTPS、数据库备份、错误监控、日志脱敏和审计保留周期；
+- 若改为多 Uvicorn worker 或多实例部署，将当前进程内 Integration Client 限流器替换为共享网关或共享数据存储限流器；
 - 与外部业务系统确定 Product、Offer、Inventory、Transaction 的主数据归属与同步协议。

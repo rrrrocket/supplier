@@ -48,6 +48,7 @@ from app.schemas.integration import (
     SkuCostBatchRequest,
     SkuCostBatchResponse,
     SkuCostBatchSuccess,
+    SkuCostErrorCode,
     SupplierBrandIntegrationPage,
     SupplierBrandIntegrationView,
     SupplierIntegrationPage,
@@ -65,11 +66,37 @@ logger = logging.getLogger(__name__)
 
 ACTIVE = CatalogStatus.ACTIVE.value
 INACTIVE = CatalogStatus.INACTIVE.value
-MISSING_COST_CODES = {"SUPPLIER_NOT_FOUND", "SKU_NOT_FOUND"}
+MISSING_COST_CODES = {
+    SkuCostErrorCode.SUPPLIER_NOT_FOUND,
+    SkuCostErrorCode.SKU_NOT_FOUND,
+}
 COST_BATCH_PATH = "/api/integrations/v1/sku-costs/query"
 COST_SINGLE_PATH_PATTERN = re.compile(
     r"^/api/integrations/v1/suppliers/[^/]+/skus/[^/]+/cost$"
 )
+
+INTEGRATION_AUTH_RESPONSES = {
+    401: {"description": "Integration Client token is invalid or expired."},
+    403: {"description": "Integration Client scope is insufficient."},
+    429: {
+        "description": "Integration Client request rate exceeded.",
+        "headers": {
+            "Retry-After": {
+                "description": "Seconds until the current rate-limit window resets.",
+                "schema": {"type": "integer", "minimum": 1},
+            }
+        },
+    },
+}
+INTEGRATION_VALIDATION_RESPONSE = {
+    400: {"description": "The integration request is invalid."}
+}
+INTEGRATION_NOT_FOUND_RESPONSE = {
+    404: {"description": "The requested integration resource does not exist."}
+}
+COST_BUSINESS_RESPONSE = {
+    409: {"description": "The Supplier SKU is not eligible for a current cost."}
+}
 
 
 class CostValidationRoute(APIRoute):
@@ -220,7 +247,10 @@ def supplier_context(
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "SUPPLIER_NOT_FOUND", "message": "供应商不存在"},
+            detail={
+                "code": SkuCostErrorCode.SUPPLIER_NOT_FOUND.value,
+                "message": "供应商不存在",
+            },
         )
     return row[0], row[1]
 
@@ -331,7 +361,11 @@ def ranked_cooperations(supplier_id: str):
     )
 
 
-@router.get("/suppliers", response_model=SupplierIntegrationPage)
+@router.get(
+    "/suppliers",
+    response_model=SupplierIntegrationPage,
+    responses={**INTEGRATION_AUTH_RESPONSES},
+)
 def list_suppliers(
     db: DbSession,
     _: SupplierReader,
@@ -379,7 +413,14 @@ def list_suppliers(
     )
 
 
-@router.get("/suppliers/{supplier_id}", response_model=SupplierIntegrationView)
+@router.get(
+    "/suppliers/{supplier_id}",
+    response_model=SupplierIntegrationView,
+    responses={
+        **INTEGRATION_AUTH_RESPONSES,
+        **INTEGRATION_NOT_FOUND_RESPONSE,
+    },
+)
 def get_supplier(
     supplier_id: str,
     db: DbSession,
@@ -404,7 +445,10 @@ def get_supplier(
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "SUPPLIER_NOT_FOUND", "message": "供应商不存在"},
+            detail={
+                "code": SkuCostErrorCode.SUPPLIER_NOT_FOUND.value,
+                "message": "供应商不存在",
+            },
         )
     return supplier_view(row[0], row[1], row[2])
 
@@ -412,6 +456,10 @@ def get_supplier(
 @router.get(
     "/suppliers/{supplier_id}/brands",
     response_model=SupplierBrandIntegrationPage,
+    responses={
+        **INTEGRATION_AUTH_RESPONSES,
+        **INTEGRATION_NOT_FOUND_RESPONSE,
+    },
 )
 def list_supplier_brands(
     supplier_id: str,
@@ -483,6 +531,10 @@ def list_supplier_brands(
 @router.get(
     "/suppliers/{supplier_id}/skus",
     response_model=SupplierSkuIntegrationPage,
+    responses={
+        **INTEGRATION_AUTH_RESPONSES,
+        **INTEGRATION_NOT_FOUND_RESPONSE,
+    },
 )
 def list_supplier_skus(
     supplier_id: str,
@@ -662,6 +714,12 @@ router.add_api_route(
     methods=["GET"],
     response_model=CurrentSkuCostView,
     route_class_override=CostValidationRoute,
+    responses={
+        **INTEGRATION_AUTH_RESPONSES,
+        **INTEGRATION_VALIDATION_RESPONSE,
+        **INTEGRATION_NOT_FOUND_RESPONSE,
+        **COST_BUSINESS_RESPONSE,
+    },
 )
 router.add_api_route(
     "/sku-costs/query",
@@ -669,4 +727,8 @@ router.add_api_route(
     methods=["POST"],
     response_model=SkuCostBatchResponse,
     route_class_override=CostValidationRoute,
+    responses={
+        **INTEGRATION_AUTH_RESPONSES,
+        **INTEGRATION_VALIDATION_RESPONSE,
+    },
 )

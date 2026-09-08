@@ -1,7 +1,7 @@
 # 供应商品牌、SKU 与通用系统集成设计
 
-状态：待评审
-日期：2026-09-08
+状态：已实现
+日期：2026-09-09
 
 ## 1. 背景
 
@@ -44,7 +44,7 @@ Supplier Network 通过通用集成 API 服务多个外部业务系统。调用�
 
 ### 5.1 Brand
 
-品牌从当前 `Product.brand` 字符串提升为独立主数据。
+品牌已从历史 `Product.brand` 字符串提升为独立主数据；最终数据库只保留 `products.brand_id`，API 仍把关联的 `Brand.name` 序列化为展示字段 `brand`。
 
 | 字段 | 类型 | 约束/说明 |
 |---|---|---|
@@ -109,8 +109,9 @@ Supplier Network 通过通用集成 API 服务多个外部业务系统。调用�
 
 主要调整：
 
-- 新增必填 `supplier_sku_id`，关联 `SupplierSku`。
-- 现有 `supplier_sku` 数据迁移到 `SupplierSku.supplier_sku_code`。
+- 必填 `supplier_sku_id` 关联 `SupplierSku`，且一个 Supplier SKU 只有一条当前 Offer。
+- 历史 `supplier_offers.supplier_sku` 已迁移到 `SupplierSku.supplier_sku_code` 并从最终数据库删除；直接 Offer API 只接受 `supplier_sku_code`。
+- 导入工作簿列名 `supplier_sku` 仅作为文件格式兼容边界，导入时映射为 `supplier_sku_code`，不是数据库列或 Offer JSON 字段。
 - `price` 继续保存当前价格；对于模式 A，通用集成 API 将其命名为 `cost_price`。
 - 本期每个 `SupplierSku` 只保留一条当前 `SupplierOffer`。
 - `stock_qty`、`moq`、`lead_time_days` 和库存快照保持现有职责。
@@ -200,7 +201,7 @@ GET  /api/integrations/v1/suppliers/{supplier_id}/skus/{supplier_sku_id}/cost
 POST /api/integrations/v1/sku-costs/query
 ```
 
-列表接口支持 `updated_since`、`cursor` 和 `limit`。默认 `limit=100`，最大 `limit=500`。
+供应商、品牌合作和 Supplier SKU 列表都支持 `updated_since`、不透明 `cursor`、`include_inactive` 和 `limit`。默认 `limit=100`，范围 1..500。`include_inactive=true` 时，缺少当前合作关系的孤儿 Supplier SKU 以 `status=INACTIVE`、`commercial_mode=null` 返回；正常有效行的模式仍只能是三种正式模式之一。
 
 ### 8.1 批量成本查询
 
@@ -248,7 +249,7 @@ POST /api/integrations/v1/sku-costs/query
 }
 ```
 
-批量请求通过 HTTP 200 返回逐行结果。请求结构整体无效时返回 HTTP 400；认证、权限、限流和服务异常使用对应 HTTP 状态码。
+批量请求接受 1..500 行，通过 HTTP 200 按输入顺序返回逐行结果。请求结构整体无效时返回 HTTP 400；认证、权限、限流和服务异常使用对应 HTTP 状态码。
 
 业务错误码：
 
@@ -282,9 +283,12 @@ POST /api/integrations/v1/sku-costs/query
 - 令牌仅在创建时展示一次，数据库只保存哈希。
 - 每个调用方使用独立令牌和最小权限范围。
 - 成本接口必须具有 `supplier-costs:read`。
-- 审计记录包含调用方 ID、请求 ID、接口、结果数量、错误数量和时间，不记录完整令牌。
+- 管理端支持创建、到期、轮换和停用；轮换或停用后旧令牌立即失效。
+- 调用方可以发送 `X-Request-ID`；成本请求在成功及可识别调用方的 400/403/404/409/429/5xx 结果上各写一条聚合审计事件。
+- 审计记录包含调用方 ID、请求 ID、接口、结果数量、错误数量和时间，不记录完整令牌、成本值或 `client_sku_id`。
 - 日志不得输出成本批量响应正文。
-- 令牌支持停用、到期和轮换。
+- 默认限流是每个 Integration Client 每 60 秒 600 次，所有 scope 共享额度；429 返回整数秒 `Retry-After`。
+- 当前单 Uvicorn worker 部署使用进程内固定窗口限流器；多 worker 或多实例必须改用共享网关/数据存储限流器。
 
 ## 11. 增量同步
 
@@ -296,18 +300,16 @@ POST /api/integrations/v1/sku-costs/query
 - 成本变更不影响已经确认的 SKU 映射。
 - 后续如调用量增加，可增加变更 Webhook，但不改变现有资源 ID 和查询接口。
 
-## 12. 现有数据迁移
+## 12. 已完成的数据迁移
 
-1. 从现有非空 `Product.brand` 创建并去重 `Brand`。
-2. 为现有供应商与其品牌创建 `SupplierBrandCooperation`。
-3. 当前已注册供应商的现有品牌关系设置为 `SELF_PURCHASE`。
-4. 从每条现有 `SupplierOffer` 创建一个 `SupplierSku`。
-5. 将现有 `supplier_sku` 迁移为 `supplier_sku_code`。
-6. 保留现有 `SupplierOffer.id` 及价格、库存、MOQ、交期和历史库存关系，并补充 `supplier_sku_id`。
-7. 对空品牌、重复品牌或无法建立唯一 SKU 的数据生成迁移报告并阻止静默合并。
-8. 尚无外部系统接入，不迁移调用方映射数据。
+1. 从历史非空 Product 品牌值创建并按规范化名称去重 `Brand`。
+2. 为现有供应商与其品牌创建 `SupplierBrandCooperation`，已注册供应商的既有关系初始化为 `SELF_PURCHASE`。
+3. 从每条既有 `SupplierOffer` 创建稳定 `SupplierSku`，并保留原 Offer ID、价格、库存、MOQ、交期和库存快照关系。
+4. 过渡期 catch-up 迁移再次协调迟到写入，之后把 `products.brand_id` 和 `supplier_offers.supplier_sku_id` 收紧为非空。
+5. 最终迁移 `cc83f7e534a1` 删除历史 `products.brand` 和 `supplier_offers.supplier_sku` 列；当前 Alembic head 为 `cc83f7e534a1`。
+6. 空品牌、重复身份或缺失外键会在收紧前显式失败，不静默合并或截断；外部调用方映射仍由调用方保存。
 
-迁移必须在 PostgreSQL 测试数据库和业务数据备份上验证，不能通过运行时自动建表替代 Alembic 迁移。
+迁移链已在全新 PostgreSQL 测试数据库及历史夹具上验证，应用不以运行时自动建表替代 Alembic。真实业务库备份与迁移仍需在部署窗口单独授权执行。
 
 ## 13. 界面调整
 
@@ -316,6 +318,8 @@ Supplier 工作台：
 - 商品和报价页面显示稳定的 Supplier SKU ID 与供应商货号。
 - 模式 A SKU 的现有价格字段在界面中明确显示为“成本价”。
 - 供应商可以更新成本价，但不能自行修改平台确认的品牌合作模式。
+- 商品和报价 API 按最多 500 行分块拉取完整结果，浏览器表格每页渲染 50 行；筛选、编辑和 Offer 商品选项基于完整客户端列表。
+- 导入预览可筛选需修正行，批量排除后仍保留原行并允许一键恢复；只有 `included` 行参与重复校验和最终导入。
 
 平台管理端：
 

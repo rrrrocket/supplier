@@ -1,8 +1,8 @@
 # Supplier Network 通用系统接入指南
 
-状态：设计稿，接口尚未实现
+状态：已实现并通过自动化契约验证
 版本：v1
-日期：2026-09-08
+日期：2026-09-09
 
 ## 1. 文档目的
 
@@ -70,6 +70,9 @@ supplier-costs:read
 - 令牌必须存入密钥管理或受控环境变量，不得写入代码或日志。
 - 测试和正式环境使用不同令牌。
 - 收到 HTTP 401 时停止业务重试并检查令牌；收到 HTTP 403 时检查权限范围。
+- 平台管理员在管理端创建 Integration Client；完整令牌只在创建或轮换成功时展示一次，数据库仅保存令牌哈希和可检索前缀。
+- 为凭证设置最小 scope 和合理到期时间；轮换后旧令牌立即失效，停用后该令牌立即返回 401。
+- 不要把 `token_prefix` 当作凭证；令牌遗失时必须轮换，不能从平台取回明文。
 
 ## 5. 标识说明
 
@@ -172,6 +175,17 @@ supplier_network_supplier_id + supplier_network_sku_id
 
 以下路径均相对于 `/api/integrations/v1`。
 
+三个列表接口（供应商、品牌合作、Supplier SKU）采用相同的同步参数：
+
+| 参数 | 默认值/范围 | 说明 |
+|---|---|---|
+| `updated_since` | 可选，带时区时间 | 只返回有效更新时间严格晚于该水位的资源 |
+| `cursor` | 可选，不透明字符串 | 传入上一页 `next_cursor`；不得解析、修改或跨查询条件复用 |
+| `limit` | 默认 100，范围 1..500 | 单页条数 |
+| `include_inactive` | 默认 `false` | 为 `true` 时同时返回 `INACTIVE` 资源，供失效映射对账 |
+
+每页都返回 `items` 和 `next_cursor`。必须拉到 `next_cursor=null` 才算完成一轮同步；同一轮翻页期间保持 `updated_since` 和 `include_inactive` 不变。
+
 ### 8.1 获取供应商列表
 
 ```http
@@ -222,7 +236,8 @@ GET /suppliers/{supplier_id}/brands
       "status": "ACTIVE",
       "updated_at": "2026-09-08T10:00:00Z"
     }
-  ]
+  ],
+  "next_cursor": null
 }
 ```
 
@@ -265,6 +280,8 @@ GET /suppliers/{supplier_id}/skus?updated_since=2026-09-08T00:00:00Z&limit=200
 
 调用方使用这些字段生成本地匹配候选。调用方不应根据一次模糊匹配直接确认关系。
 
+默认列表只返回有效供应商、有效 SKU、有效品牌及有效合作关系的交集。`include_inactive=true` 会返回停用资源；如果 Supplier SKU 结构上缺少当前品牌合作关系，它仍以 `status=INACTIVE` 返回，且 `commercial_mode=null`。调用方必须允许该字段在这种失效/孤儿记录上为空，不能虚构合作模式。
+
 ### 8.5 获取单个 SKU 成本
 
 ```http
@@ -292,6 +309,8 @@ Content-Type: application/json
 ```
 
 调用方通过 `client_sku_id` 传递自己的 SKU ID：
+
+`items` 必须包含 1..500 行。超过 500 行应由调用方拆批；空数组、超限或结构错误返回 HTTP 400，不进入逐行业务处理。
 
 ```json
 {
@@ -342,7 +361,7 @@ Content-Type: application/json
 }
 ```
 
-批量接口按输入顺序返回结果。单行错误不会使其他行失败。
+批量接口按输入顺序返回结果。单行错误不会使其他行失败；逐行业务错误随 HTTP 200 返回。单个成本接口则以 HTTP 404 表示供应商/SKU 不存在，以 HTTP 409 表示停用、归属不符、非模式 A、合作失效或缺少成本。
 
 ## 9. HTTP 状态和错误码
 
@@ -389,9 +408,11 @@ Content-Type: application/json
 
 - 每次请求发送唯一 `X-Request-ID`；重试时沿用原请求 ID，并在调用方本地记录重试次数。
 - GET 和成本查询 POST 均为只读操作，可以安全重试。
-- 429 按 `Retry-After` 处理。
+- 默认每个 Integration Client 在一个 60 秒固定窗口内最多 600 次已认证请求，所有 scope 共用额度；超限返回 429，并以整数秒 `Retry-After` 指示当前窗口剩余时间。
 - 5xx 使用指数退避并限制最大重试次数。
 - 调用方日志可以记录 `client_sku_id`、`supplier_id`、`supplier_sku_id`、HTTP 状态和错误码，但不得记录认证令牌。
+- 当前受支持部署使用单个 Uvicorn worker，因此限流器是进程内状态。多 worker 或多实例部署必须先接入网关或共享数据存储限流器，否则每个进程会分别计算 600/60 配额。
+- 每个可识别 Integration Client 的成本请求写入一条聚合审计事件，包括调用方 ID、请求 ID、路径、成功数和错误数；400、403、404、409、429 及认证后的 5xx 也会审计。事件不保存令牌、成本值或 `client_sku_id`；无法认证的 401 不伪造 Actor。
 
 ## 12. 联调验收用例
 

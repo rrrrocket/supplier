@@ -1,6 +1,6 @@
 # 验证报告
 
-本版本于 2026-09-08 完成以下本地验证：
+本版本于 2026-09-09 完成以下本地验证：
 
 | 检查项 | 结果 |
 |---|---|
@@ -9,9 +9,9 @@
 | JavaScript 语法检查 | 通过 |
 | 5 个 HTML 页面重复 ID 与本地资源检查 | 通过 |
 | PostgreSQL 16 隔离测试环境 | 持久命名卷；迁移到 Alembic head，通过；数据库端口 6432 |
-| 连续两次 Pytest 自动化测试 | 每次 96 项通过 |
-| 连续两次前端 Node 测试 | 每次 23 项通过，0 失败 |
-| 测试卷复用 | `supplier-tests_supplier_test_postgres:2026-09-07T20:40:00Z` 两次相同 |
+| Pytest 自动化测试 | 236 项通过 |
+| 前端 Node 测试 | 52 项通过，0 失败 |
+| 测试卷复用 | 完整与 focused 验证均复用 `supplier-tests` 的持久 PostgreSQL 服务、网络和命名卷；仅 one-shot runner 被移除 |
 | 测试数据库最终状态 | `supplier-tests-test-db-1` 保持 healthy |
 | 已初始化业务卷密码保护 | `.env` 缺失或密码为占位值时停止启动并提示恢复原配置；未初始化卷才生成密码 |
 | Excel 解析错误边界 | 损坏、加密、扩展名与内容不符及截断 OLE Compound Document 的 XLSX/XLS，在扫描和配置预览均返回安全的 400 |
@@ -24,9 +24,11 @@
 | `Sheet1` 独立配置 | 表头行 1；列映射 C/E/N/O/P/R |
 | `Sheet1` 标准化结果 | 3,694 行；首行必填字段非空且成本为正；来源坐标保留为 `Sheet1:2` |
 | 原工作簿字节保持 | 验收前后 SHA-256 均为 `451082f041c936809e9be77c4df681733cb8e3366ce327531458d06b51b85479` |
-| 全新 PostgreSQL 16 数据库执行 Alembic `upgrade head` | 通过 |
+| 全新 PostgreSQL 16 数据库执行 Alembic `upgrade head` | 通过；当前唯一 head 为 `cc83f7e534a1` |
 | PostgreSQL 历史供应商角色迁移 | 通过 |
+| 最终供应商目录迁移 | 通过；`products.brand_id`、`supplier_offers.supplier_sku_id` 非空，历史文本列不存在，既有 ID/报价/库存关系保持 |
 | Alembic 模型一致性 `check` | 无待生成迁移 |
+| 通用集成 OpenAPI 契约 | 6 条 caller-neutral 路径的方法、schema、Bearer security、scope、成本错误码、400/404/409、429 与 `Retry-After` 通过运行时契约测试 |
 | FastAPI 真实启动 | 通过 |
 | `./start.sh status` | app 与 db 均为 healthy |
 | `/api/health` | `{"status":"ok","service":"supplier-network","environment":"development"}` |
@@ -49,20 +51,27 @@
 - 多 Sheet 合并预览、10,000 行总上限和来源坐标；
 - 最终导入的 Sheet 配置/来源归属，以及真实完整 payload 的 10,000/10,001/excluded 传输与业务边界；
 - included 行重复 SKU 的服务端阻断与排除后导入；
-- 50 行分页、120 行跨页编辑和完整列表/Sheet 配置提交；
+- 需修正行筛选、单行/批量排除、排除计数和无删除恢复；
+- 导入预览 50 行分页、120 行跨页编辑和完整列表/Sheet 配置提交；
+- Product/Offer 以 500 行分块拉取 1,792 行完整数据、50 行 UI 分页、跨页编辑和筛选隔离；
 - 文件/配置切换（含无效新文件）时陈旧异步响应隔离；
 - 供应商无法访问平台管理 API；
 - 平台管理员无法误用供应商业务 API；
 - 管理员审核通过、组织开户与新账号登录；
-- 管理员驳回与防止重复审核。
+- 管理员驳回与防止重复审核；
+- Brand、正式供应商—品牌合作、稳定 Supplier SKU 和最终无 legacy 列迁移链；
+- Integration Client 一次性令牌、哈希存储、scope、到期、轮换、停用、连接生命周期与权限隔离；
+- 供应商/品牌/Supplier SKU 的增量 cursor 分页、`include_inactive` 及孤儿 SKU 的 nullable `commercial_mode`；
+- 单个/1..500 行批量成本查询、8 个业务错误码、`X-Request-ID` 脱敏聚合审计与 600/60 限流。
 
 ## 尚未执行
 
 - 真实 DNS、HTTPS 与云服务器部署；
 - 跨浏览器视觉回归测试；
 - PostgreSQL 高并发、压力和故障恢复测试；
+- Task 8 的真实业务库备份/迁移和真实 Integration Client 凭证演练（需单独授权）；
 - 与外部业务系统的线上联调。
 
 ## 已知非阻断警告
 
-- 测试仍报告 Starlette `anyio.abc.BlockingPortal` 弃用警告；不影响本次 96 项 Python 测试与 23 项 Node 测试通过。
+- 测试仍报告 Starlette `anyio.abc.BlockingPortal` 弃用警告；不影响本次 236 项 Python 测试与 52 项 Node 测试通过。

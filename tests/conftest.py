@@ -35,18 +35,13 @@ from app.models.entities import (  # noqa: E402
     User,
     UserRole,
 )
+from app.schemas.integration import INTEGRATION_SCOPES  # noqa: E402
 
 
 SUPPLIER_EMAIL = "supplier-test@example.com"
 SUPPLIER_PASSWORD = "SupplierTest123!"
 ADMIN_EMAIL = "admin-test@example.com"
 ADMIN_PASSWORD = "AdminTest123!"
-INTEGRATION_SCOPES = [
-    "suppliers:read",
-    "supplier-brands:read",
-    "supplier-skus:read",
-    "supplier-costs:read",
-]
 
 
 def create_test_accounts() -> None:
@@ -217,4 +212,4 @@ def integration_client_factory(
 def integration_client(
     integration_client_factory: Callable[[list[str]], dict[str, Any]],
 ) -> dict[str, Any]:
-    return integration_client_factory(INTEGRATION_SCOPES)
+    return integration_client_factory(list(INTEGRATION_SCOPES))

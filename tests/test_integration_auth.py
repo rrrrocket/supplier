@@ -22,6 +22,7 @@ from app.core.integration_security import create_integration_token, verify_integ
 from app.db.session import SessionLocal, get_db
 from app.main import app
 from app.models.entities import EventLog, IntegrationClient, Organization
+from app.schemas.integration import INTEGRATION_SCOPES
 from tests.conftest import (
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
@@ -34,12 +35,7 @@ from tests.migration_utils import connect, run_migrations, temporary_postgresql_
 
 PREVIOUS_REVISION = "5d91a2c74e30"
 INTEGRATION_CLIENT_REVISION = "b742e6d423f0"
-ALL_SCOPES = [
-    "suppliers:read",
-    "supplier-brands:read",
-    "supplier-skus:read",
-    "supplier-costs:read",
-]
+ALL_SCOPES = list(INTEGRATION_SCOPES)
 
 
 @app.get("/api/test/integration-supplier-reader", include_in_schema=False)

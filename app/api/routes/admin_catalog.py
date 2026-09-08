@@ -150,7 +150,7 @@ def create_integration_client(
     client, plaintext = create_client_with_unique_token(
         db,
         name=name,
-        scopes=list(dict.fromkeys(payload.scopes)),
+        scopes=[scope.value for scope in dict.fromkeys(payload.scopes)],
         expires_at=expires_at,
     )
     record_event(

@@ -27,12 +27,15 @@ Organization
 ├─ User
 ├─ SupplierProfile
 ├─ Product
-│  ├─ ProductVariant
-│  └─ SupplierOffer
-│     └─ InventorySnapshot
+│  └─ ProductVariant
+├─ SupplierSku ─ SupplierOffer ─ InventorySnapshot
+├─ SupplierBrandCooperation ─ Brand
 ├─ ImportJob
 ├─ Document
 └─ EventLog
+
+IntegrationClient
+└─ scoped bearer credential → /api/integrations/v1
 
 SupplierApplication
 ├─ reviewed_by_user_id → Platform Admin
@@ -41,13 +44,19 @@ SupplierApplication
 
 ### Product 与 Offer 分离
 
-`Product` 回答“这是什么商品”；`SupplierOffer` 回答“谁能以什么条件提供”。同一 Product 后续允许关联多个供应商报价，不能把成本和库存直接写死在商品表中。
+`Product` 回答“这是什么商品”；`SupplierSku` 提供不会随成本、库存或交期变化的供应商货号身份；`SupplierOffer` 回答“当前能以什么条件提供”。`Product.brand_id` 关联规范化 `Brand`，`SupplierOffer.supplier_sku_id` 关联稳定 SKU。最终数据库不再包含历史 `products.brand` 或 `supplier_offers.supplier_sku` 列。
+
+### 品牌合作由平台确认
+
+`SupplierBrandCooperation` 记录一个供应商与一个品牌的正式 `SELF_PURCHASE`、`JOINT_OPERATION` 或 `B2B` 模式，并保留失效历史。同一供应商和品牌同时最多一条有效关系。供应商申请里的合作方式只是意向；供应商可以查看正式关系，但只有平台管理员可以变更。
 
 ### Organization 是第一层隔离边界
 
-每个供应商组织拥有自己的用户、商品、报价、导入记录、文件与事件。所有受保护 API 均从登录 Session 获取组织，不接受客户端自由传入 `organization_id`。
+每个供应商组织拥有自己的用户、商品、报价、导入记录、文件与事件。供应商业务 API 从登录 Session 获取组织，不接受客户端自由传入 `organization_id`。
 
 平台管理员属于独立 PLATFORM 组织，仅通过受控管理 API 审核申请和查看组织级汇总；供应商账号无法访问管理 API。
+
+通用集成 API 使用独立 `IntegrationClient` Bearer 令牌和 scope，不复用网页 Session。令牌明文只在创建或轮换时展示一次；数据库只保存哈希。外部系统只能读取平台已确认的供应商、品牌、SKU 和模式 A 当前成本，并在自己的数据库保存 `supplier_network_supplier_id`、`supplier_network_sku_id` 及人工确认的映射。
 
 ### Event Log 是审计与未来 AI 学习基础
 
@@ -59,6 +68,9 @@ SupplierApplication
 - 报价创建/更新
 - CSV 导入
 - 供应商申请通过/驳回
+- 品牌合作关系变更
+- Integration Client 创建、轮换和停用
+- 通用成本查询的调用方、请求 ID、接口及成功/错误计数
 
 后续扩展为：
 
@@ -130,7 +142,9 @@ Supplier Network 保留：
 ```text
 手工创建 / CSV 导入
   ↓
-Product 标准化
+Brand + Product 标准化
+  ↓
+稳定 Supplier SKU 解析
   ↓
 Supplier Offer Upsert
   ↓
@@ -140,6 +154,24 @@ Event Log
   ↓
 外部系统同步
 ```
+
+供应商工作台用 `limit=500` 分块读取完整 Product/Offer 列表，在浏览器内每页渲染 50 行。导入预览的排除动作只切换行的 `included` 状态：需修正行可以批量排除和恢复，未包含行不参与重复校验或最终写入。
+
+### 通用系统接入
+
+```text
+平台管理员创建 IntegrationClient（一次性令牌）
+  ↓
+Bearer 认证 + scope + 每客户端限流
+  ↓
+/api/integrations/v1
+  ├─ 供应商/品牌/Supplier SKU 增量分页
+  └─ 单个/批量模式 A 当前成本
+  ↓
+调用方保存稳定 ID 并完成人工映射
+```
+
+列表使用 `updated_since + cursor + limit + include_inactive`；成本批量一次 1..500 行。默认限流为每个 Integration Client 每 60 秒 600 次，429 返回 `Retry-After`。当前单 Uvicorn worker 使用进程内限流；多 worker 或多实例部署必须提供共享限流器。
 
 ### 后续供应商评分
 

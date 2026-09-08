@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated, Callable
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Security, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 
 from app.core.config import get_settings
@@ -12,6 +13,7 @@ from app.core.integration_rate_limit import FixedWindowRateLimiter
 from app.core.integration_security import verify_integration_token
 from app.db.session import SessionLocal
 from app.models.entities import IntegrationClient
+from app.schemas.integration import IntegrationScope
 
 
 settings = get_settings()
@@ -19,6 +21,7 @@ integration_rate_limiter = FixedWindowRateLimiter(
     max_requests=settings.integration_rate_limit_requests,
     window_seconds=settings.integration_rate_limit_window_seconds,
 )
+integration_bearer = HTTPBearer(auto_error=False, scheme_name="IntegrationBearer")
 
 
 def unauthorized() -> HTTPException:
@@ -77,12 +80,21 @@ def authenticate_integration_client(
     return principal
 
 
-def get_integration_principal(request: Request) -> AuthenticatedIntegrationClient:
+def get_integration_principal(
+    request: Request,
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Security(integration_bearer),
+    ],
+) -> AuthenticatedIntegrationClient:
     principal = getattr(request.state, "integration_principal", None)
     if not isinstance(principal, AuthenticatedIntegrationClient):
-        principal = authenticate_integration_client(
-            request.headers.get("Authorization", "")
+        authorization = (
+            f"{credentials.scheme} {credentials.credentials}"
+            if credentials is not None
+            else ""
         )
+        principal = authenticate_integration_client(authorization)
         request.state.integration_principal = principal
 
     enforce_integration_rate_limit(request, principal)
@@ -113,12 +125,12 @@ IntegrationPrincipal = Annotated[
 
 
 def require_integration_scope(
-    scope: str,
+    scope: IntegrationScope,
 ) -> Callable[[IntegrationPrincipal], AuthenticatedIntegrationClient]:
     def dependency(
         principal: IntegrationPrincipal,
     ) -> AuthenticatedIntegrationClient:
-        if scope not in principal.scopes:
+        if scope.value not in principal.scopes:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="集成凭证缺少所需权限范围",
@@ -130,17 +142,17 @@ def require_integration_scope(
 
 SupplierReader = Annotated[
     AuthenticatedIntegrationClient,
-    Depends(require_integration_scope("suppliers:read")),
+    Depends(require_integration_scope(IntegrationScope.SUPPLIERS_READ)),
 ]
 BrandReader = Annotated[
     AuthenticatedIntegrationClient,
-    Depends(require_integration_scope("supplier-brands:read")),
+    Depends(require_integration_scope(IntegrationScope.SUPPLIER_BRANDS_READ)),
 ]
 SkuReader = Annotated[
     AuthenticatedIntegrationClient,
-    Depends(require_integration_scope("supplier-skus:read")),
+    Depends(require_integration_scope(IntegrationScope.SUPPLIER_SKUS_READ)),
 ]
 CostReader = Annotated[
     AuthenticatedIntegrationClient,
-    Depends(require_integration_scope("supplier-costs:read")),
+    Depends(require_integration_scope(IntegrationScope.SUPPLIER_COSTS_READ)),
 ]

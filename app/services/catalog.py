@@ -21,6 +21,7 @@ from app.models.entities import (
     SupplierOffer,
     SupplierSku,
 )
+from app.schemas.integration import SkuCostErrorCode
 from app.services.events import record_event
 
 
@@ -35,7 +36,7 @@ class CurrentSkuCost:
 
 
 class SkuCostError(Exception):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: SkuCostErrorCode, message: str):
         self.code = code
         self.message = message
         super().__init__(message)
@@ -206,19 +207,20 @@ def resolve_current_sku_cost(
         supplier is None
         or supplier.organization_type != OrganizationType.SUPPLIER.value
     ):
-        raise SkuCostError("SUPPLIER_NOT_FOUND", "供应商不存在")
+        raise SkuCostError(SkuCostErrorCode.SUPPLIER_NOT_FOUND, "供应商不存在")
     if not supplier.is_active:
-        raise SkuCostError("SUPPLIER_INACTIVE", "供应商已停用")
+        raise SkuCostError(SkuCostErrorCode.SUPPLIER_INACTIVE, "供应商已停用")
 
     supplier_sku = db.get(SupplierSku, supplier_sku_id)
     if supplier_sku is None:
-        raise SkuCostError("SKU_NOT_FOUND", "Supplier SKU 不存在")
+        raise SkuCostError(SkuCostErrorCode.SKU_NOT_FOUND, "Supplier SKU 不存在")
     if supplier_sku.supplier_id != supplier_id:
         raise SkuCostError(
-            "SKU_SUPPLIER_MISMATCH", "Supplier SKU 不属于该供应商"
+            SkuCostErrorCode.SKU_SUPPLIER_MISMATCH,
+            "Supplier SKU 不属于该供应商",
         )
     if supplier_sku.status != CatalogStatus.ACTIVE.value:
-        raise SkuCostError("SKU_INACTIVE", "Supplier SKU 已停用")
+        raise SkuCostError(SkuCostErrorCode.SKU_INACTIVE, "Supplier SKU 已停用")
 
     cooperation = db.scalar(
         select(SupplierBrandCooperation).where(
@@ -229,11 +231,13 @@ def resolve_current_sku_cost(
     )
     if cooperation is None:
         raise SkuCostError(
-            "BRAND_COOPERATION_INACTIVE", "品牌合作关系未启用"
+            SkuCostErrorCode.BRAND_COOPERATION_INACTIVE,
+            "品牌合作关系未启用",
         )
     if cooperation.commercial_mode != CommercialMode.SELF_PURCHASE.value:
         raise SkuCostError(
-            "NOT_SELF_PURCHASE", "该货号所属品牌不是自营采购模式"
+            SkuCostErrorCode.NOT_SELF_PURCHASE,
+            "该货号所属品牌不是自营采购模式",
         )
 
     offer = db.scalar(
@@ -243,7 +247,7 @@ def resolve_current_sku_cost(
         )
     )
     if offer is None or offer.price is None:
-        raise SkuCostError("COST_PRICE_MISSING", "当前成本价不存在")
+        raise SkuCostError(SkuCostErrorCode.COST_PRICE_MISSING, "当前成本价不存在")
 
     return CurrentSkuCost(
         supplier_id=supplier_id,
