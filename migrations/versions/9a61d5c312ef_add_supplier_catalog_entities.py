@@ -188,7 +188,7 @@ def upgrade() -> None:
             INSERT INTO brands
                 (id, code, name, normalized_name, aliases, status, created_at, updated_at)
             SELECT
-                md5(normalized_name),
+                gen_random_uuid()::text,
                 'BR-' || upper(substr(md5(normalized_name), 1, 10)),
                 name,
                 normalized_name,
@@ -218,7 +218,7 @@ def upgrade() -> None:
                 (id, supplier_id, brand_id, commercial_mode, status,
                  valid_from, valid_to, notes, created_at, updated_at)
             SELECT DISTINCT
-                md5(offers.organization_id || ':' || products.brand_id),
+                gen_random_uuid()::text,
                 offers.organization_id,
                 products.brand_id,
                 'SELF_PURCHASE',

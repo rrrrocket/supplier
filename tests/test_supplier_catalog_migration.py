@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from uuid import UUID
 
 import pytest
 
@@ -111,6 +112,15 @@ def test_catalog_migration_backfills_new_identities_without_changing_legacy_data
         run_migrations(migration_url, CATALOG_REVISION)
 
         with connect(migration_url, database_name) as connection:
+            brand_ids = [row[0] for row in connection.execute("SELECT id FROM brands")]
+            cooperation_ids = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT id FROM supplier_brand_cooperations"
+                )
+            ]
+            assert [str(UUID(value)) for value in brand_ids] == brand_ids
+            assert [str(UUID(value)) for value in cooperation_ids] == cooperation_ids
             assert connection.execute("SELECT count(*) FROM brands").fetchone()[0] == 2
             assert dict(
                 connection.execute(
