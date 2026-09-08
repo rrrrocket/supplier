@@ -260,7 +260,16 @@ function renderProducts() {
 async function loadOfferBrands(expectedRouteRevision = state.offerRouteRevision) {
   const revision = ++state.offerBrandRequestRevision;
   const select = document.querySelector("#offers-brand");
-  const offerBrands = await Matrix.api("/api/offers/brands");
+  let offerBrands;
+  try {
+    offerBrands = await Matrix.api("/api/offers/brands");
+  } catch (error) {
+    if (
+      revision !== state.offerBrandRequestRevision
+      || expectedRouteRevision !== state.offerRouteRevision
+    ) return false;
+    throw error;
+  }
   if (
     revision !== state.offerBrandRequestRevision
     || expectedRouteRevision !== state.offerRouteRevision

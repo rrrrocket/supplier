@@ -43,6 +43,7 @@ function element() {
 
 function supplierListsHarness(api) {
   const elements = new Map();
+  const toasts = [];
   const getElement = (selector) => {
     if (!elements.has(selector)) elements.set(selector, element());
     return elements.get(selector);
@@ -63,7 +64,7 @@ function supplierListsHarness(api) {
       formatDate(value) { return String(value ?? ""); },
       formatMoney(value) { return String(value ?? ""); },
       statusBadge(value) { return String(value ?? ""); },
-      toast() {},
+      toast(...args) { toasts.push(args); },
     },
     setTimeout,
     URLSearchParams,
@@ -77,6 +78,7 @@ function supplierListsHarness(api) {
   return {
     elements,
     evaluate(expression) { return vm.runInContext(expression, context); },
+    toasts,
   };
 }
 
@@ -289,6 +291,48 @@ test("an old offer-brand route load cannot restore an obsolete filter", async ()
   assert.equal(
     requests.filter((requestPath) => requestPath.startsWith("/api/offers?")).length,
     1,
+  );
+});
+
+
+test("a rejected old offer-brand route load is silent after brand B loads", async () => {
+  const oldBrandRequest = deferred();
+  const requests = [];
+  const harness = supplierListsHarness((requestPath) => {
+    requests.push(requestPath);
+    const url = new URL(requestPath, "https://supplier.test");
+    if (url.pathname === "/api/offers/brands") return oldBrandRequest.promise;
+    const brand = url.searchParams.get("brand") || "A";
+    return Promise.resolve(rows(`Offer brand ${brand}`, 1));
+  });
+  const brandSelect = harness.evaluate('document.querySelector("#offers-brand")');
+  brandSelect.value = "A";
+
+  const oldRouteLoad = harness.evaluate('renderRoute("offers")');
+  brandSelect.value = "B";
+  await harness.evaluate('loadOffers(null, "B")');
+  oldBrandRequest.reject(new Error("stale brand A failure"));
+
+  await assert.doesNotReject(oldRouteLoad);
+  assert.equal(brandSelect.value, "B");
+  assert.equal(harness.evaluate("state.offers[0].name"), "Offer brand B 1");
+  assert.equal(
+    requests.filter((requestPath) => requestPath.startsWith("/api/offers?")).length,
+    1,
+  );
+  assert.deepEqual(harness.toasts, []);
+});
+
+
+test("a rejected current offer-brand request still rejects", async () => {
+  const harness = supplierListsHarness(async (requestPath) => {
+    if (requestPath === "/api/offers/brands") throw new Error("current brand failure");
+    return [];
+  });
+
+  await assert.rejects(
+    harness.evaluate("loadOfferBrands()"),
+    /current brand failure/,
   );
 });
 
