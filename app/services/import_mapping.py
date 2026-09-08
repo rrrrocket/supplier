@@ -31,6 +31,13 @@ class WorkbookFileError(ValueError):
     """Expected malformed or encrypted workbook input."""
 
 
+@dataclass
+class WorkbookBudget:
+    """Actual worksheet dimensions consumed during one workbook operation."""
+
+    dimension_cells: int = 0
+
+
 FIELD_DEFINITIONS: dict[str, dict[str, Any]] = {
     "product_name": {
         "label": "商品名称",
@@ -383,6 +390,41 @@ def _validate_workbook_dimensions(
             raise ValueError("工作簿单元格规模超过安全限制")
 
 
+def _prepare_xlsx_worksheets(workbook) -> list[Any]:
+    sheets = list(workbook.worksheets)
+    if len(sheets) > MAX_WORKBOOK_SHEETS:
+        raise ValueError("工作表数量超过安全限制")
+    for sheet in sheets:
+        # Read-only openpyxl trusts the optional XML <dimension> declaration.
+        # It is untrusted input and may be missing or deliberately understated.
+        sheet.reset_dimensions()
+    return sheets
+
+
+def _bounded_workbook_rows(
+    rows: Iterable[Iterable[Any]],
+    *,
+    name: str,
+    budget: WorkbookBudget,
+) -> Iterable[list[Any]]:
+    row_count = 0
+    max_columns = 0
+    accounted_cells = 0
+    for raw_row in rows:
+        row = list(raw_row)
+        row_count += 1
+        max_columns = max(max_columns, len(row))
+        if row_count > MAX_WORKBOOK_ROWS or max_columns > MAX_WORKBOOK_COLUMNS:
+            raise ValueError(f"工作表行列规模超过安全限制：{name}")
+
+        dimension_cells = row_count * max_columns
+        budget.dimension_cells += dimension_cells - accounted_cells
+        accounted_cells = dimension_cells
+        if budget.dimension_cells > MAX_WORKBOOK_CELLS:
+            raise ValueError("工作簿单元格规模超过安全限制")
+        yield row
+
+
 def _load_xlsx_workbook(raw: bytes, *, data_only: bool):
     from openpyxl import load_workbook
 
@@ -431,10 +473,11 @@ def _load_xlsx_workbook(raw: bytes, *, data_only: bool):
 
 def _load_xls_workbook(raw: bytes):
     import xlrd
+    from xlrd.compdoc import CompDocError
 
     try:
         return xlrd.open_workbook(file_contents=raw)
-    except (xlrd.biffh.XLRDError, EOFError, OSError) as exc:
+    except (xlrd.biffh.XLRDError, CompDocError, EOFError, OSError) as exc:
         raise WorkbookFileError(WORKBOOK_PARSE_ERROR) from exc
 
 
@@ -547,18 +590,20 @@ def inspect_excel_workbook(raw: bytes, filename: str) -> WorkbookInspection:
     try:
         if extension == ".xlsx":
             workbook = _load_xlsx_workbook(raw, data_only=True)
-            _validate_workbook_dimensions(
-                (sheet.title, sheet.max_row, sheet.max_column)
-                for sheet in workbook.worksheets
-            )
+            workbook_sheets = _prepare_xlsx_worksheets(workbook)
+            budget = WorkbookBudget()
             active_sheet = workbook.active.title
             sheets = [
                 _inspect_workbook_sheet(
-                    sheet.iter_rows(values_only=True),
+                    _bounded_workbook_rows(
+                        sheet.iter_rows(values_only=True),
+                        name=sheet.title,
+                        budget=budget,
+                    ),
                     name=sheet.title,
                     index=index,
                 )
-                for index, sheet in enumerate(workbook.worksheets)
+                for index, sheet in enumerate(workbook_sheets)
             ]
         elif extension == ".xls":
             workbook = _load_xls_workbook(raw)
@@ -608,7 +653,7 @@ def inspect_excel_workbook(raw: bytes, filename: str) -> WorkbookInspection:
 def _validate_sheet_configs(
     configs: list[SheetImportConfig],
     sheet_names: list[str],
-    sheet_dimensions: dict[str, tuple[int, int]],
+    sheet_dimensions: dict[str, tuple[int, int]] | None,
 ) -> dict[str, dict[str, int]]:
     seen: set[str] = set()
     column_indexes: dict[str, dict[str, int]] = {}
@@ -619,11 +664,13 @@ def _validate_sheet_configs(
         if config.sheet_name not in sheet_names:
             raise ValueError(f"工作表不存在：{config.sheet_name}")
 
-        row_count, column_count = sheet_dimensions[config.sheet_name]
-        if config.header_row < 1 or config.header_row > row_count:
-            raise ValueError(
-                f"工作表 {config.sheet_name} 不存在第 {config.header_row} 行表头"
-            )
+        column_count = None
+        if sheet_dimensions is not None:
+            row_count, column_count = sheet_dimensions[config.sheet_name]
+            if config.header_row < 1 or config.header_row > row_count:
+                raise ValueError(
+                    f"工作表 {config.sheet_name} 不存在第 {config.header_row} 行表头"
+                )
 
         indexes: dict[str, int] = {}
         for field, source in config.mapping.items():
@@ -634,7 +681,7 @@ def _validate_sheet_configs(
                     f"工作表 {config.sheet_name} 的字段映射引用了无效列：{source}"
                 )
             column_index = column_index_from_string(source)
-            if column_index > column_count:
+            if column_count is not None and column_index > column_count:
                 raise ValueError(
                     f"工作表 {config.sheet_name} 的字段映射引用了无效列：{source}"
                 )
@@ -669,15 +716,9 @@ def _parse_excel_sheets(
     if extension == ".xlsx":
         workbook = _load_xlsx_workbook(raw, data_only=True)
         sheet_names = workbook.sheetnames
-        _validate_workbook_dimensions(
-            (sheet.title, sheet.max_row, sheet.max_column)
-            for sheet in workbook.worksheets
-        )
-        sheet_dimensions = {
-            name: (workbook[name].max_row, workbook[name].max_column)
-            for name in {config.sheet_name for config in configs}
-            if name in sheet_names
-        }
+        _prepare_xlsx_worksheets(workbook)
+        sheet_dimensions = None
+        workbook_budget = WorkbookBudget()
     elif extension == ".xls":
         workbook = _load_xls_workbook(raw)
         sheet_names = workbook.sheet_names()
@@ -692,6 +733,7 @@ def _parse_excel_sheets(
             for name in {config.sheet_name for config in configs}
             if name in sheet_names
         }
+        workbook_budget = None
     else:
         raise ValueError("仅支持 XLSX 和 XLS 工作簿")
 
@@ -702,18 +744,31 @@ def _parse_excel_sheets(
         if extension == ".xlsx":
             sheet = workbook[config.sheet_name]
             rows = enumerate(
-                sheet.iter_rows(min_row=config.header_row + 1, values_only=True),
-                start=config.header_row + 1,
+                _bounded_workbook_rows(
+                    sheet.iter_rows(values_only=True),
+                    name=config.sheet_name,
+                    budget=workbook_budget,
+                ),
+                start=1,
             )
+            header_seen = False
+            observed_column_count = 0
         else:
             sheet = workbook.sheet_by_name(config.sheet_name)
             rows = (
                 (row_index + 1, sheet.row_values(row_index))
                 for row_index in range(config.header_row, sheet.nrows)
             )
+            header_seen = True
+            observed_column_count = sheet.ncols
 
         for source_row, raw_row in rows:
             row = list(raw_row)
+            observed_column_count = max(observed_column_count, len(row))
+            if source_row == config.header_row:
+                header_seen = True
+            if source_row <= config.header_row:
+                continue
             if not any(_cell_text(value) for value in row):
                 continue
             sourced_rows.append(
@@ -730,6 +785,16 @@ def _parse_excel_sheets(
             if len(sourced_rows) > MAX_IMPORT_ROWS:
                 raise ValueError(
                     f"单次最多导入 {MAX_IMPORT_ROWS} 行，请拆分文件后重试"
+                )
+        if not header_seen:
+            raise ValueError(
+                f"工作表 {config.sheet_name} 不存在第 {config.header_row} 行表头"
+            )
+        for field, column_index in column_indexes[config.sheet_name].items():
+            if column_index >= observed_column_count:
+                source = config.mapping[field]
+                raise ValueError(
+                    f"工作表 {config.sheet_name} 的字段映射引用了无效列：{source}"
                 )
     return sourced_rows
 
@@ -754,15 +819,19 @@ def parse_excel_sheets(
 
 def _read_xlsx(raw: bytes, description: str) -> ParsedTable:
     workbook = _load_xlsx_workbook(raw, data_only=True)
-    _validate_workbook_dimensions(
-        (sheet.title, sheet.max_row, sheet.max_column)
-        for sheet in workbook.worksheets
-    )
+    workbook_sheets = _prepare_xlsx_worksheets(workbook)
+    budget = WorkbookBudget()
     preferred = _preferred_sheet_name(workbook.sheetnames, description)
-    sheets = [workbook[preferred]] if preferred else list(workbook.worksheets)
+    sheets = [workbook[preferred]] if preferred else workbook_sheets
     candidates: list[tuple[float, ParsedTable]] = []
     for sheet in sheets:
-        matrix = [list(row) for row in sheet.iter_rows(values_only=True)]
+        matrix = list(
+            _bounded_workbook_rows(
+                sheet.iter_rows(values_only=True),
+                name=sheet.title,
+                budget=budget,
+            )
+        )
         try:
             table = _build_table(matrix, description, sheet.title)
         except ValueError:

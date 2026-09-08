@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from io import BytesIO
 from uuid import uuid4
@@ -14,6 +15,8 @@ from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
 
 import app.services.import_mapping as import_mapping
+import app.api.routes.imports as import_routes
+from app.api.routes.imports import MAX_IMPORT_FORM_PART_SIZE
 from tests.conftest import SUPPLIER_EMAIL, SUPPLIER_PASSWORD
 
 
@@ -75,6 +78,11 @@ def xlsx_with_encrypted_entry_flag() -> bytes:
             payload[offset : offset + 2] = flags.to_bytes(2, "little")
             position += len(signature)
     return bytes(payload)
+
+
+def truncated_ole_xls_content() -> bytes:
+    """Compound-document signature followed by an intentionally truncated header."""
+    return bytes.fromhex("d0cf11e0a1b11ae1") + (b"\x00" * 56)
 
 
 def highly_expanded_zip_content() -> bytes:
@@ -243,6 +251,7 @@ def test_multi_sheet_preview_allows_distinct_skus(
     [
         ("broken.xlsx", b"not a zip workbook"),
         ("broken.xls", b"not a biff workbook"),
+        ("broken-ole.xls", truncated_ole_xls_content()),
         ("mismatch.xlsx", two_sheet_xls_content()),
         ("mismatch.xls", two_sheet_workbook_content()),
         ("encrypted.xlsx", xlsx_with_encrypted_entry_flag()),
@@ -269,6 +278,7 @@ def test_workbook_inspection_rejects_bad_or_mismatched_content_safely(
     [
         ("broken.xlsx", b"not a zip workbook"),
         ("broken.xls", b"not a biff workbook"),
+        ("broken-ole.xls", truncated_ole_xls_content()),
         ("mismatch.xlsx", two_sheet_xls_content()),
         ("mismatch.xls", two_sheet_workbook_content()),
         ("encrypted.xlsx", xlsx_with_encrypted_entry_flag()),
@@ -903,28 +913,78 @@ def _invalid_flat_rows(count: int, *, excluded_index: int | None = None) -> list
     ]
 
 
+def _nested_boundary_rows(
+    count: int,
+    *,
+    excluded_index: int | None = None,
+) -> list[dict[str, object]]:
+    rows = []
+    for index in range(count):
+        rows.append(
+            {
+                "source_sheet": "Sheet1",
+                "source_row": index + 2,
+                "included": index != excluded_index,
+                "values": {
+                    "product_name": "边界商品" if index == 0 else "",
+                    "brand": "BOUNDARY",
+                    "model": "M1",
+                    "category": "测试类目",
+                    "supplier_sku": f"BOUNDARY-{index}",
+                    "price": "1.00" if index == 0 else "",
+                    "currency": "CNY",
+                    "moq": "1",
+                    "stock_qty": "0",
+                    "lead_time_days": "3",
+                    "fulfillment_mode": "PURCHASE",
+                    "status": "ACTIVE",
+                },
+            }
+        )
+    return rows
+
+
+def _boundary_import_request(
+    authenticated_client: TestClient,
+    count: int,
+    *,
+    excluded_index: int | None = None,
+):
+    return authenticated_client.post(
+        "/api/imports/product-offers",
+        data={
+            "rows_json": json.dumps(
+                _nested_boundary_rows(count, excluded_index=excluded_index),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            "sheet_configs_json": json.dumps([multi_sheet_configs()[0]]),
+        },
+        files={
+            "file": (
+                "boundary.xlsx",
+                BytesIO(multi_sheet_offer_workbook_content("UNIQUE-002")),
+                XLSX_MIME,
+            )
+        },
+    )
+
+
 def test_final_import_accepts_exactly_ten_thousand_included_rows(
     authenticated_client: TestClient,
 ) -> None:
-    response = authenticated_client.post(
-        "/api/imports/product-offers",
-        data={"rows_json": json.dumps(_invalid_flat_rows(10_000), ensure_ascii=False)},
-        files={"file": ("boundary.csv", BytesIO(b"source"), "text/csv")},
-    )
+    response = _boundary_import_request(authenticated_client, 10_000)
 
     assert response.status_code == 201
     assert response.json()["total_rows"] == 10_000
-    assert response.json()["status"] == "FAILED"
+    assert response.json()["success_rows"] == 1
+    assert response.json()["status"] == "PARTIAL"
 
 
 def test_final_import_rejects_ten_thousand_and_one_included_rows(
     authenticated_client: TestClient,
 ) -> None:
-    response = authenticated_client.post(
-        "/api/imports/product-offers",
-        data={"rows_json": json.dumps(_invalid_flat_rows(10_001), ensure_ascii=False)},
-        files={"file": ("boundary.csv", BytesIO(b"source"), "text/csv")},
-    )
+    response = _boundary_import_request(authenticated_client, 10_001)
 
     assert response.status_code == 400
     assert response.json()["detail"] == "单次最多导入 10000 行"
@@ -933,19 +993,75 @@ def test_final_import_rejects_ten_thousand_and_one_included_rows(
 def test_final_import_excluded_row_does_not_count_toward_ten_thousand_limit(
     authenticated_client: TestClient,
 ) -> None:
-    response = authenticated_client.post(
-        "/api/imports/product-offers",
-        data={
-            "rows_json": json.dumps(
-                _invalid_flat_rows(10_001, excluded_index=0),
-                ensure_ascii=False,
-            )
-        },
-        files={"file": ("boundary.csv", BytesIO(b"source"), "text/csv")},
+    response = _boundary_import_request(
+        authenticated_client,
+        10_001,
+        excluded_index=10_000,
     )
 
     assert response.status_code == 201
     assert response.json()["total_rows"] == 10_000
+    assert response.json()["success_rows"] == 1
+
+
+def test_final_import_rejects_oversized_rows_form_part(
+    authenticated_client: TestClient,
+) -> None:
+    response = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={"rows_json": "x" * (MAX_IMPORT_FORM_PART_SIZE + 1)},
+        files={"file": ("boundary.csv", BytesIO(b"source"), "text/csv")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Part exceeded maximum size of 8192KB."
+
+
+def test_final_import_rejects_total_multipart_request_above_application_limit(
+    authenticated_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        import_routes,
+        "MAX_FINAL_IMPORT_REQUEST_SIZE",
+        1_024,
+        raising=False,
+    )
+    response = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={"rows_json": "[]" + (" " * 600)},
+        files={"file": ("boundary.csv", BytesIO(b"x" * 600), "text/csv")},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "导入请求不能超过 20MB"
+
+
+def test_upload_reader_uses_bounded_chunks_before_rejecting_large_file() -> None:
+    class OversizedUpload:
+        filename = "oversized.xlsx"
+
+        def __init__(self) -> None:
+            self.remaining = import_routes.MAX_FILE_SIZE + 1
+            self.read_sizes: list[int] = []
+
+        async def read(self, size: int = -1) -> bytes:
+            self.read_sizes.append(size)
+            if size < 0:
+                raise AssertionError("upload reader requested the entire file")
+            count = min(size, self.remaining)
+            self.remaining -= count
+            return b"x" * count
+
+    upload = OversizedUpload()
+
+    with pytest.raises(import_routes.HTTPException) as error:
+        asyncio.run(import_routes._read_upload(upload))
+
+    assert error.value.status_code == 413
+    assert error.value.detail == "文件不能超过 10MB"
+    assert upload.read_sizes
+    assert all(0 < size <= 1024 * 1024 for size in upload.read_sizes)
 
 
 def test_legacy_flat_rows_default_source_coordinates(

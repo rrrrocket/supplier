@@ -1,5 +1,6 @@
 from hashlib import sha256
 from io import BytesIO
+import re
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
@@ -97,6 +98,38 @@ def workbook_bytes_with_row_counts(*row_counts: int) -> bytes:
             sheet.append([f"商品-{sheet_index}-{row_index}"])
     output = BytesIO()
     workbook.save(output)
+    return output.getvalue()
+
+
+def workbook_bytes_with_rewritten_dimension(
+    replacement: bytes,
+    *,
+    column_count: int = 1,
+) -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Sheet1"
+    sheet.append(["名称", *(f"列-{index}" for index in range(2, column_count + 1))])
+    for row_index in range(1, 11):
+        sheet.append(
+            [f"商品-{row_index}", *("值" for _ in range(2, column_count + 1))]
+        )
+    source = BytesIO()
+    workbook.save(source)
+
+    output = BytesIO()
+    with ZipFile(BytesIO(source.getvalue())) as incoming, ZipFile(output, "w") as outgoing:
+        for info in incoming.infolist():
+            payload = incoming.read(info.filename)
+            if info.filename == "xl/worksheets/sheet1.xml":
+                payload, replacements = re.subn(
+                    rb'<dimension ref="[^"]+"\s*/>',
+                    replacement,
+                    payload,
+                    count=1,
+                )
+                assert replacements == 1
+            outgoing.writestr(info, payload)
     return output.getvalue()
 
 
@@ -322,3 +355,47 @@ def test_workbook_inspection_does_not_hide_programming_errors(monkeypatch):
 
     with pytest.raises(RuntimeError, match="^implementation defect$"):
         inspect_excel_workbook(b"source", "supplier.xlsx")
+
+
+@pytest.mark.parametrize(
+    "dimension",
+    [b'<dimension ref="A1"/>', b""],
+    ids=["understated", "missing"],
+)
+def test_xlsx_dimension_metadata_cannot_truncate_actual_rows(dimension: bytes):
+    raw = workbook_bytes_with_rewritten_dimension(dimension)
+
+    inspection = inspect_excel_workbook(raw, "supplier.xlsx")
+    rows = parse_excel_sheets(
+        raw,
+        "supplier.xlsx",
+        [SheetImportConfig("Sheet1", 1, {"product_name": "A"}, {})],
+    )
+
+    assert inspection.sheets[0].estimated_rows == 10
+    assert len(rows) == 10
+    assert rows[-1].source_row == 11
+
+
+@pytest.mark.parametrize(
+    ("limit_name", "limit_value", "message"),
+    [
+        ("MAX_WORKBOOK_ROWS", 5, "工作表行列规模超过安全限制：Sheet1"),
+        ("MAX_WORKBOOK_COLUMNS", 1, "工作表行列规模超过安全限制：Sheet1"),
+        ("MAX_WORKBOOK_CELLS", 5, "工作簿单元格规模超过安全限制"),
+    ],
+)
+def test_xlsx_runtime_budget_ignores_understated_dimension(
+    monkeypatch,
+    limit_name: str,
+    limit_value: int,
+    message: str,
+):
+    monkeypatch.setattr(import_mapping, limit_name, limit_value)
+    raw = workbook_bytes_with_rewritten_dimension(
+        b'<dimension ref="A1"/>',
+        column_count=2 if limit_name == "MAX_WORKBOOK_COLUMNS" else 1,
+    )
+
+    with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
+        inspect_excel_workbook(raw, "supplier.xlsx")

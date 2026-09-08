@@ -6,8 +6,10 @@ from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
+from starlette.datastructures import UploadFile as StarletteUploadFile
+from starlette.formparsers import MultiPartException, MultiPartParser
 
 from app.api.deps import DbSession, SupplierUser
 from app.models.entities import (
@@ -36,6 +38,10 @@ from app.services.import_mapping import (
 
 router = APIRouter(prefix="/imports", tags=["数据导入"])
 MAX_FILE_SIZE = 10 * 1024 * 1024
+MAX_IMPORT_FORM_PART_SIZE = 8 * 1024 * 1024
+MAX_FINAL_IMPORT_REQUEST_SIZE = 20 * 1024 * 1024
+IMPORT_REQUEST_SIZE_ERROR = "导入请求不能超过 20MB"
+UPLOAD_READ_CHUNK_SIZE = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -157,10 +163,72 @@ async def _read_upload(
         )
     if extension not in {"csv", "tsv", "txt", "xlsx", "xls", "pdf"}:
         raise HTTPException(status_code=400, detail="支持 CSV、XLSX、XLS 和 PDF 格式")
-    raw = await file.read()
-    if len(raw) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="文件不能超过 10MB")
-    return file.filename, raw
+    raw = bytearray()
+    while True:
+        remaining_with_guard = MAX_FILE_SIZE - len(raw) + 1
+        chunk = await file.read(min(UPLOAD_READ_CHUNK_SIZE, remaining_with_guard))
+        if not chunk:
+            break
+        raw.extend(chunk)
+        if len(raw) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail="文件不能超过 10MB")
+    return file.filename, bytes(raw)
+
+
+def _import_form_text(
+    form,
+    field_name: str,
+    *,
+    max_length: int | None = None,
+) -> str:
+    value = form.get(field_name, "")
+    if not isinstance(value, str):
+        raise HTTPException(status_code=400, detail=f"{field_name}格式不正确")
+    if max_length is not None and len(value) > max_length:
+        raise HTTPException(status_code=400, detail=f"{field_name}内容过长")
+    return value
+
+
+async def _read_final_import_form(
+    request: Request,
+) -> tuple[str, bytes, str, str, str, str, str]:
+    async def bounded_stream():
+        total_bytes = 0
+        async for chunk in request.stream():
+            total_bytes += len(chunk)
+            if total_bytes > MAX_FINAL_IMPORT_REQUEST_SIZE:
+                raise MultiPartException(IMPORT_REQUEST_SIZE_ERROR)
+            yield chunk
+
+    parser = MultiPartParser(
+        request.headers,
+        bounded_stream(),
+        max_files=1,
+        max_fields=5,
+        max_part_size=MAX_IMPORT_FORM_PART_SIZE,
+    )
+    try:
+        form = await parser.parse()
+    except MultiPartException as exc:
+        status_code = 413 if exc.message == IMPORT_REQUEST_SIZE_ERROR else 400
+        raise HTTPException(status_code=status_code, detail=exc.message) from exc
+
+    try:
+        upload = form.get("file")
+        if not isinstance(upload, StarletteUploadFile):
+            raise HTTPException(status_code=400, detail="请选择表格文件")
+        filename, raw = await _read_upload(upload)
+        return (
+            filename,
+            raw,
+            _import_form_text(form, "description", max_length=2_000),
+            _import_form_text(form, "mapping_json"),
+            _import_form_text(form, "defaults_json"),
+            _import_form_text(form, "rows_json"),
+            _import_form_text(form, "sheet_configs_json"),
+        )
+    finally:
+        await form.close()
 
 
 def _json_object(value: str, field_name: str) -> dict[str, str]:
@@ -507,16 +575,19 @@ async def preview_product_offers(
 
 @router.post("/product-offers", status_code=status.HTTP_201_CREATED)
 async def import_product_offers(
+    request: Request,
     db: DbSession,
     user: SupplierUser,
-    file: UploadFile = File(...),
-    description: str = Form(default="", max_length=2000),
-    mapping_json: str = Form(default=""),
-    defaults_json: str = Form(default=""),
-    rows_json: str = Form(default=""),
-    sheet_configs_json: str = Form(default=""),
 ) -> dict[str, Any]:
-    filename, raw = await _read_upload(file)
+    (
+        filename,
+        raw,
+        description,
+        mapping_json,
+        defaults_json,
+        rows_json,
+        sheet_configs_json,
+    ) = await _read_final_import_form(request)
     job = ImportJob(
         organization_id=user.organization_id,
         file_name=filename,
