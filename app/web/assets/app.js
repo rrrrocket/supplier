@@ -674,8 +674,17 @@ function filteredImportRows() {
   return (workbook?.rows || []).filter((row) => {
     if (workbook.sheetFilter && row.source_sheet !== workbook.sheetFilter) return false;
     if (workbook.conflictOnly && !row.conflict_group) return false;
+    if (workbook.correctionOnly && !ImportWorkbook.needsCorrection(row)) return false;
     return true;
   });
+}
+
+function renderImportWarnings(workbook, correctionCount) {
+  const warnings = [...(workbook.previewWarnings || [])];
+  if (correctionCount) warnings.unshift(`检测到 ${correctionCount} 行数据需要修正`);
+  document.querySelector("#import-preview-warnings").innerHTML = warnings.length
+    ? `<div class="import-warning">${warnings.map(Matrix.escapeHtml).join("；")}</div>`
+    : "";
 }
 
 function updateImportControls() {
@@ -685,8 +694,16 @@ function updateImportControls() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / workbook.pageSize));
   workbook.page = Math.min(Math.max(1, workbook.page), totalPages);
   const included = workbook.rows.filter((row) => row.included);
+  const corrections = ImportWorkbook.correctionCount(workbook.rows);
   const conflicts = new Set(included.map((row) => row.conflict_group).filter(Boolean));
-  document.querySelector("#import-preview-count").textContent = `目标列表 ${workbook.rows.length} 行 · 保留 ${included.length} 行 · 冲突 ${conflicts.size} 组`;
+  const currentRows = new Set(workbook.rows);
+  const canRestoreCorrections = (workbook.lastExcludedCorrections || []).some(
+    (row) => currentRows.has(row) && !row.included,
+  );
+  document.querySelector("#import-preview-count").textContent = `目标列表 ${workbook.rows.length} 行 · 保留 ${included.length} 行 · 需修正 ${corrections} 行 · 冲突 ${conflicts.size} 组`;
+  renderImportWarnings(workbook, corrections);
+  document.querySelector("#exclude-correction-rows").disabled = corrections === 0;
+  document.querySelector("#restore-correction-rows").classList.toggle("hidden", !canRestoreCorrections);
   document.querySelector("#confirm-import").disabled = !ImportWorkbook.canImport(workbook.rows);
   document.querySelector("#import-prev-page").disabled = workbook.page <= 1;
   document.querySelector("#import-next-page").disabled = workbook.page >= totalPages;
@@ -748,6 +765,8 @@ function renderImportPreview(result, multiSheet = false) {
       pageSize: 50,
       sheetFilter: "",
       conflictOnly: false,
+      correctionOnly: false,
+      lastExcludedCorrections: [],
     };
   }
   const workbook = state.importWorkbook;
@@ -763,15 +782,16 @@ function renderImportPreview(result, multiSheet = false) {
   workbook.page = 1;
   workbook.sheetFilter = "";
   workbook.conflictOnly = false;
+  workbook.correctionOnly = false;
+  workbook.lastExcludedCorrections = [];
+  workbook.previewWarnings = (result.warnings || []).filter(
+    (warning) => !/^检测到 \d+ 行数据需要修正$/.test(warning),
+  );
 
   const sheet = result.sheet_name ? ` · 工作表「${result.sheet_name}」` : "";
   document.querySelector("#import-preview-summary").textContent = multiSheet
     ? `${result.file_name} · 已合并 ${workbook.selectedSheets.length} 个工作表 · 共 ${result.total_rows} 行`
     : `${result.file_name}${sheet} · 第 ${result.header_row} 行为表头 · 共 ${result.total_rows} 行`;
-  document.querySelector("#import-preview-warnings").innerHTML = result.warnings.length
-    ? `<div class="import-warning">${result.warnings.map(Matrix.escapeHtml).join("；")}</div>`
-    : "";
-
   document.querySelector("#import-legacy-mapping").classList.toggle("hidden", multiSheet);
   document.querySelector("#refresh-import-preview").classList.toggle("hidden", multiSheet);
   document.querySelector("#add-import-row").classList.toggle("hidden", multiSheet);
@@ -799,6 +819,7 @@ function renderImportPreview(result, multiSheet = false) {
     ? workbook.selectedSheets.map((name) => `<option value="${Matrix.escapeHtml(name)}">${Matrix.escapeHtml(name)}</option>`).join("")
     : "");
   document.querySelector("#import-conflict-only").checked = false;
+  document.querySelector("#import-correction-only").checked = false;
   renderImportRows();
   document.querySelector("#import-preview").classList.remove("hidden");
 }
@@ -1032,7 +1053,10 @@ function bindEvents() {
     if (!row) return;
     row.errors = [];
     ImportWorkbook.updateRow(state.importWorkbook, rowIndex, event.target.dataset.rowField, event.target.value.trim());
-    if (state.importWorkbook.conflictOnly && event.target.dataset.rowField === "supplier_sku") {
+    if (
+      state.importWorkbook.correctionOnly
+      || (state.importWorkbook.conflictOnly && event.target.dataset.rowField === "supplier_sku")
+    ) {
       renderImportRows();
     } else {
       refreshRenderedRowStates();
@@ -1047,6 +1071,24 @@ function bindEvents() {
   document.querySelector("#import-conflict-only").addEventListener("change", (event) => {
     if (!state.importWorkbook) return;
     state.importWorkbook.conflictOnly = event.target.checked;
+    state.importWorkbook.page = 1;
+    renderImportRows();
+  });
+  document.querySelector("#import-correction-only").addEventListener("change", (event) => {
+    if (!state.importWorkbook) return;
+    state.importWorkbook.correctionOnly = event.target.checked;
+    state.importWorkbook.page = 1;
+    renderImportRows();
+  });
+  document.querySelector("#exclude-correction-rows").addEventListener("click", () => {
+    if (!state.importWorkbook) return;
+    ImportWorkbook.excludeCorrectionRows(state.importWorkbook);
+    state.importWorkbook.page = 1;
+    renderImportRows();
+  });
+  document.querySelector("#restore-correction-rows").addEventListener("click", () => {
+    if (!state.importWorkbook) return;
+    ImportWorkbook.restoreExcludedCorrections(state.importWorkbook);
     state.importWorkbook.page = 1;
     renderImportRows();
   });

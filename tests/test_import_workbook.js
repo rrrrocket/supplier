@@ -297,6 +297,22 @@ test("pagination retains off-page edits", () => {
 });
 
 
+test("correctionCount ignores excluded rows and changes when they are restored", () => {
+  const ImportWorkbook = loadImportWorkbook();
+  const rows = [
+    { included: true, errors: ["商品名称不能为空"], conflict_group: null },
+    { included: false, errors: ["价格不能为空"], conflict_group: null },
+    { included: true, errors: [], conflict_group: "DUP" },
+  ];
+
+  assert.equal(ImportWorkbook.correctionCount(rows), 1);
+  rows[0].included = false;
+  assert.equal(ImportWorkbook.correctionCount(rows), 0);
+  rows[0].included = true;
+  assert.equal(ImportWorkbook.correctionCount(rows), 1);
+});
+
+
 test("pageRows applies sheet and conflict filters before slicing fifty rows", () => {
   const ImportWorkbook = loadImportWorkbook();
   const rows = Array.from({ length: 75 }, (_, index) => ({
@@ -322,6 +338,28 @@ test("pageRows applies sheet and conflict filters before slicing fifty rows", ()
   assert.equal(firstPage.every((row) => row.conflict_group === "DUP"), true);
   assert.deepEqual(firstPage.map((row) => state.rows.indexOf(row)).slice(0, 3), [0, 2, 4]);
   assert.deepEqual(secondPage, []);
+});
+
+
+test("pageRows combines correction, sheet, and conflict filters", () => {
+  const ImportWorkbook = loadImportWorkbook();
+  const rows = [
+    { source_sheet: "Sheet1", included: true, conflict_group: "DUP", errors: ["价格不能为空"] },
+    { source_sheet: "Sheet1", included: true, conflict_group: null, errors: ["类目不能为空"] },
+    { source_sheet: "Sheet1", included: false, conflict_group: null, errors: ["商品名称不能为空"] },
+    { source_sheet: "Sheet2", included: true, conflict_group: "DUP", errors: ["价格不能为空"] },
+    { source_sheet: "Sheet1", included: true, conflict_group: "DUP", errors: [] },
+  ];
+  const state = {
+    rows,
+    page: 1,
+    pageSize: 50,
+    sheetFilter: "Sheet1",
+    conflictOnly: true,
+    correctionOnly: true,
+  };
+
+  assert.deepEqual(ImportWorkbook.pageRows(state), [rows[0]]);
 });
 
 
@@ -451,6 +489,137 @@ test("editing the last duplicate removes rows from conflict-only view immediatel
 
   assert.equal(app.evaluate("state.importWorkbook.rows.every((row) => !row.conflict_group)"), true);
   assert.equal(app.element("#import-preview-tbody").innerHTML, "");
+});
+
+
+test("excluding a correction row updates its count and correction-only results", () => {
+  const app = loadImportApp(() => Promise.reject(new Error("API should not be called")));
+  app.context.inspection = inspection("corrections.xlsx");
+  app.context.rows = [
+    {
+      source_sheet: "Sheet1",
+      source_row: 2,
+      included: true,
+      conflict_group: null,
+      values: { supplier_sku: "FIX-1" },
+      errors: ["价格不能为空"],
+    },
+    {
+      source_sheet: "Sheet1",
+      source_row: 3,
+      included: false,
+      conflict_group: null,
+      values: { supplier_sku: "FIX-2" },
+      errors: ["类目不能为空"],
+    },
+    {
+      source_sheet: "Sheet1",
+      source_row: 4,
+      included: true,
+      conflict_group: null,
+      values: {
+        product_name: "可导入商品",
+        category: "模型",
+        supplier_sku: "OK-1",
+        price: "10",
+      },
+      errors: [],
+    },
+  ];
+  app.context.result = {
+    file_name: "corrections.xlsx",
+    sheet_name: null,
+    header_row: null,
+    total_rows: 3,
+    headers: [],
+    mapping: [],
+    defaults: {},
+    warnings: ["检测到 2 行数据需要修正", "保留此提示"],
+    preview_rows: app.context.rows,
+  };
+  app.evaluate(`
+    state.importWorkbook = ImportWorkbook.createWorkbookState(inspection);
+    renderImportPreview(result, true);
+    state.importWorkbook.page = 2;
+    bindEvents();
+  `);
+
+  const correctionListener = app.element("#import-correction-only").listeners.get("change")[0];
+  correctionListener({ target: { checked: true } });
+
+  assert.equal(app.evaluate("state.importWorkbook.correctionOnly"), true);
+  assert.equal(app.evaluate("state.importWorkbook.page"), 1);
+  assert.match(app.element("#import-preview-count").textContent, /需修正 1 行/);
+  assert.match(app.element("#import-preview-warnings").innerHTML, /检测到 1 行数据需要修正/);
+  assert.match(app.element("#import-preview-warnings").innerHTML, /保留此提示/);
+  assert.match(app.element("#import-preview-tbody").innerHTML, /data-import-row="0"/);
+  assert.doesNotMatch(app.element("#import-preview-tbody").innerHTML, /data-import-row="1"/);
+  assert.doesNotMatch(app.element("#import-preview-tbody").innerHTML, /data-import-row="2"/);
+
+  const rowClickListener = app.element("#import-preview-tbody").listeners.get("click")[0];
+  rowClickListener({
+    target: {
+      closest: (selector) => selector === "[data-toggle-import-row]"
+        ? { dataset: { toggleImportRow: "0" } }
+        : null,
+    },
+  });
+
+  assert.equal(app.evaluate("state.importWorkbook.rows[0].included"), false);
+  assert.match(app.element("#import-preview-count").textContent, /需修正 0 行/);
+  assert.doesNotMatch(app.element("#import-preview-warnings").innerHTML, /行数据需要修正/);
+  assert.match(app.element("#import-preview-warnings").innerHTML, /保留此提示/);
+  assert.equal(app.element("#import-preview-tbody").innerHTML, "");
+});
+
+
+test("bulk correction exclusion can be restored without deleting rows", () => {
+  const app = loadImportApp(() => Promise.reject(new Error("API should not be called")));
+  app.context.inspection = inspection("bulk-corrections.xlsx");
+  app.context.result = {
+    file_name: "bulk-corrections.xlsx",
+    sheet_name: null,
+    header_row: null,
+    total_rows: 3,
+    headers: [],
+    mapping: [],
+    defaults: {},
+    warnings: ["检测到 2 行数据需要修正"],
+    preview_rows: [
+      { source_sheet: "Sheet1", source_row: 2, included: true, conflict_group: null, values: { supplier_sku: "FIX-1" }, errors: ["价格不能为空"] },
+      { source_sheet: "Sheet1", source_row: 3, included: true, conflict_group: null, values: { supplier_sku: "FIX-2" }, errors: ["类目不能为空"] },
+      { source_sheet: "Sheet1", source_row: 4, included: true, conflict_group: null, values: { product_name: "商品", category: "模型", supplier_sku: "OK-1", price: "10" }, errors: [] },
+    ],
+  };
+  app.evaluate(`
+    state.importWorkbook = ImportWorkbook.createWorkbookState(inspection);
+    renderImportPreview(result, true);
+    bindEvents();
+  `);
+
+  const excludeListener = app.element("#exclude-correction-rows").listeners.get("click")[0];
+  excludeListener();
+
+  assert.equal(app.evaluate("state.importWorkbook.rows.length"), 3);
+  assert.deepEqual(
+    app.evaluate("state.importWorkbook.rows.map((row) => row.included)"),
+    [false, false, true],
+  );
+  assert.match(app.element("#import-preview-count").textContent, /需修正 0 行/);
+  assert.doesNotMatch(app.element("#import-preview-warnings").innerHTML, /行数据需要修正/);
+  assert.equal(app.element("#exclude-correction-rows").disabled, true);
+  assert.equal(app.element("#restore-correction-rows").classList.contains("hidden"), false);
+
+  const restoreListener = app.element("#restore-correction-rows").listeners.get("click")[0];
+  restoreListener();
+
+  assert.deepEqual(
+    app.evaluate("state.importWorkbook.rows.map((row) => row.included)"),
+    [true, true, true],
+  );
+  assert.match(app.element("#import-preview-count").textContent, /需修正 2 行/);
+  assert.match(app.element("#import-preview-warnings").innerHTML, /检测到 2 行数据需要修正/);
+  assert.equal(app.element("#restore-correction-rows").classList.contains("hidden"), true);
 });
 
 

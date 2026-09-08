@@ -7,6 +7,37 @@
     return String(row?.values?.supplier_sku || "").trim();
   }
 
+  function needsCorrection(row) {
+    return Boolean(row?.included && row.errors?.length);
+  }
+
+  function correctionCount(rows) {
+    return (rows || []).filter(needsCorrection).length;
+  }
+
+  function excludeCorrectionRows(state) {
+    const excluded = (state.rows || []).filter(needsCorrection);
+    excluded.forEach((row) => {
+      row.included = false;
+    });
+    state.lastExcludedCorrections = excluded;
+    resolveRows(state.rows || []);
+    return excluded.length;
+  }
+
+  function restoreExcludedCorrections(state) {
+    const currentRows = new Set(state.rows || []);
+    let restored = 0;
+    (state.lastExcludedCorrections || []).forEach((row) => {
+      if (!currentRows.has(row) || row.included) return;
+      row.included = true;
+      restored += 1;
+    });
+    state.lastExcludedCorrections = [];
+    resolveRows(state.rows || []);
+    return restored;
+  }
+
   function createWorkbookState(inspection) {
     const sheets = Array.isArray(inspection?.sheets)
       ? inspection.sheets.map((sheet) => ({ ...sheet }))
@@ -34,6 +65,8 @@
       pageSize: 50,
       sheetFilter: "",
       conflictOnly: false,
+      correctionOnly: false,
+      lastExcludedCorrections: [],
     };
   }
 
@@ -48,6 +81,7 @@
     }
     state.rows = [];
     state.page = 1;
+    state.lastExcludedCorrections = [];
     return state;
   }
 
@@ -77,6 +111,7 @@
     return (state.rows || []).filter((row) => {
       if (state.sheetFilter && row.source_sheet !== state.sheetFilter) return false;
       if (state.conflictOnly && !row.conflict_group) return false;
+      if (state.correctionOnly && !needsCorrection(row)) return false;
       return true;
     });
   }
@@ -107,6 +142,10 @@
     toggleSheet,
     updateRow,
     resolveRows,
+    needsCorrection,
+    correctionCount,
+    excludeCorrectionRows,
+    restoreExcludedCorrections,
     pageRows,
     canImport,
   };

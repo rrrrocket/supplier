@@ -121,7 +121,10 @@
               <div id="import-preview-controls" class="import-preview-controls">
                 <div id="import-preview-filters" class="import-preview-filters">
                   <label><span class="sr-only">按工作表筛选</span><select id="import-sheet-filter" class="select" aria-label="按工作表筛选"><option value="">全部工作表</option></select></label>
+                  <label class="checkbox-row"><input id="import-correction-only" type="checkbox"><span>只看需修正</span></label>
                   <label class="checkbox-row"><input id="import-conflict-only" type="checkbox"><span>只看冲突</span></label>
+                  <button id="exclude-correction-rows" class="btn btn-secondary btn-sm" type="button">排除全部需修正</button>
+                  <button id="restore-correction-rows" class="btn btn-secondary btn-sm hidden" type="button">恢复刚才排除</button>
                 </div>
                 <div class="import-pagination" aria-label="预览分页">
                   <button id="import-prev-page" class="btn btn-secondary btn-sm" type="button">上一页</button>
