@@ -5,19 +5,31 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import DbSession, SupplierUser
-from app.models.entities import Product, SupplierOffer
+from app.models.entities import (
+    Brand,
+    CatalogStatus,
+    Product,
+    SupplierBrandCooperation,
+    SupplierOffer,
+)
 from app.schemas.product import ProductCreate, ProductView
+from app.services.catalog import resolve_brand
 from app.services.events import record_event
 
 
 router = APIRouter(prefix="/products", tags=["商品主数据"])
 
 
-def product_view(product: Product, offer_count: int = 0) -> ProductView:
+def product_view(
+    product: Product,
+    brand: Brand | None,
+    offer_count: int = 0,
+) -> ProductView:
     return ProductView(
         id=product.id,
         name=product.name,
-        brand=product.brand,
+        brand_id=product.brand_id,
+        brand=brand.name if brand is not None else product.brand,
         model=product.model,
         category=product.category,
         description=product.description,
@@ -44,7 +56,8 @@ def list_products(
         .subquery()
     )
     stmt = (
-        select(Product, func.coalesce(offer_count.c.offer_count, 0))
+        select(Product, Brand, func.coalesce(offer_count.c.offer_count, 0))
+        .outerjoin(Brand, Brand.id == Product.brand_id)
         .outerjoin(offer_count, offer_count.c.product_id == Product.id)
         .where(Product.created_by_organization_id == user.organization_id)
         .order_by(Product.updated_at.desc())
@@ -64,7 +77,10 @@ def list_products(
         stmt = stmt.where(Product.status == product_status)
 
     rows = db.execute(stmt).all()
-    return [product_view(product, int(count)) for product, count in rows]
+    return [
+        product_view(product, brand, int(count))
+        for product, brand, count in rows
+    ]
 
 
 @router.post("", response_model=ProductView, status_code=status.HTTP_201_CREATED)
@@ -73,10 +89,25 @@ def create_product(
     db: DbSession,
     user: SupplierUser,
 ) -> ProductView:
+    brand = resolve_brand(db, payload.brand)
+    cooperation = db.scalar(
+        select(SupplierBrandCooperation).where(
+            SupplierBrandCooperation.supplier_id == user.organization_id,
+            SupplierBrandCooperation.brand_id == brand.id,
+            SupplierBrandCooperation.status == CatalogStatus.ACTIVE.value,
+        )
+    )
+    if cooperation is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="brand is not assigned to supplier",
+        )
+
     product = Product(
         created_by_organization_id=user.organization_id,
         name=payload.name.strip(),
-        brand=(payload.brand or "").strip() or None,
+        brand_id=brand.id,
+        brand=brand.name,
         model=(payload.model or "").strip() or None,
         category=payload.category.strip(),
         description=(payload.description or "").strip() or None,
@@ -105,7 +136,7 @@ def create_product(
     )
     db.commit()
     db.refresh(product)
-    return product_view(product)
+    return product_view(product, brand)
 
 
 @router.get("/{product_id}", response_model=ProductView)
@@ -124,4 +155,5 @@ def get_product(product_id: str, db: DbSession, user: SupplierUser) -> ProductVi
             SupplierOffer.product_id == product.id,
         )
     ) or 0
-    return product_view(product, int(count))
+    brand = db.get(Brand, product.brand_id) if product.brand_id is not None else None
+    return product_view(product, brand, int(count))

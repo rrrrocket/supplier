@@ -22,6 +22,7 @@ from app.models.entities import (
     SupplierOffer,
 )
 from app.services.events import record_event
+from app.services.catalog import ensure_supplier_sku, resolve_brand
 from app.services.import_mapping import (
     FIELD_DEFINITIONS,
     MAX_IMPORT_ROWS,
@@ -648,6 +649,7 @@ async def import_product_offers(
     success = 0
     for submitted in rows:
         row = submitted.values
+        row_transaction = db.begin_nested()
         try:
             row_errors = _validate_row(row)
             if row_errors:
@@ -657,13 +659,13 @@ async def import_product_offers(
             moq = max(1, _to_int(row["moq"], 1, "起订量"))
             stock_qty = _to_int(row["stock_qty"], 0, "库存")
             lead_time_days = _to_int(row["lead_time_days"], 3, "交期")
-            brand = row["brand"] or None
+            brand = resolve_brand(db, row["brand"])
             model = row["model"] or None
             product = db.scalar(
                 select(Product).where(
                     Product.created_by_organization_id == user.organization_id,
                     Product.name == row["product_name"],
-                    Product.brand == brand,
+                    Product.brand_id == brand.id,
                     Product.model == model,
                 )
             )
@@ -671,7 +673,8 @@ async def import_product_offers(
                 product = Product(
                     created_by_organization_id=user.organization_id,
                     name=row["product_name"],
-                    brand=brand,
+                    brand_id=brand.id,
+                    brand=brand.name,
                     model=model,
                     category=row["category"],
                     status=ProductStatus.ACTIVE.value,
@@ -679,17 +682,25 @@ async def import_product_offers(
                 db.add(product)
                 db.flush()
 
+            supplier_sku = ensure_supplier_sku(
+                db,
+                supplier_id=user.organization_id,
+                brand_id=brand.id,
+                product_id=product.id,
+                variant_id=None,
+                supplier_sku_code=row["supplier_sku"],
+            )
             offer = db.scalar(
                 select(SupplierOffer).where(
-                    SupplierOffer.organization_id == user.organization_id,
-                    SupplierOffer.supplier_sku == row["supplier_sku"],
+                    SupplierOffer.supplier_sku_id == supplier_sku.id,
                 )
             )
             if offer is None:
                 offer = SupplierOffer(
                     organization_id=user.organization_id,
                     product_id=product.id,
-                    supplier_sku=row["supplier_sku"],
+                    supplier_sku_id=supplier_sku.id,
+                    supplier_sku=supplier_sku.supplier_sku_code,
                     price=price,
                     currency=(row["currency"] or "CNY").upper(),
                     moq=moq,
@@ -717,8 +728,10 @@ async def import_product_offers(
                     source="SMART_TABLE_IMPORT",
                 )
             )
+            row_transaction.commit()
             success += 1
         except ValueError as exc:
+            row_transaction.rollback()
             errors.append(
                 {
                     "sheet": submitted.source_sheet,

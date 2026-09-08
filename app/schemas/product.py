@@ -9,12 +9,20 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class ProductCreate(BaseModel):
     name: str = Field(min_length=2, max_length=240)
-    brand: str | None = Field(default=None, max_length=120)
+    brand: str = Field(min_length=1, max_length=120)
     model: str | None = Field(default=None, max_length=120)
     category: str = Field(min_length=2, max_length=160)
     description: str | None = Field(default=None, max_length=4000)
     attributes: dict[str, Any] = Field(default_factory=dict)
     status: str = "DRAFT"
+
+    @field_validator("brand")
+    @classmethod
+    def normalize_brand(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("brand name is required")
+        return value
 
 
 class ProductView(BaseModel):
@@ -22,6 +30,7 @@ class ProductView(BaseModel):
 
     id: str
     name: str
+    brand_id: str | None
     brand: str | None
     model: str | None
     category: str
@@ -35,7 +44,7 @@ class ProductView(BaseModel):
 
 class OfferCreate(BaseModel):
     product_id: str
-    supplier_sku: str = Field(min_length=1, max_length=120)
+    supplier_sku_code: str = Field(min_length=1, max_length=120)
     price: Decimal = Field(gt=0, max_digits=14, decimal_places=4)
     currency: str = Field(default="CNY", min_length=3, max_length=8)
     moq: int = Field(default=1, ge=1, le=10_000_000)
@@ -68,12 +77,14 @@ class OfferView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    supplier_sku_id: str
+    supplier_sku_code: str
     product_id: str
     product_name: str
-    brand: str | None
+    brand_id: str
+    brand: str
     model: str | None
     category: str
-    supplier_sku: str
     price: Decimal
     currency: str
     moq: int

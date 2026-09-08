@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from io import BytesIO
-from uuid import uuid4
+from uuid import UUID, uuid4
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
@@ -498,7 +498,7 @@ def test_final_import_excludes_duplicate_row_and_preserves_partial_error_source(
     assert data["errors"][0]["row"] == 4
     offers = authenticated_client.get("/api/offers", params={"q": sku}).json()
     assert len(offers) == 1
-    assert offers[0]["supplier_sku"] == sku
+    assert offers[0]["supplier_sku_code"] == sku
 
 
 @pytest.mark.parametrize(
@@ -608,7 +608,7 @@ def test_final_excel_import_accepts_verified_selected_sheet_source(
     assert response.status_code == 201
     assert response.json()["success_rows"] == 1
     offers = authenticated_client.get("/api/offers", params={"q": sku}).json()
-    assert offers[0]["supplier_sku"] == sku
+    assert offers[0]["supplier_sku_code"] == sku
 
 
 def test_dashboard_requires_login(client: TestClient) -> None:
@@ -678,7 +678,7 @@ def test_create_product_and_offer(authenticated_client: TestClient) -> None:
         "/api/offers",
         json={
             "product_id": product_id,
-            "supplier_sku": f"SKU-{suffix}",
+            "supplier_sku_code": f"SKU-{suffix}",
             "price": 45.8,
             "currency": "CNY",
             "moq": 10,
@@ -689,12 +689,135 @@ def test_create_product_and_offer(authenticated_client: TestClient) -> None:
         },
     )
     assert offer_response.status_code == 201
-    assert offer_response.json()["stock_qty"] == 120
+    created = offer_response.json()
+    supplier_sku_id = created["supplier_sku_id"]
+    assert created["supplier_sku_code"] == f"SKU-{suffix}"
+    assert created["brand"] == "TEST"
+    assert created["brand_id"] == product_response.json()["brand_id"]
+    assert created["stock_qty"] == 120
+
+    updated = authenticated_client.patch(
+        f"/api/offers/{created['id']}",
+        json={"price": "49.9000"},
+    ).json()
+
+    assert updated["supplier_sku_id"] == supplier_sku_id
+    assert updated["supplier_sku_code"] == f"SKU-{suffix}"
+
+
+def test_product_requires_an_assigned_non_empty_brand(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    missing = authenticated_client.post(
+        "/api/products",
+        json={
+            "name": f"缺少品牌商品-{suffix}",
+            "category": "工业自动化",
+        },
+    )
+    assert missing.status_code == 422
+
+    unassigned = authenticated_client.post(
+        "/api/products",
+        json={
+            "name": f"未分配品牌商品-{suffix}",
+            "brand": f"UNASSIGNED-{suffix}",
+            "category": "工业自动化",
+        },
+    )
+    assert unassigned.status_code == 400
+    assert unassigned.json()["detail"] == "brand is not assigned to supplier"
+
+
+def test_supplier_catalog_lists_only_active_assigned_brands(
+    authenticated_client: TestClient,
+) -> None:
+    response = authenticated_client.get(
+        "/api/supplier-catalog/brand-cooperations"
+    )
+
+    assert response.status_code == 200
+    by_code = {item["brand_code"]: item for item in response.json()}
+    test_brand = by_code["TEST-BRAND"]
+    assert str(UUID(test_brand["brand_id"])) == test_brand["brand_id"]
+    assert {key: value for key, value in test_brand.items() if key != "brand_id"} == {
+        "brand_code": "TEST-BRAND",
+        "brand_name": "TEST",
+        "commercial_mode": "SELF_PURCHASE",
+        "status": "ACTIVE",
+    }
+    assert by_code["TEST-BRAND-ALT"]["commercial_mode"] == "B2B"
+
+
+def test_reimporting_supplier_sku_code_reuses_stable_id(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    sku = f"REIMPORT-{suffix}"
+    row = submitted_offer_row(
+        sku=sku,
+        name=f"重导入商品-{suffix}",
+        source_sheet="Sheet1",
+        source_row=2,
+    )
+
+    first = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={"rows_json": json.dumps([row], ensure_ascii=False)},
+        files={"file": ("first.csv", BytesIO(b"source file"), "text/csv")},
+    )
+    assert first.status_code == 201
+    first_offer = authenticated_client.get("/api/offers", params={"q": sku}).json()[0]
+
+    row["values"]["price"] = "12.50"
+    second = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={"rows_json": json.dumps([row], ensure_ascii=False)},
+        files={"file": ("second.csv", BytesIO(b"source file"), "text/csv")},
+    )
+    assert second.status_code == 201
+    second_offer = authenticated_client.get("/api/offers", params={"q": sku}).json()[0]
+
+    assert second_offer["supplier_sku_id"] == first_offer["supplier_sku_id"]
+    assert second_offer["supplier_sku_code"] == sku
+    assert second_offer["price"] == "12.5000"
+
+
+def test_import_rejects_unassigned_brand_without_partial_catalog_writes(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    row = submitted_offer_row(
+        sku=f"UNASSIGNED-IMPORT-{suffix}",
+        name=f"未分配导入商品-{suffix}",
+        source_sheet="Sheet1",
+        source_row=2,
+    )
+    row["values"]["brand"] = f"UNASSIGNED-IMPORT-BRAND-{suffix}"
+
+    response = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={"rows_json": json.dumps([row], ensure_ascii=False)},
+        files={"file": ("unassigned.csv", BytesIO(b"source file"), "text/csv")},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "FAILED"
+    assert response.json()["success_rows"] == 0
+    assert response.json()["error_rows"] == 1
+    assert response.json()["errors"][0]["message"] == (
+        "brand is not assigned to supplier"
+    )
+    products = authenticated_client.get(
+        "/api/products", params={"q": f"未分配导入商品-{suffix}"}
+    ).json()
+    assert products == []
 
 
 def test_offers_can_filter_by_brand(authenticated_client: TestClient) -> None:
     suffix = uuid4().hex[:8]
-    brands = [f"品牌甲-{suffix}", f"品牌乙-{suffix}"]
+    brands = ["TEST", "TEST ALT"]
     for index, brand in enumerate(brands, start=1):
         product = authenticated_client.post(
             "/api/products",
@@ -710,7 +833,7 @@ def test_offers_can_filter_by_brand(authenticated_client: TestClient) -> None:
             "/api/offers",
             json={
                 "product_id": product["id"],
-                "supplier_sku": f"BRAND-{index}-{suffix}",
+                "supplier_sku_code": f"BRAND-{index}-{suffix}",
                 "price": 20 + index,
                 "currency": "CNY",
                 "moq": 1,
@@ -726,7 +849,10 @@ def test_offers_can_filter_by_brand(authenticated_client: TestClient) -> None:
     assert brand_response.status_code == 200
     assert all(brand in brand_response.json() for brand in brands)
 
-    filtered = authenticated_client.get("/api/offers", params={"brand": brands[0]})
+    filtered = authenticated_client.get(
+        "/api/offers",
+        params={"brand": brands[0], "q": f"BRAND-1-{suffix}"},
+    )
     assert filtered.status_code == 200
     assert len(filtered.json()) == 1
     assert filtered.json()[0]["brand"] == brands[0]
@@ -803,7 +929,10 @@ def test_smart_xlsx_import_accepts_supplier_original_sheet(
 
     response = authenticated_client.post(
         "/api/imports/product-offers",
-        data={"description": description},
+        data={
+            "description": description,
+            "defaults_json": json.dumps({"brand": "TEST"}),
+        },
         files={
             "file": (
                 "supplier.xlsx",
@@ -873,7 +1002,7 @@ def test_smart_import_uses_edited_target_rows(authenticated_client: TestClient) 
     target_rows = [
         {
             "product_name": f"手动新增商品-{suffix}",
-            "brand": "EDITED",
+            "brand": "TEST",
             "model": suffix,
             "category": "工业自动化",
             "supplier_sku": f"EDIT-{suffix}",
@@ -917,6 +1046,7 @@ def _nested_boundary_rows(
     count: int,
     *,
     excluded_index: int | None = None,
+    suffix: str = "",
 ) -> list[dict[str, object]]:
     rows = []
     for index in range(count):
@@ -926,11 +1056,11 @@ def _nested_boundary_rows(
                 "source_row": index + 2,
                 "included": index != excluded_index,
                 "values": {
-                    "product_name": "边界商品" if index == 0 else "",
-                    "brand": "BOUNDARY",
-                    "model": "M1",
+                    "product_name": f"边界商品-{suffix}" if index == 0 else "",
+                    "brand": "TEST",
+                    "model": f"M1-{suffix}",
                     "category": "测试类目",
-                    "supplier_sku": f"BOUNDARY-{index}",
+                    "supplier_sku": f"BOUNDARY-{suffix}-{index}",
                     "price": "1.00" if index == 0 else "",
                     "currency": "CNY",
                     "moq": "1",
@@ -950,11 +1080,16 @@ def _boundary_import_request(
     *,
     excluded_index: int | None = None,
 ):
+    suffix = uuid4().hex[:8]
     return authenticated_client.post(
         "/api/imports/product-offers",
         data={
             "rows_json": json.dumps(
-                _nested_boundary_rows(count, excluded_index=excluded_index),
+                _nested_boundary_rows(
+                    count,
+                    excluded_index=excluded_index,
+                    suffix=suffix,
+                ),
                 ensure_ascii=False,
                 separators=(",", ":"),
             ),

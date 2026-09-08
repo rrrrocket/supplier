@@ -5,23 +5,31 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import DbSession, SupplierUser
-from app.models.entities import InventorySnapshot, Product, SupplierOffer
+from app.models.entities import Brand, InventorySnapshot, Product, SupplierOffer, SupplierSku
 from app.schemas.product import OfferCreate, OfferUpdate, OfferView
+from app.services.catalog import ensure_supplier_sku
 from app.services.events import record_event
 
 
 router = APIRouter(prefix="/offers", tags=["供应报价"])
 
 
-def offer_view(offer: SupplierOffer, product: Product) -> OfferView:
+def offer_view(
+    offer: SupplierOffer,
+    product: Product,
+    brand: Brand,
+    supplier_sku: SupplierSku,
+) -> OfferView:
     return OfferView(
         id=offer.id,
+        supplier_sku_id=supplier_sku.id,
+        supplier_sku_code=supplier_sku.supplier_sku_code,
         product_id=offer.product_id,
         product_name=product.name,
-        brand=product.brand,
+        brand_id=brand.id,
+        brand=brand.name,
         model=product.model,
         category=product.category,
-        supplier_sku=offer.supplier_sku,
         price=offer.price,
         currency=offer.currency,
         moq=offer.moq,
@@ -45,8 +53,10 @@ def list_offers(
     limit: int = Query(default=200, ge=1, le=1000),
 ) -> list[OfferView]:
     stmt = (
-        select(SupplierOffer, Product)
+        select(SupplierOffer, Product, Brand, SupplierSku)
         .join(Product, Product.id == SupplierOffer.product_id)
+        .join(Brand, Brand.id == Product.brand_id)
+        .join(SupplierSku, SupplierSku.id == SupplierOffer.supplier_sku_id)
         .where(SupplierOffer.organization_id == user.organization_id)
         .order_by(SupplierOffer.updated_at.desc())
         .limit(limit)
@@ -66,7 +76,10 @@ def list_offers(
     if brand:
         stmt = stmt.where(Product.brand == brand.strip())
 
-    return [offer_view(offer, product) for offer, product in db.execute(stmt).all()]
+    return [
+        offer_view(offer, product, brand, supplier_sku)
+        for offer, product, brand, supplier_sku in db.execute(stmt).all()
+    ]
 
 
 @router.get("/brands", response_model=list[str])
@@ -100,11 +113,38 @@ def create_offer(
     )
     if product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="商品不存在")
+    if product.brand_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="product does not belong to brand",
+        )
+
+    try:
+        supplier_sku = ensure_supplier_sku(
+            db,
+            supplier_id=user.organization_id,
+            brand_id=product.brand_id,
+            product_id=product.id,
+            variant_id=None,
+            supplier_sku_code=payload.supplier_sku_code,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    brand = db.get(Brand, product.brand_id)
+    if brand is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="product does not belong to brand",
+        )
 
     offer = SupplierOffer(
         organization_id=user.organization_id,
         product_id=product.id,
-        supplier_sku=payload.supplier_sku.strip(),
+        supplier_sku_id=supplier_sku.id,
+        supplier_sku=supplier_sku.supplier_sku_code,
         price=payload.price,
         currency=payload.currency,
         moq=payload.moq,
@@ -144,7 +184,7 @@ def create_offer(
     )
     db.commit()
     db.refresh(offer)
-    return offer_view(offer, product)
+    return offer_view(offer, product, brand, supplier_sku)
 
 
 @router.patch("/{offer_id}", response_model=OfferView)
@@ -155,8 +195,10 @@ def update_offer(
     user: SupplierUser,
 ) -> OfferView:
     row = db.execute(
-        select(SupplierOffer, Product)
+        select(SupplierOffer, Product, Brand, SupplierSku)
         .join(Product, Product.id == SupplierOffer.product_id)
+        .join(Brand, Brand.id == Product.brand_id)
+        .join(SupplierSku, SupplierSku.id == SupplierOffer.supplier_sku_id)
         .where(
             SupplierOffer.id == offer_id,
             SupplierOffer.organization_id == user.organization_id,
@@ -164,7 +206,7 @@ def update_offer(
     ).first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报价不存在")
-    offer, product = row
+    offer, product, brand, supplier_sku = row
 
     before_stock = offer.stock_qty
     changes = payload.model_dump(exclude_unset=True)
@@ -194,4 +236,4 @@ def update_offer(
     )
     db.commit()
     db.refresh(offer)
-    return offer_view(offer, product)
+    return offer_view(offer, product, brand, supplier_sku)

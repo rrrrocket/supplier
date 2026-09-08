@@ -21,8 +21,12 @@ from app.core.security import hash_password  # noqa: E402
 from app.db.session import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.entities import (  # noqa: E402
+    Brand,
+    CatalogStatus,
+    CommercialMode,
     Organization,
     OrganizationType,
+    SupplierBrandCooperation,
     SupplierProfile,
     SupplierStatus,
     User,
@@ -95,6 +99,65 @@ def create_test_accounts() -> None:
                 status=SupplierStatus.APPROVED.value,
             )
             db.add(profile)
+
+        brand = db.scalar(select(Brand).where(Brand.code == "TEST-BRAND"))
+        if brand is None:
+            brand = Brand(
+                code="TEST-BRAND",
+                name="TEST",
+                normalized_name="test",
+                aliases=[],
+                status=CatalogStatus.ACTIVE.value,
+            )
+            db.add(brand)
+            db.flush()
+
+        cooperation = db.scalar(
+            select(SupplierBrandCooperation).where(
+                SupplierBrandCooperation.supplier_id == supplier.id,
+                SupplierBrandCooperation.brand_id == brand.id,
+                SupplierBrandCooperation.status == CatalogStatus.ACTIVE.value,
+            )
+        )
+        if cooperation is None:
+            db.add(
+                SupplierBrandCooperation(
+                    supplier_id=supplier.id,
+                    brand_id=brand.id,
+                    commercial_mode=CommercialMode.SELF_PURCHASE.value,
+                    status=CatalogStatus.ACTIVE.value,
+                )
+            )
+
+        alternate_brand = db.scalar(
+            select(Brand).where(Brand.code == "TEST-BRAND-ALT")
+        )
+        if alternate_brand is None:
+            alternate_brand = Brand(
+                code="TEST-BRAND-ALT",
+                name="TEST ALT",
+                normalized_name="test alt",
+                aliases=[],
+                status=CatalogStatus.ACTIVE.value,
+            )
+            db.add(alternate_brand)
+            db.flush()
+        alternate_cooperation = db.scalar(
+            select(SupplierBrandCooperation).where(
+                SupplierBrandCooperation.supplier_id == supplier.id,
+                SupplierBrandCooperation.brand_id == alternate_brand.id,
+                SupplierBrandCooperation.status == CatalogStatus.ACTIVE.value,
+            )
+        )
+        if alternate_cooperation is None:
+            db.add(
+                SupplierBrandCooperation(
+                    supplier_id=supplier.id,
+                    brand_id=alternate_brand.id,
+                    commercial_mode=CommercialMode.B2B.value,
+                    status=CatalogStatus.ACTIVE.value,
+                )
+            )
         db.commit()
 
 
