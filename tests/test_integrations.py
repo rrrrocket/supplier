@@ -6,13 +6,14 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
+from app.api.routes import integrations as integration_routes
 from app.db.session import SessionLocal
 from app.models.entities import (
     Brand,
@@ -1289,10 +1290,13 @@ def test_single_cost_returns_exact_current_mode_a_offer_and_aggregate_audit(
     integration_client: dict[str, Any],
     cost_catalog: dict[str, Any],
 ) -> None:
+    request_id = "caller-request-success-001"
+    headers = auth_headers(integration_client)
+    headers["X-Request-ID"] = request_id
     response = client.get(
         f"{BASE_PATH}/suppliers/{cost_catalog['first_supplier_id']}"
         f"/skus/{cost_catalog['active_sku_id']}/cost",
-        headers=auth_headers(integration_client),
+        headers=headers,
     )
 
     assert response.status_code == 200
@@ -1327,6 +1331,7 @@ def test_single_cost_returns_exact_current_mode_a_offer_and_aggregate_audit(
     )
     assert event.payload["result_count"] == 1
     assert event.payload["error_count"] == 0
+    assert event.payload["request_id"] == request_id
     assert set(event.payload) == {
         "request_id",
         "endpoint",
@@ -1335,6 +1340,69 @@ def test_single_cost_returns_exact_current_mode_a_offer_and_aggregate_audit(
     }
     assert "28.5000" not in json.dumps(event.payload)
     assert integration_client["token"] not in json.dumps(event.payload)
+
+
+def test_cost_audit_reuses_the_same_caller_request_id_on_retry(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    cost_catalog: dict[str, Any],
+) -> None:
+    request_id = "caller-retry-id-001"
+    headers = auth_headers(integration_client)
+    headers["X-Request-ID"] = request_id
+    path = (
+        f"{BASE_PATH}/suppliers/{cost_catalog['first_supplier_id']}"
+        f"/skus/{cost_catalog['active_sku_id']}/cost"
+    )
+
+    first = client.get(path, headers=headers)
+    second = client.get(path, headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    with SessionLocal() as db:
+        events = db.scalars(
+            select(EventLog).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED",
+                EventLog.actor_id == integration_client["id"],
+            )
+        ).all()
+    assert len(events) == 2
+    assert [event.payload["request_id"] for event in events] == [request_id, request_id]
+
+
+@pytest.mark.parametrize(
+    "request_id",
+    [None, "   "],
+    ids=["missing-header", "blank-header"],
+)
+def test_cost_audit_uses_uuid_when_request_id_is_missing_or_blank(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    cost_catalog: dict[str, Any],
+    request_id: str | None,
+) -> None:
+    headers = auth_headers(integration_client)
+    if request_id is not None:
+        headers["X-Request-ID"] = request_id
+
+    response = client.get(
+        f"{BASE_PATH}/suppliers/{cost_catalog['first_supplier_id']}"
+        f"/skus/{cost_catalog['active_sku_id']}/cost",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        events = db.scalars(
+            select(EventLog).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED",
+                EventLog.actor_id == integration_client["id"],
+            )
+        ).all()
+    assert len(events) == 1
+    fallback = events[0].payload["request_id"]
+    assert str(UUID(fallback)) == fallback
 
 
 @pytest.mark.parametrize(
@@ -1510,12 +1578,20 @@ def test_cost_endpoints_require_supplier_cost_read_scope(
     assert single_response.status_code == 403
     assert batch_response.status_code == 403
     with SessionLocal() as db:
-        assert db.scalars(
+        events = db.scalars(
             select(EventLog).where(
                 EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED",
                 EventLog.actor_id == scoped_client["id"],
             )
-        ).all() == []
+        ).all()
+    assert len(events) == 2
+    assert {event.payload["endpoint"] for event in events} == {
+        f"{BASE_PATH}/suppliers/{cost_catalog['first_supplier_id']}"
+        f"/skus/{cost_catalog['active_sku_id']}/cost",
+        f"{BASE_PATH}/sku-costs/query",
+    }
+    assert all(event.payload["result_count"] == 0 for event in events)
+    assert all(event.payload["error_count"] == 1 for event in events)
 
 
 @pytest.mark.parametrize(
@@ -1556,6 +1632,140 @@ def test_batch_cost_query_rejects_invalid_request_structure_with_400(
     )
 
     assert response.status_code == 400
+    with SessionLocal() as db:
+        events = db.scalars(
+            select(EventLog).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED",
+                EventLog.actor_id == integration_client["id"],
+            )
+        ).all()
+    assert len(events) == 1
+    assert events[0].payload["result_count"] == 0
+    assert events[0].payload["error_count"] == 1
+
+
+def test_identified_client_5xx_is_audited_in_an_independent_transaction(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    cost_catalog: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class EndpointFailure(RuntimeError):
+        pass
+
+    def fail_cost_resolution(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        raise EndpointFailure("forced endpoint failure")
+
+    monkeypatch.setattr(
+        integration_routes,
+        "resolve_current_sku_cost",
+        fail_cost_resolution,
+    )
+
+    with pytest.raises(EndpointFailure, match="forced endpoint failure"):
+        client.get(
+            f"{BASE_PATH}/suppliers/{cost_catalog['first_supplier_id']}"
+            f"/skus/{cost_catalog['active_sku_id']}/cost",
+            headers=auth_headers(integration_client),
+        )
+
+    with SessionLocal() as db:
+        events = db.scalars(
+            select(EventLog).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED",
+                EventLog.actor_id == integration_client["id"],
+            )
+        ).all()
+    assert len(events) == 1
+    assert events[0].payload["result_count"] == 0
+    assert events[0].payload["error_count"] == 1
+
+
+def test_audit_write_failure_does_not_replace_successful_cost_response(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    cost_catalog: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_audit_write(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        raise RuntimeError("forced audit failure")
+
+    monkeypatch.setattr(integration_routes, "record_event", fail_audit_write)
+
+    response = client.get(
+        f"{BASE_PATH}/suppliers/{cost_catalog['first_supplier_id']}"
+        f"/skus/{cost_catalog['active_sku_id']}/cost",
+        headers=auth_headers(integration_client),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["cost_price"] == "28.5000"
+
+
+def test_audit_write_failure_does_not_replace_original_endpoint_exception(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    cost_catalog: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class EndpointFailure(RuntimeError):
+        pass
+
+    def fail_cost_resolution(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        raise EndpointFailure("original endpoint failure")
+
+    def fail_audit_write(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        raise RuntimeError("replacement audit failure")
+
+    monkeypatch.setattr(
+        integration_routes,
+        "resolve_current_sku_cost",
+        fail_cost_resolution,
+    )
+    monkeypatch.setattr(integration_routes, "record_event", fail_audit_write)
+
+    with pytest.raises(EndpointFailure, match="original endpoint failure"):
+        client.get(
+            f"{BASE_PATH}/suppliers/{cost_catalog['first_supplier_id']}"
+            f"/skus/{cost_catalog['active_sku_id']}/cost",
+            headers=auth_headers(integration_client),
+        )
+
+
+def test_unidentified_401_cost_requests_do_not_fabricate_audit_actors(
+    client: TestClient,
+    cost_catalog: dict[str, Any],
+) -> None:
+    path = (
+        f"{BASE_PATH}/suppliers/{cost_catalog['first_supplier_id']}"
+        f"/skus/{cost_catalog['active_sku_id']}/cost"
+    )
+    with SessionLocal() as db:
+        before = db.scalar(
+            select(func.count(EventLog.id)).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED"
+            )
+        )
+
+    missing_token = client.get(path)
+    unknown_token = client.get(
+        path,
+        headers={"Authorization": "Bearer m1i_unknown-token-value"},
+    )
+
+    assert missing_token.status_code == 401
+    assert unknown_token.status_code == 401
+    with SessionLocal() as db:
+        after = db.scalar(
+            select(func.count(EventLog.id)).where(
+                EventLog.event_type == "INTEGRATION_SKU_COSTS_QUERIED"
+            )
+        )
+    assert after == before
 
 
 def test_batch_cost_query_preserves_rows_isolates_errors_and_redacts_audit(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -17,7 +18,14 @@ from sqlalchemy.sql.elements import ColumnElement
 from starlette.responses import Response
 
 from app.api.deps import DbSession
-from app.api.integration_deps import BrandReader, CostReader, SkuReader, SupplierReader
+from app.api.integration_deps import (
+    AuthenticatedIntegrationClient,
+    BrandReader,
+    CostReader,
+    SkuReader,
+    SupplierReader,
+)
+from app.db.session import SessionLocal
 from app.models.entities import (
     Brand,
     CatalogStatus,
@@ -48,24 +56,28 @@ from app.services.integration_pagination import decode_cursor, encode_cursor
 
 
 router = APIRouter(prefix="/integrations/v1", tags=["通用系统集成"])
+logger = logging.getLogger(__name__)
 
 ACTIVE = CatalogStatus.ACTIVE.value
 INACTIVE = CatalogStatus.INACTIVE.value
 MISSING_COST_CODES = {"SUPPLIER_NOT_FOUND", "SKU_NOT_FOUND"}
 
 
-class BadRequestValidationRoute(APIRoute):
+class CostAuditRoute(APIRoute):
     def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
         route_handler = super().get_route_handler()
 
         async def handle(request: Request) -> Response:
             try:
-                return await route_handler(request)
-            except RequestValidationError as exc:
-                return JSONResponse(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    content={"detail": jsonable_encoder(exc.errors())},
-                )
+                try:
+                    return await route_handler(request)
+                except RequestValidationError as exc:
+                    return JSONResponse(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        content={"detail": jsonable_encoder(exc.errors())},
+                    )
+            finally:
+                record_cost_query_event(request)
 
         return handle
 
@@ -182,29 +194,51 @@ def cost_view(cost: CurrentSkuCost) -> CurrentSkuCostView:
     )
 
 
-def record_cost_query_event(
-    db: Session,
+def request_id_for_audit(request: Request) -> str:
+    request_id = request.headers.get("X-Request-ID")
+    if request_id is None or not request_id.strip():
+        return str(uuid4())
+    return request_id
+
+
+def set_cost_query_counts(
+    request: Request,
     *,
-    client_id: str,
-    endpoint: str,
     result_count: int,
     error_count: int,
 ) -> None:
-    record_event(
-        db,
-        event_type="INTEGRATION_SKU_COSTS_QUERIED",
-        entity_type="IntegrationClient",
-        entity_id=client_id,
-        organization_id=None,
-        actor_type="INTEGRATION_CLIENT",
-        actor_id=client_id,
-        payload={
-            "request_id": str(uuid4()),
-            "endpoint": endpoint,
-            "result_count": result_count,
-            "error_count": error_count,
-        },
-    )
+    request.state.cost_query_result_count = result_count
+    request.state.cost_query_error_count = error_count
+
+
+def record_cost_query_event(request: Request) -> None:
+    principal = getattr(request.state, "integration_principal", None)
+    if not isinstance(principal, AuthenticatedIntegrationClient):
+        return
+
+    try:
+        with SessionLocal.begin() as audit_db:
+            record_event(
+                audit_db,
+                event_type="INTEGRATION_SKU_COSTS_QUERIED",
+                entity_type="IntegrationClient",
+                entity_id=principal.id,
+                organization_id=None,
+                actor_type="INTEGRATION_CLIENT",
+                actor_id=principal.id,
+                payload={
+                    "request_id": request_id_for_audit(request),
+                    "endpoint": request.url.path,
+                    "result_count": getattr(
+                        request.state, "cost_query_result_count", 0
+                    ),
+                    "error_count": getattr(
+                        request.state, "cost_query_error_count", 1
+                    ),
+                },
+            )
+    except Exception:
+        logger.exception("Failed to record integration cost query audit event")
 
 
 def ranked_cooperations(supplier_id: str):
@@ -481,16 +515,12 @@ def list_supplier_skus(
     )
 
 
-@router.get(
-    "/suppliers/{supplier_id}/skus/{supplier_sku_id}/cost",
-    response_model=CurrentSkuCostView,
-)
 def get_supplier_sku_cost(
     supplier_id: str,
     supplier_sku_id: str,
     request: Request,
     db: DbSession,
-    integration_client: CostReader,
+    _: CostReader,
 ) -> CurrentSkuCostView | JSONResponse:
     try:
         cost = resolve_current_sku_cost(
@@ -499,14 +529,7 @@ def get_supplier_sku_cost(
             supplier_sku_id=supplier_sku_id,
         )
     except SkuCostError as exc:
-        record_cost_query_event(
-            db,
-            client_id=integration_client.id,
-            endpoint=request.url.path,
-            result_count=0,
-            error_count=1,
-        )
-        db.commit()
+        set_cost_query_counts(request, result_count=0, error_count=1)
         error_status = (
             status.HTTP_404_NOT_FOUND
             if exc.code in MISSING_COST_CODES
@@ -517,14 +540,7 @@ def get_supplier_sku_cost(
             content={"detail": {"code": exc.code, "message": exc.message}},
         )
 
-    record_cost_query_event(
-        db,
-        client_id=integration_client.id,
-        endpoint=request.url.path,
-        result_count=1,
-        error_count=0,
-    )
-    db.commit()
+    set_cost_query_counts(request, result_count=1, error_count=0)
     return cost_view(cost)
 
 
@@ -532,7 +548,7 @@ def query_supplier_sku_costs(
     payload: SkuCostBatchRequest,
     request: Request,
     db: DbSession,
-    integration_client: CostReader,
+    _: CostReader,
 ) -> SkuCostBatchResponse:
     results: list[SkuCostBatchSuccess | SkuCostBatchError] = []
     result_count = 0
@@ -570,21 +586,25 @@ def query_supplier_sku_costs(
             )
         )
 
-    record_cost_query_event(
-        db,
-        client_id=integration_client.id,
-        endpoint=request.url.path,
+    set_cost_query_counts(
+        request,
         result_count=result_count,
         error_count=error_count,
     )
-    db.commit()
     return SkuCostBatchResponse(items=results)
 
 
+router.add_api_route(
+    "/suppliers/{supplier_id}/skus/{supplier_sku_id}/cost",
+    get_supplier_sku_cost,
+    methods=["GET"],
+    response_model=CurrentSkuCostView,
+    route_class_override=CostAuditRoute,
+)
 router.add_api_route(
     "/sku-costs/query",
     query_supplier_sku_costs,
     methods=["POST"],
     response_model=SkuCostBatchResponse,
-    route_class_override=BadRequestValidationRoute,
+    route_class_override=CostAuditRoute,
 )

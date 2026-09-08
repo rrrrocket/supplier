@@ -64,6 +64,7 @@ def get_integration_principal(request: Request) -> AuthenticatedIntegrationClien
             scopes=tuple(client.scopes),
         )
 
+    request.state.integration_principal = principal
     return principal
 
 
