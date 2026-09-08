@@ -7,5 +7,6 @@ htmlcov/
 .env
 .idea/
 .vscode/
+.worktrees/
 *.log
 preview-*.png
