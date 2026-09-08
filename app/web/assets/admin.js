@@ -2,7 +2,16 @@ const adminState = {
   user: null,
   applications: [],
   suppliers: [],
+  brands: [],
+  brandCooperations: [],
   selectedApplication: null,
+  selectedSupplier: null,
+};
+
+const cooperationModeLabels = {
+  SELF_PURCHASE: "模式 A · 自营采购",
+  JOINT_OPERATION: "模式 B · 联营",
+  B2B: "模式 C · ToB 合作",
 };
 
 const adminRoutes = {
@@ -93,7 +102,7 @@ function renderSuppliers() {
   const tbody = document.querySelector("#suppliers-tbody");
   document.querySelector("#suppliers-count").textContent = `显示 ${rows.length} 家 / 共 ${adminState.suppliers.length} 家`;
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="table-empty"><strong>还没有符合条件的供应商</strong>审核通过申请后，组织会显示在这里。</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="table-empty"><strong>还没有符合条件的供应商</strong>审核通过申请后，组织会显示在这里。</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map((item) => `
@@ -105,8 +114,91 @@ function renderSuppliers() {
       <td><strong>${item.active_offer_count}</strong></td>
       <td>${Matrix.statusBadge(item.status)}</td>
       <td>${Matrix.formatDate(item.created_at)}</td>
+      <td class="text-right"><button class="btn btn-secondary btn-sm" type="button" data-brand-cooperation-id="${item.organization_id}">品牌合作</button></td>
     </tr>
   `).join("");
+  tbody.querySelectorAll("[data-brand-cooperation-id]").forEach((button) => {
+    button.addEventListener("click", () => openBrandCooperation(button.dataset.brandCooperationId));
+  });
+}
+
+function renderBrandCooperations() {
+  const container = document.querySelector("#brand-cooperation-list");
+  if (!adminState.brandCooperations.length) {
+    container.innerHTML = '<div class="cooperation-empty">尚未配置品牌合作。请在下方选择品牌和模式。</div>';
+    return;
+  }
+  container.innerHTML = adminState.brandCooperations.map((item) => `
+    <div class="cooperation-item">
+      <div><strong>${Matrix.escapeHtml(item.brand_name)}</strong><span>${Matrix.escapeHtml(cooperationModeLabels[item.commercial_mode] || item.commercial_mode)}</span></div>
+      ${Matrix.statusBadge(item.status)}
+    </div>
+  `).join("");
+}
+
+function syncBrandCooperationForm() {
+  const brandId = document.querySelector("#brand-cooperation-brand").value;
+  const current = adminState.brandCooperations.find((item) => item.brand_id === brandId);
+  document.querySelector("#brand-cooperation-mode").value = current?.commercial_mode || "SELF_PURCHASE";
+  document.querySelector("#brand-cooperation-current").innerHTML = current
+    ? `当前合作：<strong>${Matrix.escapeHtml(cooperationModeLabels[current.commercial_mode] || current.commercial_mode)}</strong> ${Matrix.statusBadge(current.status)}`
+    : "当前合作：尚未配置";
+}
+
+async function loadBrandCooperations() {
+  const supplier = adminState.selectedSupplier;
+  if (!supplier) return;
+  adminState.brandCooperations = await Matrix.api(`/api/admin/suppliers/${supplier.organization_id}/brand-cooperations`);
+  renderBrandCooperations();
+  syncBrandCooperationForm();
+}
+
+async function openBrandCooperation(supplierId) {
+  const supplier = adminState.suppliers.find((item) => item.organization_id === supplierId);
+  if (!supplier) return;
+  adminState.selectedSupplier = supplier;
+  adminState.brandCooperations = [];
+  document.querySelector("#brand-cooperation-dialog-title").textContent = "管理品牌合作";
+  document.querySelector("#brand-cooperation-dialog-subtitle").textContent = `${supplier.organization_name} · ${supplier.organization_code}`;
+  document.querySelector("#brand-cooperation-list").innerHTML = '<div class="cooperation-empty">正在加载品牌合作…</div>';
+  document.querySelector("#brand-cooperation-dialog").showModal();
+  try {
+    const [brands, cooperations] = await Promise.all([
+      Matrix.api("/api/admin/brands"),
+      Matrix.api(`/api/admin/suppliers/${supplier.organization_id}/brand-cooperations`),
+    ]);
+    adminState.brands = brands;
+    adminState.brandCooperations = cooperations;
+    const select = document.querySelector("#brand-cooperation-brand");
+    select.innerHTML = brands.map((brand) => `<option value="${brand.id}">${Matrix.escapeHtml(brand.name)} · ${Matrix.escapeHtml(brand.code)}</option>`).join("");
+    document.querySelector("#save-brand-cooperation").disabled = !brands.length;
+    renderBrandCooperations();
+    syncBrandCooperationForm();
+  } catch (error) {
+    document.querySelector("#brand-cooperation-list").innerHTML = `<div class="cooperation-empty">${Matrix.escapeHtml(error.message)}</div>`;
+    Matrix.toast("品牌合作加载失败", error.message, "error");
+  }
+}
+
+async function saveBrandCooperation(event) {
+  event.preventDefault();
+  const supplier = adminState.selectedSupplier;
+  const brandId = document.querySelector("#brand-cooperation-brand").value;
+  if (!supplier || !brandId) return;
+  const button = document.querySelector("#save-brand-cooperation");
+  button.disabled = true;
+  try {
+    await Matrix.api(`/api/admin/suppliers/${supplier.organization_id}/brands/${brandId}/cooperation`, {
+      method: "PUT",
+      body: { commercial_mode: document.querySelector("#brand-cooperation-mode").value },
+    });
+    await loadBrandCooperations();
+    Matrix.toast("品牌合作已保存", "当前合作模式已更新并保留历史记录。", "success");
+  } catch (error) {
+    Matrix.toast("品牌合作保存失败", error.message, "error");
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function detailItem(label, value, full = false) {
@@ -265,8 +357,11 @@ async function bootAdmin() {
   document.querySelector("#applications-status").addEventListener("change", renderApplications);
   document.querySelector("#suppliers-search").addEventListener("input", renderSuppliers);
   document.querySelectorAll("[data-close-review]").forEach((button) => button.addEventListener("click", () => document.querySelector("#application-review-dialog").close()));
+  document.querySelectorAll("[data-close-brand-cooperation]").forEach((button) => button.addEventListener("click", () => document.querySelector("#brand-cooperation-dialog").close()));
   document.querySelector("#approve-application").addEventListener("click", approveSelectedApplication);
   document.querySelector("#reject-application").addEventListener("click", rejectSelectedApplication);
+  document.querySelector("#brand-cooperation-brand").addEventListener("change", syncBrandCooperationForm);
+  document.querySelector("#brand-cooperation-form").addEventListener("submit", saveBrandCooperation);
   window.addEventListener("hashchange", () => routeTo(window.location.hash.slice(1), false));
 
   routeTo(window.location.hash.slice(1) || "applications", false);

@@ -661,9 +661,19 @@ dialog::backdrop { background: rgba(7,17,38,.55); backdrop-filter: blur(3px); }
 .credential-row { display: grid; grid-template-columns: 100px 1fr; gap: 12px; padding: 9px 0; border-top: 1px solid #abefc6; font-size: 11px; }
 .credential-row span { color: #067647; }
 .credential-row code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+.dialog-section-title { margin: 0 0 10px; color: var(--ink-soft); font-size: 12px; }
+.cooperation-list { display: grid; gap: 8px; }
+.cooperation-item { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-soft); }
+.cooperation-item strong, .cooperation-item span { display: block; }
+.cooperation-item strong { font-size: 12px; }
+.cooperation-item div > span { margin-top: 5px; color: var(--muted); font-size: 10px; }
+.cooperation-empty { padding: 16px; border: 1px dashed var(--line); border-radius: 11px; color: var(--muted); background: var(--surface-soft); font-size: 11px; text-align: center; }
+.cooperation-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
+.cooperation-current { grid-column: 1 / -1; color: var(--muted); font-size: 11px; }
+.cooperation-current strong { color: var(--ink-soft); }
 .admin-system-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
 .system-layer { display: grid; gap: 9px; padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
 .system-layer strong { font-size: 12px; }
 .system-layer span { color: var(--muted); font-size: 10px; line-height: 1.55; }
 @media (max-width: 900px) { .admin-metric-grid, .admin-system-grid { grid-template-columns: 1fr; } }
-@media (max-width: 640px) { .application-detail { grid-template-columns: 1fr; } .detail-item.full { grid-column: auto; } }
+@media (max-width: 640px) { .application-detail, .cooperation-form { grid-template-columns: 1fr; } .detail-item.full, .cooperation-current { grid-column: auto; } }

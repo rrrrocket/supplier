@@ -15,6 +15,7 @@
   };
 
   const eventLabels = {
+    BRAND_CREATED: ["新建品牌", "平台品牌目录已更新"],
     OFFER_CREATED: ["新建报价", "报价已进入供应网络"],
     OFFER_UPDATED: ["更新报价", "价格、库存或交期发生更新"],
     PRODUCT_CREATED: ["新建商品", "商品主数据已创建"],
@@ -22,6 +23,7 @@
     SUPPLIER_APPROVED: ["供应商审核通过", "供应能力档案已激活"],
     SUPPLIER_APPLICATION_APPROVED: ["入驻申请通过", "供应商组织与供应商账号已创建"],
     SUPPLIER_APPLICATION_REJECTED: ["入驻申请驳回", "平台已保存审核意见"],
+    SUPPLIER_BRAND_COOPERATION_CHANGED: ["更新品牌合作", "供应商当前品牌合作模式已更新"],
     SUPPLIER_PROFILE_UPDATED: ["更新企业资料", "供应商能力档案已更新"],
     USER_LOGGED_IN: ["账号登录", "供应商工作台登录成功"],
     USER_LOGGED_OUT: ["账号退出", "已安全退出工作台"],

@@ -6,9 +6,9 @@
   <meta name="robots" content="noindex,nofollow">
   <title>供应网络管理 · Matrix One</title>
   <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/styles.css?v=20260908-auth-visibility">
-  <script src="/assets/common.js?v=20260908-supplier-role" defer></script>
-  <script src="/assets/admin.js?v=20260908-supplier-role" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260909-brand-cooperation">
+  <script src="/assets/common.js?v=20260909-brand-cooperation" defer></script>
+  <script src="/assets/admin.js?v=20260909-brand-cooperation" defer></script>
 </head>
 <body class="app-body">
   <div class="app-shell">
@@ -103,8 +103,8 @@
             </div>
             <div class="table-wrap">
               <table class="data-table">
-                <thead><tr><th>供应商组织</th><th>联系人</th><th>资料完整度</th><th>商品数</th><th>有效报价</th><th>状态</th><th>接入时间</th></tr></thead>
-                <tbody id="suppliers-tbody"><tr><td colspan="7" class="table-empty">正在加载…</td></tr></tbody>
+                <thead><tr><th>供应商组织</th><th>联系人</th><th>资料完整度</th><th>商品数</th><th>有效报价</th><th>状态</th><th>接入时间</th><th></th></tr></thead>
+                <tbody id="suppliers-tbody"><tr><td colspan="8" class="table-empty">正在加载…</td></tr></tbody>
               </table>
             </div>
             <footer class="table-footer"><span id="suppliers-count">共 0 家</span><span>综合评估履约、质量与合作贡献</span></footer>
@@ -148,6 +148,32 @@
     <footer class="dialog-actions review-actions">
       <button id="reject-application" class="btn btn-danger" type="button">驳回申请</button>
       <div class="row"><button class="btn btn-secondary" type="button" data-close-review>关闭</button><button id="approve-application" class="btn btn-primary" type="button">通过并创建账号</button></div>
+    </footer>
+  </dialog>
+
+  <dialog id="brand-cooperation-dialog">
+    <header class="dialog-head">
+      <div><h2 id="brand-cooperation-dialog-title">管理品牌合作</h2><p id="brand-cooperation-dialog-subtitle">查看并更新平台确认的供应商品牌合作模式。</p></div>
+      <button class="icon-btn" type="button" data-close-brand-cooperation aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+    </header>
+    <div class="dialog-body">
+      <section aria-labelledby="brand-cooperation-current-title">
+        <h3 id="brand-cooperation-current-title" class="dialog-section-title">当前品牌合作</h3>
+        <div id="brand-cooperation-list" class="cooperation-list"><div class="cooperation-empty">正在加载品牌合作…</div></div>
+      </section>
+      <form id="brand-cooperation-form" class="cooperation-form">
+        <label class="form-group"><span class="form-label">品牌</span><select id="brand-cooperation-brand" class="select" required aria-label="合作品牌"></select></label>
+        <label class="form-group"><span class="form-label">合作模式</span><select id="brand-cooperation-mode" class="select" required aria-label="合作模式">
+          <option value="SELF_PURCHASE">模式 A · 自营采购</option>
+          <option value="JOINT_OPERATION">模式 B · 联营</option>
+          <option value="B2B">模式 C · ToB 合作</option>
+        </select></label>
+        <div id="brand-cooperation-current" class="cooperation-current">当前合作：尚未配置</div>
+      </form>
+    </div>
+    <footer class="dialog-actions">
+      <button class="btn btn-secondary" type="button" data-close-brand-cooperation>关闭</button>
+      <button id="save-brand-cooperation" class="btn btn-primary" type="submit" form="brand-cooperation-form">保存合作模式</button>
     </footer>
   </dialog>
 </body>

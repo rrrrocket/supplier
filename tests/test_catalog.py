@@ -11,10 +11,13 @@ from app.models.entities import (
     Brand,
     CatalogStatus,
     CommercialMode,
+    EventLog,
     Organization,
     OrganizationType,
     Product,
     SupplierBrandCooperation,
+    SupplierSku,
+    User,
 )
 
 
@@ -115,3 +118,96 @@ def test_ensure_supplier_sku_rejects_brand_not_assigned_to_supplier(
                 variant_id=None,
                 supplier_sku_code=f"UNASSIGNED-{suffix}",
             )
+
+
+def test_replace_active_cooperation_is_idempotent_and_keeps_sku_identity(
+    client: TestClient,
+) -> None:
+    del client
+    from app.services.catalog import replace_active_cooperation
+
+    suffix = uuid4().hex[:8]
+    with SessionLocal() as db:
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+        )
+        admin = db.scalar(
+            select(User).where(User.email == "admin-test@example.com")
+        )
+        assert supplier is not None
+        assert admin is not None
+
+        brand = Brand(
+            code=f"SERVICE-{suffix}",
+            name=f"服务测试品牌 {suffix}",
+            normalized_name=f"服务测试品牌 {suffix}",
+            aliases=[],
+            status=CatalogStatus.ACTIVE.value,
+        )
+        product = Product(
+            created_by_organization_id=supplier.id,
+            brand=f"服务测试品牌 {suffix}",
+            name=f"服务测试商品 {suffix}",
+            category="测试类目",
+        )
+        db.add_all([brand, product])
+        db.flush()
+        product.brand_id = brand.id
+        current = SupplierBrandCooperation(
+            supplier_id=supplier.id,
+            brand_id=brand.id,
+            commercial_mode=CommercialMode.SELF_PURCHASE.value,
+            status=CatalogStatus.ACTIVE.value,
+        )
+        supplier_sku = SupplierSku(
+            supplier_id=supplier.id,
+            brand_id=brand.id,
+            product_id=product.id,
+            supplier_sku_code=f"SERVICE-SKU-{suffix}",
+            status=CatalogStatus.ACTIVE.value,
+        )
+        db.add_all([current, supplier_sku])
+        db.flush()
+        original_sku_id = supplier_sku.id
+
+        unchanged = replace_active_cooperation(
+            db,
+            supplier_id=supplier.id,
+            brand_id=brand.id,
+            commercial_mode=CommercialMode.SELF_PURCHASE.value,
+            actor_id=admin.id,
+        )
+        db.flush()
+        assert unchanged.id == current.id
+        assert db.scalars(
+            select(EventLog).where(
+                EventLog.event_type == "SUPPLIER_BRAND_COOPERATION_CHANGED",
+                EventLog.organization_id == supplier.id,
+                EventLog.payload["brand_id"].as_string() == brand.id,
+            )
+        ).all() == []
+
+        replacement = replace_active_cooperation(
+            db,
+            supplier_id=supplier.id,
+            brand_id=brand.id,
+            commercial_mode=CommercialMode.B2B.value,
+            actor_id=admin.id,
+        )
+        db.flush()
+
+        assert replacement.id != current.id
+        assert current.status == CatalogStatus.INACTIVE.value
+        assert replacement.status == CatalogStatus.ACTIVE.value
+        assert replacement.commercial_mode == CommercialMode.B2B.value
+        assert db.get(SupplierSku, original_sku_id).id == original_sku_id
+        event = db.scalar(
+            select(EventLog).where(
+                EventLog.event_type == "SUPPLIER_BRAND_COOPERATION_CHANGED",
+                EventLog.entity_id == replacement.id,
+            )
+        )
+        assert event is not None
+        assert event.actor_id == admin.id
+        assert event.payload["previous_mode"] == CommercialMode.SELF_PURCHASE.value
+        assert event.payload["commercial_mode"] == CommercialMode.B2B.value

@@ -13,6 +13,7 @@ from app.models.entities import (
     SupplierBrandCooperation,
     SupplierSku,
 )
+from app.services.events import record_event
 
 
 def normalize_brand_name(value: str) -> str:
@@ -43,6 +44,54 @@ def resolve_brand(db: Session, name: str) -> Brand:
     db.add(brand)
     db.flush()
     return brand
+
+
+def replace_active_cooperation(
+    db: Session,
+    supplier_id: str,
+    brand_id: str,
+    commercial_mode: str,
+    actor_id: str,
+) -> SupplierBrandCooperation:
+    current = db.scalar(
+        select(SupplierBrandCooperation)
+        .where(
+            SupplierBrandCooperation.supplier_id == supplier_id,
+            SupplierBrandCooperation.brand_id == brand_id,
+            SupplierBrandCooperation.status == CatalogStatus.ACTIVE.value,
+        )
+        .with_for_update()
+    )
+    if current is not None and current.commercial_mode == commercial_mode:
+        return current
+
+    previous_mode = current.commercial_mode if current is not None else None
+    if current is not None:
+        current.status = CatalogStatus.INACTIVE.value
+
+    replacement = SupplierBrandCooperation(
+        supplier_id=supplier_id,
+        brand_id=brand_id,
+        commercial_mode=commercial_mode,
+        status=CatalogStatus.ACTIVE.value,
+    )
+    db.add(replacement)
+    db.flush()
+    record_event(
+        db,
+        event_type="SUPPLIER_BRAND_COOPERATION_CHANGED",
+        entity_type="SupplierBrandCooperation",
+        entity_id=replacement.id,
+        organization_id=supplier_id,
+        actor_type="USER",
+        actor_id=actor_id,
+        payload={
+            "brand_id": brand_id,
+            "previous_mode": previous_mode,
+            "commercial_mode": commercial_mode,
+        },
+    )
+    return replacement
 
 
 def ensure_supplier_sku(

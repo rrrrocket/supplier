@@ -3,7 +3,17 @@ from __future__ import annotations
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
+from app.db.session import SessionLocal
+from app.models.entities import (
+    CatalogStatus,
+    EventLog,
+    Organization,
+    Product,
+    SupplierBrandCooperation,
+    SupplierSku,
+)
 from tests.conftest import ADMIN_EMAIL, ADMIN_PASSWORD, SUPPLIER_EMAIL, SUPPLIER_PASSWORD
 
 
@@ -121,3 +131,222 @@ def test_admin_reject_requires_pending_application(client: TestClient) -> None:
         json={"notes": "重复审核"},
     )
     assert second_review.status_code == 409
+
+
+def test_admin_can_create_deduplicate_and_search_brands(client: TestClient) -> None:
+    suffix = uuid4().hex[:8]
+    login_admin(client)
+
+    created = client.post(
+        "/api/admin/brands",
+        json={
+            "name": f"  测试 品牌 {suffix}  ",
+            "code": f"ADMIN-{suffix}",
+            "aliases": [f"品牌别名 {suffix}", f"  品牌别名 {suffix}  "],
+        },
+    )
+    assert created.status_code == 201
+    brand = created.json()
+    assert brand["name"] == f"测试 品牌 {suffix}"
+    assert brand["code"] == f"ADMIN-{suffix}"
+
+    duplicate = client.post(
+        "/api/admin/brands",
+        json={"name": f"测试   品牌 {suffix}", "code": f"ADMIN-{suffix}"},
+    )
+    assert duplicate.status_code == 200
+    assert duplicate.json()["id"] == brand["id"]
+
+    search = client.get("/api/admin/brands", params={"q": f"品牌 {suffix}"})
+    assert search.status_code == 200
+    assert [item["id"] for item in search.json()] == [brand["id"]]
+
+    conflict = client.post(
+        "/api/admin/brands",
+        json={"name": f"另一个品牌 {suffix}", "code": f"ADMIN-{suffix}"},
+    )
+    assert conflict.status_code == 409
+
+    with SessionLocal() as db:
+        created_events = db.scalar(
+            select(func.count(EventLog.id)).where(
+                EventLog.event_type == "BRAND_CREATED",
+                EventLog.entity_id == brand["id"],
+            )
+        )
+        assert created_events == 1
+
+
+def test_admin_replaces_brand_cooperation_without_changing_supplier_sku(
+    client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    login_admin(client)
+
+    brand_response = client.post(
+        "/api/admin/brands",
+        json={"name": f"合作品牌 {suffix}", "code": f"COOP-{suffix}"},
+    )
+    assert brand_response.status_code == 201
+    brand_id = brand_response.json()["id"]
+
+    with SessionLocal() as db:
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+        )
+        assert supplier is not None
+        product = Product(
+            created_by_organization_id=supplier.id,
+            brand_id=brand_id,
+            brand=f"合作品牌 {suffix}",
+            name=f"合作模式测试商品 {suffix}",
+            category="测试类目",
+        )
+        cooperation = SupplierBrandCooperation(
+            supplier_id=supplier.id,
+            brand_id=brand_id,
+            commercial_mode="SELF_PURCHASE",
+            status=CatalogStatus.ACTIVE.value,
+        )
+        db.add_all([product, cooperation])
+        db.flush()
+        supplier_sku = SupplierSku(
+            supplier_id=supplier.id,
+            brand_id=brand_id,
+            product_id=product.id,
+            supplier_sku_code=f"COOP-SKU-{suffix}",
+            status=CatalogStatus.ACTIVE.value,
+        )
+        db.add(supplier_sku)
+        db.commit()
+        supplier_id = supplier.id
+        cooperation_id = cooperation.id
+        supplier_sku_id = supplier_sku.id
+
+    first_same_mode = client.put(
+        f"/api/admin/suppliers/{supplier_id}/brands/{brand_id}/cooperation",
+        json={"commercial_mode": "SELF_PURCHASE"},
+    )
+    assert first_same_mode.status_code == 200
+    assert first_same_mode.json()["id"] == cooperation_id
+
+    second_same_mode = client.put(
+        f"/api/admin/suppliers/{supplier_id}/brands/{brand_id}/cooperation",
+        json={"commercial_mode": "SELF_PURCHASE"},
+    )
+    assert second_same_mode.status_code == 200
+    assert second_same_mode.json()["id"] == cooperation_id
+
+    changed = client.put(
+        f"/api/admin/suppliers/{supplier_id}/brands/{brand_id}/cooperation",
+        json={"commercial_mode": "JOINT_OPERATION"},
+    )
+    assert changed.status_code == 200
+    assert changed.json()["id"] != cooperation_id
+    assert changed.json()["commercial_mode"] == "JOINT_OPERATION"
+    assert changed.json()["status"] == "ACTIVE"
+
+    cooperations = client.get(
+        f"/api/admin/suppliers/{supplier_id}/brand-cooperations"
+    )
+    assert cooperations.status_code == 200
+    assert [
+        (item["brand_id"], item["commercial_mode"], item["status"])
+        for item in cooperations.json()
+        if item["brand_id"] == brand_id
+    ] == [(brand_id, "JOINT_OPERATION", "ACTIVE")]
+
+    with SessionLocal() as db:
+        history = db.scalars(
+            select(SupplierBrandCooperation)
+            .where(
+                SupplierBrandCooperation.supplier_id == supplier_id,
+                SupplierBrandCooperation.brand_id == brand_id,
+            )
+            .order_by(SupplierBrandCooperation.created_at)
+        ).all()
+        assert [(item.id, item.status, item.commercial_mode) for item in history] == [
+            (cooperation_id, "INACTIVE", "SELF_PURCHASE"),
+            (changed.json()["id"], "ACTIVE", "JOINT_OPERATION"),
+        ]
+        assert db.get(SupplierSku, supplier_sku_id).id == supplier_sku_id
+        change_events = db.scalars(
+            select(EventLog).where(
+                EventLog.event_type == "SUPPLIER_BRAND_COOPERATION_CHANGED",
+                EventLog.entity_id == changed.json()["id"],
+            )
+        ).all()
+        assert len(change_events) == 1
+        assert change_events[0].organization_id == supplier_id
+        assert change_events[0].payload == {
+            "brand_id": brand_id,
+            "previous_mode": "SELF_PURCHASE",
+            "commercial_mode": "JOINT_OPERATION",
+        }
+
+
+def test_admin_catalog_routes_enforce_roles_and_supplier_identity(
+    client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    login_admin(client)
+    brand_response = client.post(
+        "/api/admin/brands",
+        json={"name": f"权限品牌 {suffix}", "code": f"AUTH-{suffix}"},
+    )
+    assert brand_response.status_code == 201
+    brand = brand_response.json()
+    with SessionLocal() as db:
+        platform = db.scalar(
+            select(Organization).where(Organization.code == "TEST-PLATFORM")
+        )
+        assert platform is not None
+        platform_id = platform.id
+
+    unknown_id = str(uuid4())
+    for organization_id in (unknown_id, platform_id):
+        listed = client.get(
+            f"/api/admin/suppliers/{organization_id}/brand-cooperations"
+        )
+        assert listed.status_code == 404
+        updated = client.put(
+            f"/api/admin/suppliers/{organization_id}/brands/{brand['id']}/cooperation",
+            json={"commercial_mode": "B2B"},
+        )
+        assert updated.status_code == 404
+
+    client.post("/api/auth/logout")
+    login_supplier(client)
+    supplier_requests = (
+        client.get("/api/admin/brands"),
+        client.post(
+            "/api/admin/brands",
+            json={"name": f"越权品牌 {suffix}", "code": f"DENY-{suffix}"},
+        ),
+        client.get(
+            f"/api/admin/suppliers/{unknown_id}/brand-cooperations"
+        ),
+        client.put(
+            f"/api/admin/suppliers/{unknown_id}/brands/{brand['id']}/cooperation",
+            json={"commercial_mode": "B2B"},
+        ),
+    )
+    assert [response.status_code for response in supplier_requests] == [403, 403, 403, 403]
+
+
+def test_admin_page_exposes_brand_cooperation_controls(client: TestClient) -> None:
+    page = client.get("/admin")
+    assert page.status_code == 200
+    assert 'id="brand-cooperation-dialog"' in page.text
+    assert 'id="brand-cooperation-form"' in page.text
+    assert 'id="brand-cooperation-brand"' in page.text
+    assert 'id="brand-cooperation-mode"' in page.text
+    assert "模式 A · 自营采购" in page.text
+    assert "模式 B · 联营" in page.text
+    assert "模式 C · ToB 合作" in page.text
+
+    script = client.get("/assets/admin.js")
+    assert script.status_code == 200
+    assert "/api/admin/brands" in script.text
+    assert "/brand-cooperations" in script.text
+    assert "/cooperation" in script.text
