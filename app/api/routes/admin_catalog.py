@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -27,6 +29,9 @@ from app.services.events import record_event
 
 router = APIRouter(prefix="/admin", tags=["平台品牌管理"])
 
+TOKEN_PREFIX_RETRY_LIMIT = 5
+TOKEN_PREFIX_INDEX_NAME = "ix_integration_clients_token_prefix"
+
 
 def integration_client_view(client: IntegrationClient) -> IntegrationClientView:
     return IntegrationClientView.model_validate(client)
@@ -47,6 +52,65 @@ def require_integration_client(db: DbSession, client_id: str) -> IntegrationClie
     if client is None:
         raise HTTPException(status_code=404, detail="集成调用方不存在")
     return client
+
+
+def is_token_prefix_collision(exc: IntegrityError) -> bool:
+    diagnostics = getattr(exc.orig, "diag", None)
+    return getattr(diagnostics, "constraint_name", None) == TOKEN_PREFIX_INDEX_NAME
+
+
+def create_client_with_unique_token(
+    db: DbSession,
+    *,
+    name: str,
+    scopes: list[str],
+    expires_at: datetime | None,
+) -> tuple[IntegrationClient, str]:
+    for _ in range(TOKEN_PREFIX_RETRY_LIMIT):
+        plaintext, prefix, token_hash = create_integration_token()
+        client = IntegrationClient(
+            name=name,
+            token_prefix=prefix,
+            token_hash=token_hash,
+            scopes=scopes,
+            expires_at=expires_at,
+        )
+        try:
+            with db.begin_nested():
+                db.add(client)
+                db.flush()
+        except IntegrityError as exc:
+            if not is_token_prefix_collision(exc):
+                raise
+            continue
+        return client, plaintext
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="暂时无法签发唯一集成凭证，请稍后重试",
+    )
+
+
+def rotate_client_with_unique_token(
+    db: DbSession,
+    client: IntegrationClient,
+) -> str:
+    for _ in range(TOKEN_PREFIX_RETRY_LIMIT):
+        plaintext, prefix, token_hash = create_integration_token()
+        try:
+            with db.begin_nested():
+                client.token_prefix = prefix
+                client.token_hash = token_hash
+                client.last_used_at = None
+                db.flush()
+        except IntegrityError as exc:
+            if not is_token_prefix_collision(exc):
+                raise
+            continue
+        return plaintext
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="暂时无法轮换为唯一集成凭证，旧凭证仍然有效",
+    )
 
 
 @router.get(
@@ -70,6 +134,7 @@ def list_integration_clients(
 )
 def create_integration_client(
     payload: IntegrationClientCreate,
+    response: Response,
     db: DbSession,
     admin: PlatformAdmin,
 ) -> IntegrationClientCredential:
@@ -77,16 +142,17 @@ def create_integration_client(
     if not name:
         raise HTTPException(status_code=422, detail="调用方名称不能为空")
 
-    plaintext, prefix, token_hash = create_integration_token()
-    client = IntegrationClient(
-        name=name,
-        token_prefix=prefix,
-        token_hash=token_hash,
-        scopes=list(dict.fromkeys(payload.scopes)),
-        expires_at=payload.expires_at,
+    expires_at = (
+        payload.expires_at.astimezone(timezone.utc)
+        if payload.expires_at is not None
+        else None
     )
-    db.add(client)
-    db.flush()
+    client, plaintext = create_client_with_unique_token(
+        db,
+        name=name,
+        scopes=list(dict.fromkeys(payload.scopes)),
+        expires_at=expires_at,
+    )
     record_event(
         db,
         event_type="INTEGRATION_CLIENT_CREATED",
@@ -99,6 +165,7 @@ def create_integration_client(
     )
     db.commit()
     db.refresh(client)
+    response.headers["Cache-Control"] = "no-store"
     return integration_client_credential(client, plaintext)
 
 
@@ -108,14 +175,12 @@ def create_integration_client(
 )
 def rotate_integration_client(
     client_id: str,
+    response: Response,
     db: DbSession,
     admin: PlatformAdmin,
 ) -> IntegrationClientCredential:
     client = require_integration_client(db, client_id)
-    plaintext, prefix, token_hash = create_integration_token()
-    client.token_prefix = prefix
-    client.token_hash = token_hash
-    client.last_used_at = None
+    plaintext = rotate_client_with_unique_token(db, client)
     record_event(
         db,
         event_type="INTEGRATION_CLIENT_ROTATED",
@@ -128,6 +193,7 @@ def rotate_integration_client(
     )
     db.commit()
     db.refresh(client)
+    response.headers["Cache-Control"] = "no-store"
     return integration_client_credential(client, plaintext)
 
 

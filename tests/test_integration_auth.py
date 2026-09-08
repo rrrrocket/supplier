@@ -3,19 +3,22 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+from typing import Annotated
 from uuid import uuid4
 
 import psycopg
 import pytest
-from fastapi import status
+from fastapi import Depends, HTTPException, status
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 
+from app.api.deps import DbSession
 from app.api.integration_deps import SupplierReader
+from app.api.routes import admin_catalog
 from app.core.integration_security import create_integration_token, verify_integration_token
 from app.db.session import SessionLocal
 from app.main import app
-from app.models.entities import EventLog, IntegrationClient
+from app.models.entities import EventLog, IntegrationClient, Organization
 from tests.conftest import ADMIN_EMAIL, ADMIN_PASSWORD, SUPPLIER_EMAIL, SUPPLIER_PASSWORD
 from tests.migration_utils import connect, run_migrations, temporary_postgresql_database
 
@@ -33,6 +36,31 @@ ALL_SCOPES = [
 @app.get("/api/test/integration-supplier-reader", include_in_schema=False)
 def integration_supplier_reader(principal: SupplierReader) -> dict[str, str]:
     return {"client_id": principal.id}
+
+
+def stage_unrelated_supplier_change(db: DbSession) -> None:
+    supplier = db.scalar(select(Organization).where(Organization.code == "TEST-SUPPLIER"))
+    assert supplier is not None
+    supplier.name = "THIS CHANGE MUST ROLLBACK"
+
+
+StagedUnrelatedChange = Annotated[None, Depends(stage_unrelated_supplier_change)]
+
+
+@app.get("/api/test/integration-scope-failure", include_in_schema=False)
+def integration_scope_failure(
+    _: StagedUnrelatedChange,
+    __: SupplierReader,
+) -> None:
+    raise AssertionError("scope failure must stop before the handler")
+
+
+@app.get("/api/test/integration-handler-failure", include_in_schema=False)
+def integration_handler_failure(
+    _: StagedUnrelatedChange,
+    __: SupplierReader,
+) -> None:
+    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="forced failure")
 
 
 def login(client: TestClient, email: str, password: str) -> None:
@@ -61,6 +89,37 @@ def create_client(
 
 def bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def deterministic_token(prefix: str, tail: str) -> tuple[str, str, str]:
+    assert len(prefix) == 12
+    plaintext = f"{prefix}{tail}"
+    return plaintext, prefix, hashlib.sha256(plaintext.encode()).hexdigest()
+
+
+def seed_integration_client(
+    *,
+    token: tuple[str, str, str],
+    scopes: list[str] | None = None,
+) -> str:
+    _, prefix, digest = token
+    with SessionLocal() as db:
+        integration_client = db.scalar(
+            select(IntegrationClient).where(IntegrationClient.token_prefix == prefix)
+        )
+        if integration_client is None:
+            integration_client = IntegrationClient(
+                name=f"碰撞占位-{uuid4().hex[:8]}",
+                token_prefix=prefix,
+                token_hash=digest,
+                scopes=scopes or ["suppliers:read"],
+            )
+            db.add(integration_client)
+        else:
+            integration_client.token_hash = digest
+            integration_client.scopes = scopes or ["suppliers:read"]
+        db.commit()
+        return integration_client.id
 
 
 def test_integration_token_roundtrip_uses_prefix_and_sha256_digest() -> None:
@@ -114,7 +173,14 @@ def test_integration_client_migration_creates_secret_safe_schema() -> None:
 
 
 def test_create_and_list_never_persist_or_return_plaintext_token(client: TestClient) -> None:
-    created = create_client(client)
+    login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+    created_response = client.post(
+        "/api/admin/integration-clients",
+        json={"name": f"测试集成方-{uuid4().hex[:8]}", "scopes": ALL_SCOPES},
+    )
+    assert created_response.status_code == status.HTTP_201_CREATED
+    assert created_response.headers["cache-control"] == "no-store"
+    created = created_response.json()
     token = str(created["token"])
     client_id = str(created["id"])
 
@@ -215,6 +281,54 @@ def test_valid_token_without_required_scope_is_forbidden(client: TestClient) -> 
     assert response.status_code == status.HTTP_403_FORBIDDEN
 
 
+@pytest.mark.parametrize(
+    ("scopes", "path", "expected_status"),
+    [
+        (["supplier-brands:read"], "/api/test/integration-scope-failure", 403),
+        (["suppliers:read"], "/api/test/integration-handler-failure", 409),
+    ],
+)
+def test_authentication_failure_does_not_commit_unrelated_request_changes(
+    client: TestClient,
+    scopes: list[str],
+    path: str,
+    expected_status: int,
+) -> None:
+    created = create_client(client, scopes=scopes)
+    integration_client_id = str(created["id"])
+    with SessionLocal() as db:
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+        )
+        assert supplier is not None
+        original_name = supplier.name
+
+    response = client.get(path, headers=bearer(str(created["token"])))
+
+    assert response.status_code == expected_status
+    with SessionLocal() as db:
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+        )
+        integration_client = db.get(IntegrationClient, integration_client_id)
+        assert supplier is not None
+        assert integration_client is not None
+        persisted_name = supplier.name
+        last_used_at = integration_client.last_used_at
+    try:
+        assert persisted_name == original_name
+        assert last_used_at is not None
+    finally:
+        if persisted_name != original_name:
+            with SessionLocal() as db:
+                supplier = db.scalar(
+                    select(Organization).where(Organization.code == "TEST-SUPPLIER")
+                )
+                assert supplier is not None
+                supplier.name = original_name
+                db.commit()
+
+
 def test_successful_read_persists_last_used_at(client: TestClient) -> None:
     created = create_client(client, scopes=["suppliers:read"])
     client_id = str(created["id"])
@@ -244,6 +358,7 @@ def test_rotate_invalidates_old_token_and_returns_new_token_once(client: TestCli
     rotated_response = client.post(f"/api/admin/integration-clients/{client_id}/rotate")
 
     assert rotated_response.status_code == status.HTTP_200_OK
+    assert rotated_response.headers["cache-control"] == "no-store"
     rotated = rotated_response.json()
     new_token = rotated["token"]
     assert new_token.startswith("m1i_")
@@ -278,7 +393,161 @@ def test_revoke_immediately_invalidates_token(client: TestClient) -> None:
     ).status_code == status.HTTP_401_UNAUTHORIZED
 
 
+def test_create_retries_a_token_prefix_collision(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    collision = deterministic_token("m1i_COLLIDE1", "-existing")
+    retry_collision = deterministic_token("m1i_COLLIDE1", "-candidate")
+    unique = create_integration_token()
+    seed_integration_client(token=collision)
+    candidates = iter([retry_collision, unique])
+    monkeypatch.setattr(admin_catalog, "create_integration_token", lambda: next(candidates))
+    login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+
+    response = client.post(
+        "/api/admin/integration-clients",
+        json={"name": f"碰撞重试-{uuid4().hex[:8]}", "scopes": ["suppliers:read"]},
+    )
+
+    assert response.status_code == status.HTTP_201_CREATED
+    assert response.json()["token"] == unique[0]
+
+
+def test_rotate_retries_a_token_prefix_collision(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = create_client(client, scopes=["suppliers:read"])
+    collision = deterministic_token("m1i_ROTATE_1", "-existing")
+    retry_collision = deterministic_token("m1i_ROTATE_1", "-candidate")
+    unique = create_integration_token()
+    seed_integration_client(token=collision)
+    candidates = iter([retry_collision, unique])
+    monkeypatch.setattr(admin_catalog, "create_integration_token", lambda: next(candidates))
+
+    response = client.post(f"/api/admin/integration-clients/{created['id']}/rotate")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["token"] == unique[0]
+    assert client.get(
+        "/api/test/integration-supplier-reader",
+        headers=bearer(str(created["token"])),
+    ).status_code == status.HTTP_401_UNAUTHORIZED
+
+
+def test_rotate_collision_exhaustion_preserves_old_token(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = create_client(client, scopes=["suppliers:read"])
+    collision = deterministic_token("m1i_EXHAUST1", "-existing")
+    candidate = deterministic_token("m1i_EXHAUST1", "-candidate")
+    seed_integration_client(token=collision)
+    attempts = 0
+
+    def colliding_token() -> tuple[str, str, str]:
+        nonlocal attempts
+        attempts += 1
+        return candidate
+
+    monkeypatch.setattr(admin_catalog, "create_integration_token", colliding_token)
+
+    response = client.post(f"/api/admin/integration-clients/{created['id']}/rotate")
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert attempts == 5
+    assert client.get(
+        "/api/test/integration-supplier-reader",
+        headers=bearer(str(created["token"])),
+    ).status_code == status.HTTP_200_OK
+
+
+def test_collision_retry_does_not_swallow_unrelated_integrity_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    candidate = deterministic_token("m1i_CHECK__1", "-candidate")
+
+    def generated_token() -> tuple[str, str, str]:
+        nonlocal calls
+        calls += 1
+        return candidate
+
+    monkeypatch.setattr(admin_catalog, "create_integration_token", generated_token)
+    with SessionLocal() as db:
+        db.execute(
+            text(
+                "ALTER TABLE integration_clients ADD CONSTRAINT "
+                "ck_integration_clients_review_forced_error "
+                "CHECK (name <> 'FORCED UNRELATED INTEGRITY ERROR')"
+            )
+        )
+        db.commit()
+    try:
+        with TestClient(app, raise_server_exceptions=False) as retry_client:
+            login(retry_client, ADMIN_EMAIL, ADMIN_PASSWORD)
+            response = retry_client.post(
+                "/api/admin/integration-clients",
+                json={
+                    "name": "FORCED UNRELATED INTEGRITY ERROR",
+                    "scopes": ["suppliers:read"],
+                },
+            )
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert calls == 1
+    finally:
+        with SessionLocal() as db:
+            db.execute(
+                text(
+                    "ALTER TABLE integration_clients DROP CONSTRAINT "
+                    "ck_integration_clients_review_forced_error"
+                )
+            )
+            db.commit()
+
+
+def test_create_rejects_naive_expiration_datetime(client: TestClient) -> None:
+    login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+
+    response = client.post(
+        "/api/admin/integration-clients",
+        json={
+            "name": "无时区到期时间",
+            "scopes": ["suppliers:read"],
+            "expires_at": "2035-01-02T03:04:05",
+        },
+    )
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+def test_create_normalizes_aware_expiration_to_utc(client: TestClient) -> None:
+    login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+
+    response = client.post(
+        "/api/admin/integration-clients",
+        json={
+            "name": f"有时区到期时间-{uuid4().hex[:8]}",
+            "scopes": ["suppliers:read"],
+            "expires_at": "2035-01-02T03:04:05+08:00",
+        },
+    )
+
+    assert response.status_code == status.HTTP_201_CREATED
+    assert datetime.fromisoformat(response.json()["expires_at"]) == datetime(
+        2035,
+        1,
+        1,
+        19,
+        4,
+        5,
+        tzinfo=timezone.utc,
+    )
+
+
 def test_supplier_user_cannot_manage_integration_clients(client: TestClient) -> None:
+    created = create_client(client, scopes=["suppliers:read"])
     login(client, SUPPLIER_EMAIL, SUPPLIER_PASSWORD)
 
     assert client.get(
@@ -287,4 +556,10 @@ def test_supplier_user_cannot_manage_integration_clients(client: TestClient) -> 
     assert client.post(
         "/api/admin/integration-clients",
         json={"name": "越权集成方", "scopes": ["suppliers:read"]},
+    ).status_code == status.HTTP_403_FORBIDDEN
+    assert client.post(
+        f"/api/admin/integration-clients/{created['id']}/rotate"
+    ).status_code == status.HTTP_403_FORBIDDEN
+    assert client.post(
+        f"/api/admin/integration-clients/{created['id']}/revoke"
     ).status_code == status.HTTP_403_FORBIDDEN

@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from app.api.deps import DbSession
 from app.core.integration_security import verify_integration_token
+from app.db.session import SessionLocal
 from app.models.entities import IntegrationClient
 
 
@@ -17,6 +18,13 @@ def unauthorized() -> HTTPException:
         detail="集成凭证无效或已失效",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+def persist_last_used_at(client_id: str, used_at: datetime) -> None:
+    with SessionLocal.begin() as usage_db:
+        client = usage_db.get(IntegrationClient, client_id)
+        if client is not None:
+            client.last_used_at = used_at
 
 
 def get_integration_principal(request: Request, db: DbSession) -> IntegrationClient:
@@ -41,13 +49,14 @@ def get_integration_principal(request: Request, db: DbSession) -> IntegrationCli
         client is None
         or not valid_hash
         or not client.is_active
-        or (client.expires_at is not None and client.expires_at <= now)
+        or (
+            client.expires_at is not None
+            and client.expires_at.astimezone(timezone.utc) <= now
+        )
     ):
         raise unauthorized()
 
-    client.last_used_at = now
-    db.commit()
-    db.refresh(client)
+    persist_last_used_at(client.id, now)
     return client
 
 

@@ -24,17 +24,33 @@ function deferred() {
 
 function element({ select = false } = {}) {
   let html = "";
+  const listeners = new Map();
   return {
     checked: false,
     classList: { add() {}, remove() {}, toggle() {} },
-    close() {},
+    close() {
+      this.open = false;
+      this.dispatchEvent({ type: "close" });
+    },
     dataset: {},
     disabled: false,
+    onclick: null,
+    open: false,
     querySelectorAll() { return []; },
-    showModal() {},
+    showModal() { this.open = true; },
     textContent: "",
     value: "",
-    addEventListener() {},
+    addEventListener(type, listener) {
+      const handlers = listeners.get(type) || [];
+      handlers.push(listener);
+      listeners.set(type, handlers);
+    },
+    dispatchEvent(event) {
+      event.preventDefault ||= () => {};
+      for (const listener of listeners.get(event.type) || []) listener(event);
+      if (event.type === "click" && typeof this.onclick === "function") this.onclick(event);
+      return true;
+    },
     get innerHTML() { return html; },
     set innerHTML(value) {
       html = value;
@@ -61,9 +77,14 @@ function adminHarness(api) {
 
   let tokenDialogOpened = false;
   const tokenDialog = element();
-  tokenDialog.showModal = () => { tokenDialogOpened = true; };
+  tokenDialog.showModal = () => {
+    tokenDialog.open = true;
+    tokenDialogOpened = true;
+  };
+  const tokenCloseButtons = [element(), element()];
   elements.set("#integration-token-dialog", tokenDialog);
   elements.set("#integration-token-value", element());
+  elements.set("#copy-integration-token", element());
   elements.set("#integration-client-name", element());
   elements.set("#integration-client-expires-at", element());
   elements.set("#integration-client-scopes", element());
@@ -84,7 +105,10 @@ function adminHarness(api) {
       if (!elements.has(selector)) elements.set(selector, element());
       return elements.get(selector);
     },
-    querySelectorAll() { return []; },
+    querySelectorAll(selector) {
+      if (selector === "[data-close-integration-token]") return tokenCloseButtons;
+      return [];
+    },
   };
   const context = vm.createContext({
     console,
@@ -111,6 +135,7 @@ function adminHarness(api) {
     context,
     elements,
     storageWrites,
+    tokenCloseButtons,
     tokenDialogOpened: () => tokenDialogOpened,
   };
 }
@@ -311,4 +336,35 @@ test("creating an integration client shows the token only in the warning dialog"
     },
     path: "/api/admin/integration-clients",
   });
+});
+
+
+test("escape, native close, and close buttons all clear the one-time token", () => {
+  const token = "m1i_escape-must-not-leave-a-secret";
+  const harness = adminHarness(async () => []);
+  const dialog = harness.elements.get("#integration-token-dialog");
+  const tokenValue = harness.elements.get("#integration-token-value");
+  const copyButton = harness.elements.get("#copy-integration-token");
+  const showToken = () => vm.runInContext(
+    `showIntegrationToken({name: "ERP", token_prefix: "m1i_escape", token: ${JSON.stringify(token)}})`,
+    harness.context,
+  );
+
+  vm.runInContext("bindIntegrationTokenDialog()", harness.context);
+
+  showToken();
+  dialog.dispatchEvent({ type: "cancel" });
+  dialog.dispatchEvent({ type: "close" });
+  assert.equal(tokenValue.textContent, "");
+  assert.equal(copyButton.onclick, null);
+
+  showToken();
+  dialog.dispatchEvent({ type: "close" });
+  assert.equal(tokenValue.textContent, "");
+  assert.equal(copyButton.onclick, null);
+
+  showToken();
+  harness.tokenCloseButtons[0].dispatchEvent({ type: "click" });
+  assert.equal(tokenValue.textContent, "");
+  assert.equal(copyButton.onclick, null);
 });

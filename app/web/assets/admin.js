@@ -192,10 +192,24 @@ function showIntegrationToken(result) {
   document.querySelector("#integration-token-dialog").showModal();
 }
 
-function closeIntegrationToken() {
-  document.querySelector("#integration-token-dialog").close();
+function clearIntegrationToken() {
   document.querySelector("#integration-token-value").textContent = "";
   document.querySelector("#copy-integration-token").onclick = null;
+}
+
+function closeIntegrationToken() {
+  const dialog = document.querySelector("#integration-token-dialog");
+  clearIntegrationToken();
+  if (dialog.open) dialog.close();
+}
+
+function bindIntegrationTokenDialog() {
+  const dialog = document.querySelector("#integration-token-dialog");
+  dialog.addEventListener("cancel", clearIntegrationToken);
+  dialog.addEventListener("close", clearIntegrationToken);
+  document.querySelectorAll("[data-close-integration-token]").forEach((button) => {
+    button.addEventListener("click", closeIntegrationToken);
+  });
 }
 
 async function createIntegrationClient(event) {
@@ -495,7 +509,7 @@ async function bootAdmin() {
   document.querySelector("#suppliers-search").addEventListener("input", renderSuppliers);
   document.querySelectorAll("[data-close-review]").forEach((button) => button.addEventListener("click", () => document.querySelector("#application-review-dialog").close()));
   document.querySelectorAll("[data-close-brand-cooperation]").forEach((button) => button.addEventListener("click", () => document.querySelector("#brand-cooperation-dialog").close()));
-  document.querySelectorAll("[data-close-integration-token]").forEach((button) => button.addEventListener("click", closeIntegrationToken));
+  bindIntegrationTokenDialog();
   document.querySelector("#approve-application").addEventListener("click", approveSelectedApplication);
   document.querySelector("#reject-application").addEventListener("click", rejectSelectedApplication);
   document.querySelector("#brand-cooperation-brand").addEventListener("change", syncBrandCooperationForm);
