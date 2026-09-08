@@ -24,8 +24,9 @@ function deferred() {
 
 function element() {
   let html = "";
+  const listeners = new Map();
   return {
-    addEventListener() {},
+    addEventListener(type, listener) { listeners.set(type, listener); },
     classList: { add() {}, remove() {}, toggle() {} },
     dataset: {},
     disabled: false,
@@ -37,6 +38,9 @@ function element() {
     innerHTMLWrites: 0,
     modalOpened: false,
     reset() {},
+    dispatch(type, event = {}) {
+      return listeners.get(type)?.({ target: this, ...event });
+    },
     showModal() { this.modalOpened = true; },
     textContent: "",
     value: "",
@@ -269,6 +273,64 @@ test("current product and offer request failures still reject", async () => {
       new RegExp(`current ${resource} failure`),
     );
   }
+});
+
+
+test("offer brand changes catch the current load failure and show a toast", async () => {
+  const harness = supplierListsHarness(async (requestPath) => {
+    if (requestPath.startsWith("/api/offers?")) throw new Error("current brand filter failure");
+    return [];
+  });
+  harness.evaluate("bindEvents()");
+  const brand = harness.evaluate('document.querySelector("#offers-brand")');
+  brand.value = "品牌 A";
+
+  await assert.doesNotReject(brand.dispatch("change"));
+
+  assert.equal(harness.toasts.length, 1);
+  assert.match(harness.toasts[0].join(" "), /报价加载失败/);
+  assert.match(harness.toasts[0].join(" "), /current brand filter failure/);
+});
+
+
+test("offer search catches the current debounced load failure without an unhandled rejection", async () => {
+  const harness = supplierListsHarness(async (requestPath) => {
+    if (requestPath.startsWith("/api/offers?")) throw new Error("current offer search failure");
+    return [];
+  });
+  harness.evaluate("bindEvents()");
+  const search = harness.evaluate('document.querySelector("#offers-search")');
+  search.value = "needle";
+
+  search.dispatch("input");
+  await new Promise((resolve) => setTimeout(resolve, 320));
+
+  assert.equal(harness.toasts.length, 1);
+  assert.match(harness.toasts[0].join(" "), /报价加载失败/);
+  assert.match(harness.toasts[0].join(" "), /current offer search failure/);
+});
+
+
+test("stale offer filter rejection stays silent while only the latest failure toasts", async () => {
+  const staleRequest = deferred();
+  const currentRequest = deferred();
+  const harness = supplierListsHarness((requestPath) => {
+    const query = new URL(requestPath, "https://supplier.test").searchParams.get("q");
+    if (query === "old") return staleRequest.promise;
+    if (query === "new") return currentRequest.promise;
+    return Promise.resolve([]);
+  });
+
+  const staleLoad = harness.evaluate('loadOffersWithToast("old")');
+  const currentLoad = harness.evaluate('loadOffersWithToast("new")');
+  staleRequest.reject(new Error("stale offer filter failure"));
+  currentRequest.reject(new Error("current offer filter failure"));
+
+  await assert.doesNotReject(staleLoad);
+  await assert.doesNotReject(currentLoad);
+  assert.equal(harness.toasts.length, 1);
+  assert.match(harness.toasts[0].join(" "), /current offer filter failure/);
+  assert.doesNotMatch(harness.toasts[0].join(" "), /stale offer filter failure/);
 });
 
 

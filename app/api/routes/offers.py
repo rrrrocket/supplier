@@ -58,7 +58,7 @@ def list_offers(
     db: DbSession,
     user: SupplierUser,
     q: str | None = Query(default=None, max_length=120),
-    brand: str | None = Query(default=None, max_length=120),
+    brand: str | None = Query(default=None, max_length=160),
     offer_status: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=200, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),

@@ -413,8 +413,11 @@ def test_contract_migration_downgrade_backfills_legacy_display_strings() -> None
 
         run_migrations(migration_url, CONTRACT_REVISION)
         with connect(migration_url, database_name) as connection:
+            boundary_brand_name = "界" * 120
+            assert len(boundary_brand_name) == 120
             connection.execute(
-                "UPDATE brands SET name = 'Canonical Brand' WHERE id = 'contract-brand'"
+                "UPDATE brands SET name = %s WHERE id = 'contract-brand'",
+                (boundary_brand_name,),
             )
             connection.execute(
                 "UPDATE supplier_skus SET supplier_sku_code = 'CANONICAL-SKU' "
@@ -438,7 +441,7 @@ def test_contract_migration_downgrade_backfills_legacy_display_strings() -> None
                 connection.execute(
                     "SELECT brand FROM products WHERE id = 'contract-product'"
                 )
-            ) == [("Canonical Brand",)]
+            ) == [(boundary_brand_name,)]
             assert list(
                 connection.execute(
                     "SELECT supplier_sku FROM supplier_offers WHERE id = 'contract-offer'"
@@ -456,9 +459,11 @@ def test_contract_downgrade_rejects_referenced_brand_names_over_120_without_muta
 
         run_migrations(migration_url, CONTRACT_REVISION)
         with connect(migration_url, database_name) as connection:
+            oversized_brand_name = "界" * 121
+            assert len(oversized_brand_name) == 121
             connection.execute(
                 "UPDATE brands SET name = %s WHERE id = 'contract-brand'",
-                ("L" * 121,),
+                (oversized_brand_name,),
             )
 
         with pytest.raises(subprocess.CalledProcessError) as exc_info:

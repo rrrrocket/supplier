@@ -304,6 +304,14 @@ async function loadOffers(query = null, brand = null) {
   renderOffers();
 }
 
+async function loadOffersWithToast(query = null, brand = null) {
+  try {
+    await loadOffers(query, brand);
+  } catch (error) {
+    Matrix.toast("报价加载失败", error.message, "error");
+  }
+}
+
 function renderOffers() {
   const tbody = document.querySelector("#offers-tbody");
   const totalPages = Math.max(1, Math.ceil(state.offers.length / tablePageSize));
@@ -1120,8 +1128,8 @@ function bindEvents() {
   });
 
   document.querySelector("#products-search").addEventListener("input", debounce((event) => loadProducts(event.target.value)));
-  document.querySelector("#offers-search").addEventListener("input", debounce((event) => loadOffers(event.target.value)));
-  document.querySelector("#offers-brand").addEventListener("change", (event) => loadOffers(null, event.target.value));
+  document.querySelector("#offers-search").addEventListener("input", debounce((event) => loadOffersWithToast(event.target.value)));
+  document.querySelector("#offers-brand").addEventListener("change", (event) => loadOffersWithToast(null, event.target.value));
   document.querySelector("#products-prev-page").addEventListener("click", () => {
     state.productPage = Math.max(1, state.productPage - 1);
     renderProducts();

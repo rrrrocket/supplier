@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from fastapi import Response
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.db.session import SessionLocal
@@ -15,6 +15,7 @@ from app.models.entities import (
     Organization,
     Product,
     SupplierBrandCooperation,
+    SupplierOffer,
     SupplierSku,
     User,
 )
@@ -188,51 +189,103 @@ def test_admin_can_create_deduplicate_and_search_brands(client: TestClient) -> N
         assert created_events == 1
 
 
-def test_supplier_can_create_product_for_assigned_brand_up_to_160_characters(
+def test_supplier_can_filter_offer_by_exact_160_character_assigned_brand(
     client: TestClient,
 ) -> None:
     suffix = uuid4().hex[:8]
-    long_brand_name = f"{'长' * 131}-{suffix}"
-    assert 121 <= len(long_brand_name) <= 160
-    login_admin(client)
-    created_brand = client.post(
-        "/api/admin/brands",
-        json={
-            "name": long_brand_name,
-            "code": f"LONG-{suffix}",
-        },
-    )
-    assert created_brand.status_code == 201
-    brand_id = created_brand.json()["id"]
-    with SessionLocal() as db:
-        supplier = db.scalar(
-            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+    long_brand_name = f"{'长' * 151}-{suffix}"
+    assert len(long_brand_name) == 160
+    brand_id: str | None = None
+    product_id: str | None = None
+    offer_id: str | None = None
+    cooperation_id: str | None = None
+    try:
+        login_admin(client)
+        created_brand = client.post(
+            "/api/admin/brands",
+            json={
+                "name": long_brand_name,
+                "code": f"LONG-{suffix}",
+            },
         )
-        assert supplier is not None
-        supplier_id = supplier.id
+        assert created_brand.status_code == 201
+        brand_id = created_brand.json()["id"]
+        with SessionLocal() as db:
+            supplier = db.scalar(
+                select(Organization).where(Organization.code == "TEST-SUPPLIER")
+            )
+            assert supplier is not None
+            supplier_id = supplier.id
 
-    assigned = client.put(
-        f"/api/admin/suppliers/{supplier_id}/brands/{brand_id}/cooperation",
-        json={"commercial_mode": "SELF_PURCHASE"},
-    )
-    assert assigned.status_code == 200
-    assert assigned.json()["status"] == "ACTIVE"
+        assigned = client.put(
+            f"/api/admin/suppliers/{supplier_id}/brands/{brand_id}/cooperation",
+            json={"commercial_mode": "SELF_PURCHASE"},
+        )
+        assert assigned.status_code == 200
+        assert assigned.json()["status"] == "ACTIVE"
+        cooperation_id = assigned.json()["id"]
 
-    client.post("/api/auth/logout")
-    login_supplier(client)
-    product = client.post(
-        "/api/products",
-        json={
-            "name": f"长品牌商品-{suffix}",
-            "brand": long_brand_name,
-            "category": "工业自动化",
-            "status": "ACTIVE",
-        },
-    )
+        client.post("/api/auth/logout")
+        login_supplier(client)
+        product = client.post(
+            "/api/products",
+            json={
+                "name": f"长品牌商品-{suffix}",
+                "brand": long_brand_name,
+                "category": "工业自动化",
+                "status": "ACTIVE",
+            },
+        )
+        assert product.status_code == 201
+        product_id = product.json()["id"]
+        assert product.json()["brand_id"] == brand_id
+        assert product.json()["brand"] == long_brand_name
 
-    assert product.status_code == 201
-    assert product.json()["brand_id"] == brand_id
-    assert product.json()["brand"] == long_brand_name
+        offer = client.post(
+            "/api/offers",
+            json={
+                "product_id": product_id,
+                "supplier_sku_code": f"LONG-BRAND-{suffix}",
+                "price": "88.0000",
+                "status": "ACTIVE",
+            },
+        )
+        assert offer.status_code == 201
+        offer_id = offer.json()["id"]
+
+        brands = client.get("/api/offers/brands")
+        assert brands.status_code == 200
+        assert long_brand_name in brands.json()
+
+        filtered = client.get("/api/offers", params={"brand": long_brand_name})
+        assert filtered.status_code == 200
+        assert [item["id"] for item in filtered.json()] == [offer_id]
+        assert filtered.json()[0]["brand"] == long_brand_name
+    finally:
+        entity_ids = [
+            entity_id
+            for entity_id in (brand_id, cooperation_id, product_id, offer_id)
+            if entity_id is not None
+        ]
+        with SessionLocal() as db:
+            if offer_id is not None:
+                db.execute(delete(SupplierOffer).where(SupplierOffer.id == offer_id))
+            if product_id is not None:
+                db.execute(
+                    delete(SupplierSku).where(SupplierSku.product_id == product_id)
+                )
+                db.execute(delete(Product).where(Product.id == product_id))
+            if cooperation_id is not None:
+                db.execute(
+                    delete(SupplierBrandCooperation).where(
+                        SupplierBrandCooperation.id == cooperation_id
+                    )
+                )
+            if brand_id is not None:
+                db.execute(delete(Brand).where(Brand.id == brand_id))
+            if entity_ids:
+                db.execute(delete(EventLog).where(EventLog.entity_id.in_(entity_ids)))
+            db.commit()
 
 
 def test_create_brand_recovers_canonical_row_after_unique_insert_race(
