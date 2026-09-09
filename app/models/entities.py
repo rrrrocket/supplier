@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -27,11 +28,13 @@ from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, utcnow
 class OrganizationType(str, Enum):
     PLATFORM = "PLATFORM"
     SUPPLIER = "SUPPLIER"
+    OPERATOR = "OPERATOR"
 
 
 class UserRole(str, Enum):
     PLATFORM_ADMIN = "PLATFORM_ADMIN"
     SUPPLIER = "SUPPLIER"
+    OPERATOR = "OPERATOR"
 
 
 class SupplierStatus(str, Enum):
@@ -74,6 +77,23 @@ class ImportStatus(str, Enum):
     FAILED = "FAILED"
 
 
+class CooperationStatus(str, Enum):
+    PENDING = "PENDING"
+    ACTIVE = "ACTIVE"
+    REJECTED = "REJECTED"
+    TERMINATED = "TERMINATED"
+
+
+class BindingStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+
+
+class IntegrationClientType(str, Enum):
+    SYSTEM = "SYSTEM"
+    OPERATOR = "OPERATOR"
+
+
 class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "organizations"
 
@@ -112,8 +132,21 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class IntegrationClient(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "integration_clients"
+    __table_args__ = (
+        CheckConstraint(
+            "(client_type = 'SYSTEM' AND owner_organization_id IS NULL) OR "
+            "(client_type = 'OPERATOR' AND owner_organization_id IS NOT NULL)",
+            name="ck_integration_client_owner",
+        ),
+    )
 
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    client_type: Mapped[str] = mapped_column(
+        String(30), default=IntegrationClientType.SYSTEM.value, nullable=False
+    )
+    owner_organization_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
     token_prefix: Mapped[str] = mapped_column(
         String(24), unique=True, nullable=False, index=True
     )
@@ -188,6 +221,122 @@ class SupplierApplication(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class OperatorApplication(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "operator_applications"
+
+    application_no: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
+    contact_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    phone: Mapped[str] = mapped_column(String(60), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    company_name: Mapped[str | None] = mapped_column(String(240))
+    unified_social_credit_code: Mapped[str | None] = mapped_column(String(40), index=True)
+    operator_type: Mapped[str | None] = mapped_column(String(80))
+    province: Mapped[str | None] = mapped_column(String(80))
+    city: Mapped[str | None] = mapped_column(String(80))
+    website: Mapped[str | None] = mapped_column(String(255))
+    erp_name: Mapped[str | None] = mapped_column(String(120))
+    sales_channels: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    categories: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    target_markets: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    qualification_files: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    message: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        String(30), default=SupplierStatus.PENDING.value, nullable=False, index=True
+    )
+    review_notes: Mapped[str | None] = mapped_column(Text)
+    approved_organization_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="SET NULL"), index=True
+    )
+    reviewed_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class OperatorProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "operator_profiles"
+
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), unique=True, nullable=False, index=True
+    )
+    company_name: Mapped[str | None] = mapped_column(String(240))
+    unified_social_credit_code: Mapped[str | None] = mapped_column(String(40), index=True)
+    operator_type: Mapped[str | None] = mapped_column(String(80))
+    province: Mapped[str | None] = mapped_column(String(80))
+    city: Mapped[str | None] = mapped_column(String(80))
+    contact_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    contact_phone: Mapped[str] = mapped_column(String(60), nullable=False)
+    contact_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    website: Mapped[str | None] = mapped_column(String(255))
+    erp_name: Mapped[str | None] = mapped_column(String(120))
+    sales_channels: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    categories: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    target_markets: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    qualification_files: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+
+
+class OperatorSupplierCooperation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "operator_supplier_cooperations"
+    __table_args__ = (
+        Index(
+            "uq_open_operator_supplier_cooperation",
+            "operator_id",
+            "supplier_id",
+            unique=True,
+            postgresql_where=text("status IN ('PENDING', 'ACTIVE')"),
+        ),
+    )
+
+    operator_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    supplier_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(30), default=CooperationStatus.PENDING.value, nullable=False, index=True
+    )
+    categories: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    brands: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    sales_channels: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    target_markets: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    message: Mapped[str | None] = mapped_column(Text)
+    response_notes: Mapped[str | None] = mapped_column(Text)
+    requested_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    responded_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    terminated_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    terminated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ErpBinding(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "erp_bindings"
+
+    cooperation_id: Mapped[str] = mapped_column(
+        ForeignKey("operator_supplier_cooperations.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    operator_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    supplier_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(30), default=BindingStatus.ACTIVE.value, nullable=False, index=True
+    )
+    bound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    unbound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Brand(UUIDPrimaryKeyMixin, TimestampMixin, Base):

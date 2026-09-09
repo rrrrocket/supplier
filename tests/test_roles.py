@@ -7,7 +7,12 @@ from sqlalchemy import select
 
 from app.core.security import hash_password
 from app.db.session import SessionLocal
-from app.models.entities import Organization, OrganizationType, User
+from app.models.entities import Organization, OrganizationType, User, UserRole
+
+
+def test_operator_is_a_first_class_organization_and_user_identity() -> None:
+    assert OrganizationType.OPERATOR.value == "OPERATOR"
+    assert UserRole.OPERATOR.value == "OPERATOR"
 
 
 def test_new_supplier_user_defaults_to_supplier_role(client: TestClient) -> None:
