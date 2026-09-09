@@ -34,6 +34,7 @@ function element() {
     },
     close() { this.open = false; this.dispatch("close"); },
     dataset: {},
+    disabled: false,
     dispatch(type, event = {}) {
       const results = (listeners.get(type) || []).map((listener) => listener({
         preventDefault() {},
@@ -62,11 +63,13 @@ function supplierIntegrationHarness({ api, confirm = () => true } = {}) {
   const windowListeners = new Map();
   const paginationCalls = [];
   const form = element();
+  const submitButton = element();
   form.elements.name = { value: "仓储 ERP" };
   const scopes = ["supplier-skus:read", "supplier-costs:read"].map((value) => ({
     checked: true,
     value,
   }));
+  form.querySelector = (selector) => selector === '[type="submit"]' ? submitButton : null;
   form.querySelectorAll = (selector) => selector === '[name="scopes"]:checked' ? scopes : [];
   elements.set("#supplier-client-form", form);
   elements.set("#supplier-clients-tbody", element());
@@ -74,6 +77,7 @@ function supplierIntegrationHarness({ api, confirm = () => true } = {}) {
   elements.set("#supplier-token-dialog", element());
   elements.set("#supplier-token-value", element());
   elements.set("#copy-supplier-token", element());
+  elements.set("#logout-button", element());
   elements.set("[data-close-supplier-token]", element());
 
   const document = {
@@ -127,7 +131,7 @@ function supplierIntegrationHarness({ api, confirm = () => true } = {}) {
   vm.runInContext(source, context);
   assert.ok(window.SupplierIntegration, "supplier integration module must register");
   window.SupplierIntegration.init();
-  return { elements, form, paginationCalls, toasts, window };
+  return { elements, form, paginationCalls, submitButton, toasts, window };
 }
 
 function client(overrides = {}) {
@@ -251,4 +255,65 @@ test("the current failed list request shows an error toast", async () => {
   await harness.window.SupplierIntegration.loadSupplierClients();
 
   assert.deepEqual(harness.toasts, [["凭证加载失败", "网络中断", "error"]]);
+});
+
+test("pending creation is single-flight and route exit invalidates its token response", async () => {
+  const creation = deferred();
+  const requests = [];
+  const harness = supplierIntegrationHarness({
+    api: async (requestPath, options) => {
+      requests.push([requestPath, options]);
+      return options?.method === "POST" ? creation.promise : page();
+    },
+  });
+
+  const first = harness.form.dispatch("submit");
+  const duplicate = harness.form.dispatch("submit");
+  const disabledWhilePending = harness.submitButton.disabled;
+  harness.window.location.hash = "#products";
+  harness.window.dispatch("hashchange");
+  creation.resolve(client({ token: "abandoned-create-secret" }));
+  await Promise.all([first, duplicate]);
+
+  assert.equal(
+    requests.filter(([, options]) => options?.method === "POST").length,
+    1,
+  );
+  assert.equal(disabledWhilePending, true);
+  assert.equal(harness.submitButton.disabled, false);
+  assert.equal(harness.elements.get("#supplier-token-value").textContent, "");
+  assert.equal(harness.elements.get("#supplier-token-dialog").open, false);
+});
+
+test("pending rotation is single-flight and logout invalidation ignores its token response", async () => {
+  const rotation = deferred();
+  const requests = [];
+  const harness = supplierIntegrationHarness({
+    api: async (requestPath, options) => {
+      requests.push([requestPath, options]);
+      return requestPath.endsWith("/rotate") ? rotation.promise : page([client()]);
+    },
+  });
+  await harness.window.SupplierIntegration.loadSupplierClients();
+  const rotateButton = element();
+  rotateButton.dataset.rotate = "client-a";
+  const rotate = () => harness.elements.get("#supplier-clients-tbody").dispatch("click", {
+    target: { closest: () => rotateButton },
+  });
+
+  const first = rotate();
+  const duplicate = rotate();
+  const disabledWhilePending = rotateButton.disabled;
+  harness.elements.get("#logout-button").dispatch("click");
+  rotation.resolve(client({ token: "abandoned-rotate-secret" }));
+  await Promise.all([first, duplicate]);
+
+  assert.equal(
+    requests.filter(([requestPath]) => requestPath.endsWith("/rotate")).length,
+    1,
+  );
+  assert.equal(disabledWhilePending, true);
+  assert.equal(rotateButton.disabled, false);
+  assert.equal(harness.elements.get("#supplier-token-value").textContent, "");
+  assert.equal(harness.elements.get("#supplier-token-dialog").open, false);
 });

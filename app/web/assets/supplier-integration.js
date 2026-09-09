@@ -5,21 +5,49 @@
     page: 1,
     pageSize: 50,
     requestRevision: 0,
+    writeGeneration: 0,
+    writePending: false,
   };
 
   function tokenValue() {
     return document.querySelector("#supplier-token-value");
   }
 
-  function clearSupplierToken() {
+  function clearTokenValue() {
     const value = tokenValue();
     if (value) value.textContent = "";
   }
 
+  function clearSupplierToken() {
+    state.writeGeneration += 1;
+    clearTokenValue();
+    const dialog = document.querySelector("#supplier-token-dialog");
+    if (dialog?.open) dialog.close();
+  }
+
   function showSupplierToken(token) {
-    clearSupplierToken();
+    clearTokenValue();
     tokenValue().textContent = String(token || "");
     document.querySelector("#supplier-token-dialog").showModal();
+  }
+
+  function beginWrite(control) {
+    if (state.writePending) return null;
+    state.writePending = true;
+    state.writeGeneration += 1;
+    clearTokenValue();
+    control.disabled = true;
+    return { control, generation: state.writeGeneration };
+  }
+
+  function isCurrentWrite(write) {
+    return write.generation === state.writeGeneration
+      && window.location.hash === "#erp-integration";
+  }
+
+  function endWrite(write) {
+    write.control.disabled = false;
+    state.writePending = false;
   }
 
   function visibleClient(client) {
@@ -80,6 +108,7 @@
   async function submitSupplierClient(event) {
     event.preventDefault();
     const form = event.currentTarget;
+    const submitButton = form.querySelector('[type="submit"]');
     const scopes = [...form.querySelectorAll('[name="scopes"]:checked')].map((input) => input.value);
     if (!scopes.length) {
       Matrix.toast("请选择权限", "至少选择一个只读权限。", "error");
@@ -87,7 +116,8 @@
     }
     const expiresInput = form.elements.expires_at;
     const expiresAt = expiresInput?.value ? new Date(expiresInput.value).toISOString() : null;
-    clearSupplierToken();
+    const write = beginWrite(submitButton);
+    if (!write) return;
     try {
       const result = await Matrix.api("/api/supplier/integration-clients", {
         method: "POST",
@@ -97,45 +127,57 @@
           expires_at: expiresAt,
         },
       });
+      if (!isCurrentWrite(write)) return;
       showSupplierToken(result.token);
       form.reset();
       await loadSupplierClients();
     } catch (error) {
-      Matrix.toast("凭证创建失败", error.message, "error");
+      if (isCurrentWrite(write)) Matrix.toast("凭证创建失败", error.message, "error");
+    } finally {
+      endWrite(write);
     }
   }
 
-  async function rotateSupplierClient(clientId) {
-    clearSupplierToken();
+  async function rotateSupplierClient(clientId, button) {
+    const write = beginWrite(button);
+    if (!write) return;
     try {
       const result = await Matrix.api(`/api/supplier/integration-clients/${clientId}/rotate`, {
         method: "POST",
       });
+      if (!isCurrentWrite(write)) return;
       showSupplierToken(result.token);
       await loadSupplierClients();
     } catch (error) {
-      Matrix.toast("凭证轮换失败", error.message, "error");
+      if (isCurrentWrite(write)) Matrix.toast("凭证轮换失败", error.message, "error");
+    } finally {
+      endWrite(write);
     }
   }
 
-  async function revokeSupplierClient(clientId) {
+  async function revokeSupplierClient(clientId, button) {
     if (!confirm("确认撤销这个只读 API 凭证？撤销后无法恢复。")) return;
+    const write = beginWrite(button);
+    if (!write) return;
     try {
       await Matrix.api(`/api/supplier/integration-clients/${clientId}/revoke`, {
         method: "POST",
       });
+      if (!isCurrentWrite(write)) return;
       Matrix.toast("凭证已撤销", "该凭证已无法继续访问 ERP API。", "success");
       await loadSupplierClients();
     } catch (error) {
-      Matrix.toast("凭证撤销失败", error.message, "error");
+      if (isCurrentWrite(write)) Matrix.toast("凭证撤销失败", error.message, "error");
+    } finally {
+      endWrite(write);
     }
   }
 
   function handleClientAction(event) {
     const button = event.target.closest("[data-rotate], [data-revoke]");
     if (!button) return undefined;
-    if (button.dataset.rotate) return rotateSupplierClient(button.dataset.rotate);
-    if (button.dataset.revoke) return revokeSupplierClient(button.dataset.revoke);
+    if (button.dataset.rotate) return rotateSupplierClient(button.dataset.rotate, button);
+    if (button.dataset.revoke) return revokeSupplierClient(button.dataset.revoke, button);
     return undefined;
   }
 
@@ -153,6 +195,7 @@
     document.querySelector("#copy-supplier-token").addEventListener("click", () => {
       navigator.clipboard.writeText(tokenValue().textContent);
     });
+    document.querySelector("#logout-button")?.addEventListener("click", clearSupplierToken);
     window.addEventListener("hashchange", () => {
       if (window.location.hash !== "#erp-integration") clearSupplierToken();
     });
