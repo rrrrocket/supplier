@@ -46,3 +46,10 @@ def test_operator_credential_only_reads_business_data_after_binding(client: Test
     )
     assert response.status_code == 200
     assert response.json()["items"]
+
+    assert client.post(
+        f"/api/supplier-operator/cooperations/{cooperation.json()['id']}/terminate"
+    ).status_code == 200
+    assert client.get(
+        f"/api/integrations/v1/suppliers/{supplier_id}/brands", headers=headers
+    ).status_code == 404

@@ -18,7 +18,7 @@ def get_current_user(request: Request, db: DbSession) -> User:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录")
 
     user = db.get(User, user_id)
-    if user is None or not user.is_active:
+    if user is None or not user.is_active or not user.organization.is_active:
         request.session.clear()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录状态已失效")
     return user

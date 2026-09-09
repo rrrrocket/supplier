@@ -75,6 +75,11 @@ def rotate_operator_client(client_id: str, response: Response, db: DbSession, us
     client = owned_client(db, client_id, user.organization_id)
     if not client.is_active: raise HTTPException(status_code=409, detail="已停用凭证不能轮换")
     plaintext = rotate_client_with_unique_token(db, client)
+    record_event(
+        db, event_type="OPERATOR_INTEGRATION_CLIENT_ROTATED", entity_type="IntegrationClient",
+        entity_id=client.id, organization_id=user.organization_id,
+        actor_type="USER", actor_id=user.id,
+    )
     db.commit(); db.refresh(client); response.headers["Cache-Control"] = "no-store"
     return integration_client_credential(client, plaintext)
 
@@ -82,6 +87,11 @@ def rotate_operator_client(client_id: str, response: Response, db: DbSession, us
 @router.post("/integration-clients/{client_id}/revoke", response_model=IntegrationClientView)
 def revoke_operator_client(client_id: str, db: DbSession, user: OperatorUser) -> IntegrationClientView:
     client = owned_client(db, client_id, user.organization_id); client.is_active = False
+    record_event(
+        db, event_type="OPERATOR_INTEGRATION_CLIENT_REVOKED", entity_type="IntegrationClient",
+        entity_id=client.id, organization_id=user.organization_id,
+        actor_type="USER", actor_id=user.id,
+    )
     db.commit(); db.refresh(client)
     return integration_client_view(client)
 

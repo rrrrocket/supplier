@@ -66,6 +66,11 @@ def test_operator_detail_returns_full_contact_and_records_access(client: TestCli
     assert response.status_code == 200
     assert response.json()["contact_phone"] == "13812345678"
     assert response.json()["contact_email"] == "contact@supplier.example"
+    with SessionLocal() as db:
+        assert db.scalar(select(EventLog).where(
+            EventLog.event_type == "SUPPLIER_CONTACT_VIEWED",
+            EventLog.entity_id == supplier_id,
+        )) is not None
 
 
 def test_cooperation_acceptance_creates_binding_and_termination_disables_it(client: TestClient) -> None:

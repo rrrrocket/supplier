@@ -180,7 +180,7 @@ function renderIntegrationClients() {
     const usable = item.is_active && !expired;
     return `
     <tr>
-      <td><div class="table-primary">${Matrix.escapeHtml(item.name)}</div><div class="table-secondary">${Matrix.escapeHtml(item.id)}</div></td>
+      <td><div class="table-primary">${Matrix.escapeHtml(item.name)}</div><div class="table-secondary">${Matrix.escapeHtml(item.client_type)}${item.owner_organization_id ? ` · ${Matrix.escapeHtml(item.owner_organization_id)}` : " · 平台级"}</div></td>
       <td><code>${Matrix.escapeHtml(item.token_prefix)}</code></td>
       <td><div class="tag-list">${(item.scopes || []).map((scope) => `<span class="tag">${Matrix.escapeHtml(scope)}</span>`).join("")}</div></td>
       <td>${item.expires_at ? Matrix.formatDate(item.expires_at, true) : "永不过期"}</td>

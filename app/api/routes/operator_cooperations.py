@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import DbSession, OperatorUser
 from app.models.entities import (
@@ -59,7 +60,12 @@ def create_cooperation(payload: CooperationCreate, db: DbSession, user: Operator
         sales_channels=payload.sales_channels, target_markets=payload.target_markets,
         message=(payload.message or "").strip() or None,
     )
-    db.add(item); db.flush()
+    db.add(item)
+    try:
+        db.flush()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="双方已有待确认或有效合作") from error
     record_event(db, event_type="OPERATOR_COOPERATION_CREATED", entity_type="OperatorSupplierCooperation", entity_id=item.id, organization_id=user.organization_id, actor_type="USER", actor_id=user.id)
     db.commit(); db.refresh(item)
     return view(db, item)

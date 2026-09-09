@@ -53,6 +53,11 @@ def test_operator_application_rejects_each_missing_required_field(client: TestCl
         invalid.pop(key)
         assert client.post("/api/public/operator-applications", json=invalid).status_code == 422
 
+    assert client.post("/api/public/operator-applications", json={
+        "contact_name": "  ", "phone": "      ",
+        "email": f"blank-{uuid4().hex[:8]}@example.com",
+    }).status_code == 422
+
 
 def test_admin_approval_creates_operator_identity_and_profile(client: TestClient) -> None:
     email = f"approved-{uuid4().hex[:8]}@example.com"

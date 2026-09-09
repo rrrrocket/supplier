@@ -71,6 +71,8 @@ def list_suppliers(
     db: DbSession, page: int = Query(1, ge=1), page_size: int = Query(50),
     keyword: str | None = None, category: str | None = None, region: str | None = None,
     supplier_type: str | None = None, cooperation_mode: str | None = None,
+    supports_dropshipping: bool | None = None, supports_oem: bool | None = None,
+    has_export_experience: bool | None = None,
 ) -> SupplierDirectoryPage:
     if page_size not in {50, 100, 200}:
         raise HTTPException(status_code=422, detail="页面行数仅支持 50、100 或 200")
@@ -85,6 +87,9 @@ def list_suppliers(
             and (not region or region in {profile.province, profile.city})
             and (not supplier_type or profile.supplier_type == supplier_type)
             and (not cooperation_mode or cooperation_mode in profile.cooperation_modes)
+            and (supports_dropshipping is None or profile.supports_dropshipping == supports_dropshipping)
+            and (supports_oem is None or profile.supports_oem == supports_oem)
+            and (has_export_experience is None or profile.has_export_experience == has_export_experience)
         )
     filtered = [row for row in rows if matches(row)]
     start = (page - 1) * page_size
@@ -100,7 +105,7 @@ def supplier_detail(supplier_id: str, request: Request, db: DbSession) -> Suppli
     if pair is None:
         raise HTTPException(status_code=404, detail="供应商不存在")
     user = db.get(User, request.session.get("user_id")) if request.session.get("user_id") else None
-    full = bool(user and user.is_active and user.role == UserRole.OPERATOR.value
+    full = bool(user and user.is_active and user.organization.is_active and user.role == UserRole.OPERATOR.value
                 and user.organization.organization_type == OrganizationType.OPERATOR.value)
     if full and user:
         record_event(

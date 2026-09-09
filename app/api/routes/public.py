@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from secrets import token_hex
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import DbSession
 from app.models.entities import OperatorApplication, SupplierApplication, SupplierStatus
@@ -35,12 +36,15 @@ def create_operator_application(
     payload: OperatorApplicationCreate, db: DbSession
 ) -> OperatorApplicationCreated:
     email = str(payload.email).lower()
-    duplicate = db.scalar(
-        select(OperatorApplication).where(
-            func.lower(OperatorApplication.email) == email,
-            OperatorApplication.status == SupplierStatus.PENDING.value,
+    duplicate_checks = [func.lower(OperatorApplication.email) == email]
+    if payload.unified_social_credit_code:
+        duplicate_checks.append(
+            OperatorApplication.unified_social_credit_code == payload.unified_social_credit_code
         )
-    )
+    duplicate = db.scalar(select(OperatorApplication).where(
+        or_(*duplicate_checks),
+        OperatorApplication.status == SupplierStatus.PENDING.value,
+    ))
     if duplicate is not None:
         raise HTTPException(status_code=409, detail="该邮箱已有待审核的运营商申请")
     application = OperatorApplication(
@@ -55,7 +59,11 @@ def create_operator_application(
         message=payload.message, status=SupplierStatus.PENDING.value,
     )
     db.add(application)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="已有相同的待审核申请") from error
     record_event(
         db, event_type="OPERATOR_APPLICATION_CREATED", entity_type="OperatorApplication",
         entity_id=application.id, organization_id=None, actor_type="PUBLIC",

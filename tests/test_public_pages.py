@@ -153,7 +153,17 @@ def test_operator_marketplace_pages_and_workspaces_are_exposed(client: TestClien
 
 
 def test_supplier_and_admin_workspaces_expose_operator_cooperation_views(client: TestClient) -> None:
-    assert 'data-view="operator-cooperations"' in client.get("/app").text
+    supplier = client.get("/app").text
+    assert 'data-view="operator-cooperations"' in supplier
+    assert 'id="supplier-operator-pagination"' in supplier
     admin = client.get("/admin").text
     assert 'data-view="operator-applications"' in admin
     assert 'data-view="operator-cooperations"' in admin
+    assert 'id="operator-application-pagination"' in admin
+    assert 'id="operator-account-pagination"' in admin
+    assert 'id="admin-operator-cooperation-pagination"' in admin
+
+    operator = client.get("/operator").text
+    assert 'id="operator-cooperation-pagination"' in operator
+    assert 'id="operator-binding-pagination"' in operator
+    assert 'id="operator-client-pagination"' in operator

@@ -22,6 +22,13 @@ class OperatorApplicationCreate(BaseModel):
     qualification_files: list[str] = Field(default_factory=list, max_length=20)
     message: str | None = Field(default=None, max_length=2000)
 
+    @field_validator("contact_name", "phone", mode="before")
+    @classmethod
+    def required_text(cls, value: object) -> object:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("必填字段不能为空")
+        return value.strip()
+
     @field_validator(
         "company_name", "unified_social_credit_code", "operator_type", "province", "city",
         "website", "erp_name", "message", mode="before",
@@ -102,6 +109,21 @@ class OperatorProfileUpdate(BaseModel):
     categories: list[str] | None = Field(default=None, max_length=30)
     target_markets: list[str] | None = Field(default=None, max_length=30)
     qualification_files: list[str] | None = Field(default=None, max_length=20)
+
+    @field_validator("contact_name", "contact_phone", "contact_email", mode="before")
+    @classmethod
+    def required_profile_text(cls, value: object) -> object:
+        if value is None or not str(value).strip():
+            raise ValueError("联系人、手机号和邮箱不能为空")
+        return str(value).strip()
+
+    @field_validator(
+        "company_name", "unified_social_credit_code", "operator_type", "province", "city",
+        "website", "erp_name", mode="before",
+    )
+    @classmethod
+    def optional_profile_text(cls, value: object) -> object:
+        return value.strip() or None if isinstance(value, str) else value
 
     @field_validator("sales_channels", "categories", "target_markets", "qualification_files")
     @classmethod

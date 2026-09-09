@@ -171,6 +171,10 @@ def approve_operator_application(
         raise HTTPException(status_code=409, detail="只有待审核申请可以通过")
     if db.scalar(select(User).where(func.lower(User.email) == application.email.lower())):
         raise HTTPException(status_code=409, detail="该邮箱已经关联现有账号")
+    if application.unified_social_credit_code and db.scalar(select(OperatorProfile).where(
+        OperatorProfile.unified_social_credit_code == application.unified_social_credit_code
+    )):
+        raise HTTPException(status_code=409, detail="该统一社会信用代码已关联运营商组织")
 
     code = f"OPR-{application.application_no.rsplit('-', 1)[-1]}"
     if db.scalar(select(Organization).where(Organization.code == code)):
