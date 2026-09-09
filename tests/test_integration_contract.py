@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Barrier, Event
 from typing import Any
 
@@ -118,6 +119,10 @@ PUBLIC_SCHEMA_NAMES = {
     "SupplierSkuIntegrationView",
 }
 HTTP_METHODS = {"delete", "get", "head", "options", "patch", "post", "put", "trace"}
+INTEGRATION_GUIDE = (
+    Path(__file__).resolve().parents[1]
+    / "docs/integrations/system-integration-guide.md"
+)
 
 
 @app.get("/api/test/structured-not-found", include_in_schema=False)
@@ -158,6 +163,24 @@ def test_global_404_handler_only_preserves_structured_error_details(
     assert string_error.json() == {"detail": "页面或资源不存在"}
     assert missing_page.status_code == 404
     assert missing_page.json() == {"detail": "页面或资源不存在"}
+
+
+def test_integration_guide_describes_credentials_by_real_owner() -> None:
+    """Catch documentation that sends a caller to an invalid credential flow."""
+    guide = INTEGRATION_GUIDE.read_text(encoding="utf-8")
+
+    assert "平台 API 凭证" in guide
+    assert "`SYSTEM`" in guide
+    assert "`/admin#integrations`" in guide
+    assert "`SUPPLIER`" in guide
+    assert "`/app#erp-integration`" in guide
+    assert "供应商凭证为只读凭证，仅能访问自己的供应商组织。" in guide
+    assert "使用相同的 `Authorization: Bearer <integration-token>` 请求头。" in guide
+    assert "访问其他供应商 ID 返回 HTTP 404。" in guide
+    assert "合作绑定 UUID 只是合作标识，不是凭证。" in guide
+    assert "运营商没有 ERP API 凭证流程。" in guide
+    assert "/operator#integration" not in guide
+    assert "ERP 绑定 UUID，运营商凭证" not in guide
 
 
 def test_openapi_publishes_six_caller_neutral_integration_operations() -> None:

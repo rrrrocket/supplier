@@ -48,7 +48,7 @@ http://127.0.0.1:6790/api/integrations/v1
 
 ## 4. 认证
 
-调用方使用独立的 Integration Client 令牌：
+调用方使用独立的只读 Integration Client 令牌：
 
 ```http
 Authorization: Bearer <integration-token>
@@ -70,20 +70,19 @@ supplier-costs:read
 - 令牌必须存入密钥管理或受控环境变量，不得写入代码或日志。
 - 测试和正式环境使用不同令牌。
 - 收到 HTTP 401（响应包含 `WWW-Authenticate: Bearer`）时停止业务重试并检查令牌；收到 HTTP 403 时检查权限范围。
-- 平台管理员在管理端创建 Integration Client；完整令牌只在创建或轮换成功时展示一次，数据库仅保存令牌哈希和可检索前缀。
 - 为凭证设置最小 scope 和合理到期时间；轮换后旧令牌立即失效，停用后该令牌立即返回 401。
 - 不要把 `token_prefix` 当作凭证；令牌遗失时必须轮换，不能从平台取回明文。
 
-### 4.1 系统凭证与运营商凭证
+### 4.1 平台 API 凭证与供应商 API 凭证
 
-平台支持两类 Integration Client：
+平台支持两类只读 Integration Client：
 
-- `SYSTEM`：由平台管理员签发，保持原有全平台集成行为，适用于平台级同步。
-- `OPERATOR`：由审核通过的运营商在运营商工作台签发，只能访问与该运营商存在有效合作及有效 ERP 绑定的供应商数据。
+- `SYSTEM`：平台管理员在 `/admin#integrations` 的“平台 API 凭证”创建，适用于平台级同步，可读取平台范围内的数据。
+- `SUPPLIER`：供应商在 `/app#erp-integration` 创建；凭证的所有者由当前供应商组织确定，不能指定其他组织。
 
-运营商应先在“寻找供应商”中发起合作。供应商接受后，平台生成稳定的 ERP 绑定 UUID，运营商凭证才可访问该供应商的品牌、SKU 和成本接口。任一方终止合作后，绑定立即变为 `INACTIVE`，该运营商凭证随即失去对应供应商的业务数据访问权限。
+供应商凭证为只读凭证，仅能访问自己的供应商组织。访问其他供应商 ID 返回 HTTP 404。平台凭证与供应商凭证都使用相同的 `Authorization: Bearer <integration-token>` 请求头。
 
-运营商凭证的创建、轮换和撤销入口位于 `/operator#integration`；明文令牌同样只展示一次。
+创建或轮换后，完整令牌只展示一次，数据库仅保存令牌哈希和可检索前缀。合作绑定 UUID 只是合作标识，不是凭证。它不参与 Bearer 鉴权，也不扩大数据权限。运营商没有 ERP API 凭证流程。
 
 ## 5. 标识说明
 
@@ -185,6 +184,8 @@ supplier_network_supplier_id + supplier_network_sku_id
 ## 8. API 说明
 
 以下路径均相对于 `/api/integrations/v1`。
+
+所有集成接口均为只读接口。平台没有提供供外部 ERP 写入业务数据的 Integration API。
 
 三个列表接口（供应商、品牌合作、Supplier SKU）采用相同的同步参数：
 

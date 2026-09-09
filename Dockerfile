@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -r requirements-dev.txt
 COPY docker-compose.yml ./
 COPY docker-compose.test.yml start.sh ./
 COPY deploy/nginx-supplier.conf ./deploy/nginx-supplier.conf
+COPY docs ./docs
 COPY tests ./tests
 
 CMD ["sh", "-c", "alembic upgrade head && pytest -q"]

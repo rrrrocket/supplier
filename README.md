@@ -16,7 +16,7 @@
 - CSV / XLSX / XLS / PDF 智能表格导入、字段匹配、预览校验与 Upsert
 - 库存快照
 - 关键操作事件审计
-- 独立 Integration Client、scope、轮换/停用和默认 600 次/60 秒限流
+- 平台与供应商各自持有的只读 Integration Client、scope、轮换/停用和默认 600 次/60 秒限流
 - `/api/integrations/v1` 通用供应商、品牌、SKU 和模式 A 成本接口
 - 自动生成 OpenAPI 文档
 
@@ -91,7 +91,7 @@ ADMIN_NAME=平台管理员
 7. 检查合并后的标准商品列表；页面每次渲染 50 行，翻页和编辑始终作用于完整预览数据；
 8. 按需筛选需修正行并批量排除；排除只改变 `included` 状态，可一键恢复且不会删除原行；也可逐行修改供应商 SKU，所有已包含行的重复 SKU 冲突解决后才能确认导入；
 9. 确认后提交完整的已编辑列表，导入商品、供应商 SKU、报价、库存、MOQ 和交期；
-10. 查看商品、报价、库存快照与审计事件。
+10. 查看商品、报价、库存快照与审计事件；如需 ERP 同步，在“ERP 接入”创建本组织的只读凭证。
 
 语言说明示例：`第 3 行是表头；产品编码作为供应商 SKU；含税单价作为采购价；全部商品类目为工业自动化；币种人民币；默认交期 5 天。`
 
@@ -155,12 +155,12 @@ tests/           API、权限、安全与审核闭环测试
 - **Supplier Offer**：描述一个 Supplier SKU 当前能以什么价格、MOQ、库存和交期供货。
 - **Inventory Snapshot**：保留库存变化事实。
 - **Event Log**：记录谁在什么时候对什么实体执行了什么操作。
-- **Integration Client**：外部系统独立机器凭证；明文令牌只展示一次，数据库只保存哈希。
+- **Integration Client**：外部系统独立机器凭证；`SYSTEM` 平台凭证由管理员创建，`SUPPLIER` 凭证仅属创建它的供应商组织；明文令牌只展示一次，数据库只保存哈希。
 - **Organization ID**：所有供应商业务数据按组织隔离，客户端不能自行指定数据归属。
 
-通用集成接口统一使用 `/api/integrations/v1`，提供六条供应商/品牌/Supplier SKU/成本路径。列表支持 `updated_since`、绑定查询条件与固定快照的 `cursor`、每页 `sync_watermark`、`include_inactive` 和 1..500 的 `limit`；批量成本接受 1..500 行并原样回传调用方的 `client_sku_id`。完整接入契约见 [通用系统接入指南](docs/integrations/system-integration-guide.md)。
+通用集成接口统一使用 `/api/integrations/v1`，提供六条只读供应商/品牌/Supplier SKU/成本路径，不提供外部 ERP 写入 API。平台管理员在 `/admin#integrations` 的“平台 API 凭证”创建全局 `SYSTEM` 凭证；供应商在 `/app#erp-integration` 创建仅能读取本组织数据的 `SUPPLIER` 凭证。两类凭证都使用 Bearer 请求头，供应商凭证访问其他供应商 ID 时返回 404。列表支持 `updated_since`、绑定查询条件与固定快照的 `cursor`、每页 `sync_watermark`、`include_inactive` 和 1..500 的 `limit`；批量成本接受 1..500 行并原样回传调用方的 `client_sku_id`。完整接入契约见 [通用系统接入指南](docs/integrations/system-integration-guide.md)。
 
-平台同时提供运营商入驻与供应商市场：访客可从 `/suppliers` 浏览已审核供应商并从 `/operator/apply` 提交运营商申请；管理员审核后创建运营商账号。运营商在 `/operator` 查看完整联系方式、发起合作并管理自己的集成凭证，供应商在工作台确认合作；确认后生成 ERP 绑定 UUID，终止合作后绑定和对应数据权限立即失效。
+平台同时提供运营商入驻与供应商市场：访客可从 `/suppliers` 浏览已审核供应商并从 `/operator/apply` 提交运营商申请；管理员审核后创建运营商账号。运营商在 `/operator` 查看完整联系方式、发起合作并管理合作记录，供应商在工作台确认合作；确认后生成合作绑定 UUID。该 UUID 仅标识合作关系，不是凭证且不授予 API 访问权限；运营商没有 ERP API 凭证流程。
 
 详细说明见 [文档索引](docs/README.md)、[系统架构](docs/architecture/overview.md) 和 [数据字典](docs/architecture/data-dictionary.md)。
 
