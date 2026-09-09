@@ -9,6 +9,7 @@ from app.api.routes import (
     imports,
     integrations,
     offers,
+    operators,
     products,
     profile,
     public,
@@ -25,6 +26,7 @@ api_router.include_router(dashboard.router)
 api_router.include_router(profile.router)
 api_router.include_router(products.router)
 api_router.include_router(offers.router)
+api_router.include_router(operators.router)
 api_router.include_router(supplier_catalog.router)
 api_router.include_router(imports.router)
 api_router.include_router(events.router)

@@ -125,7 +125,9 @@
       && user?.organization_type === "PLATFORM";
     const isSupplier = user?.role === "SUPPLIER"
       && user?.organization_type === "SUPPLIER";
-    if (!isPlatformAdmin && !isSupplier) {
+    const isOperator = user?.role === "OPERATOR"
+      && user?.organization_type === "OPERATOR";
+    if (!isPlatformAdmin && !isSupplier && !isOperator) {
       return {
         authenticated: false,
         identityLabel: "",
@@ -136,7 +138,7 @@
     return {
       authenticated: true,
       identityLabel: user.organization_name || user.name,
-      workspaceHref: isPlatformAdmin ? "/admin" : "/app",
+      workspaceHref: isPlatformAdmin ? "/admin" : isOperator ? "/operator" : "/app",
       workspaceLabel: isPlatformAdmin ? "进入管理端" : "进入工作台",
     };
   }
@@ -185,6 +187,7 @@
   function userRoleLabel(user) {
     if (user?.role === "PLATFORM_ADMIN") return "平台管理员";
     if (user?.role === "SUPPLIER") return "供应商";
+    if (user?.role === "OPERATOR") return "运营商";
     return "";
   }
 

@@ -93,21 +93,21 @@ git commit -m "feat: add operator marketplace data model"
 - Produces: `POST /api/public/operator-applications`, admin list/approve/reject endpoints, `OperatorApplicationCreate`, `OperatorApplicationCreated`, `OperatorApplicationAdminView`.
 - Consumes: Task 1 entities, `generate_temporary_password()`, `record_event()` and password hashing.
 
-- [ ] **Step 1: Write failing public application tests**
+- [x] **Step 1: Write failing public application tests**
 
 Post only `contact_name`, `phone`, `email` and expect 201 with `OPR-` application number. Parameterize those three missing/invalid fields and expect 422. Post every optional field as absent and assert stored nullable values/empty arrays. Submit a duplicate pending email and expect 409; resubmit after rejection and expect 201.
 
-- [ ] **Step 2: Write failing admin review tests**
+- [x] **Step 2: Write failing admin review tests**
 
 Assert only platform admins can list/review. Approval creates one active `OPERATOR` organization, one `OperatorProfile`, one `OPERATOR` user, lowercases email and returns the temporary password once. Reject requires pending state and stores notes. Duplicate existing user email returns 409 without partial organization rows.
 
-- [ ] **Step 3: Run focused tests and verify failure**
+- [x] **Step 3: Run focused tests and verify failure**
 
 Run: `./start.sh test tests/test_operator_onboarding.py`
 
 Expected: 404 responses and missing schemas.
 
-- [ ] **Step 4: Implement schemas and public route**
+- [x] **Step 4: Implement schemas and public route**
 
 Use this required-field contract:
 
@@ -132,11 +132,11 @@ class OperatorApplicationCreate(BaseModel):
 
 Normalize optional blank strings to `None`, list values to unique trimmed entries, and email to lowercase. Record creation without including phone/email in event payload.
 
-- [ ] **Step 5: Implement admin approval atomically**
+- [x] **Step 5: Implement admin approval atomically**
 
 Generate `OPR-<application suffix>` organization code, use company name or `<contact_name>的运营团队` as organization name, create profile/user, update application review fields, and record `OPERATOR_APPLICATION_APPROVED` or `OPERATOR_APPLICATION_REJECTED`. Commit once after all records are flushed.
 
-- [ ] **Step 6: Run focused and full tests, then commit**
+- [x] **Step 6: Run focused and full tests, then commit**
 
 Run: `./start.sh test`
 
@@ -160,23 +160,23 @@ git commit -m "feat: add reviewed operator onboarding"
 - Produces: `OperatorUser`, `/api/operator/profile`, `/api/operator/dashboard`, `/operator` auth target.
 - Consumes: approved operator organization/profile/user from Task 2.
 
-- [ ] **Step 1: Write failing role-isolation tests**
+- [x] **Step 1: Write failing role-isolation tests**
 
 Assert a valid operator session is accepted by operator endpoints and rejected by supplier/admin endpoints. Assert mismatched role/type combinations receive 403. Test `/api/auth/me` returns role/type used by the client router.
 
-- [ ] **Step 2: Write failing profile/dashboard tests**
+- [x] **Step 2: Write failing profile/dashboard tests**
 
 Assert operators only read/update their own profile, cannot blank contact fields, and receive counts for available suppliers, pending cooperation requests, active cooperations and active bindings.
 
-- [ ] **Step 3: Write failing browser routing tests**
+- [x] **Step 3: Write failing browser routing tests**
 
 Add Node tests that `OPERATOR` + `OPERATOR` resolves to `/operator` with label `运营商`, while mismatched identities remain unauthenticated.
 
-- [ ] **Step 4: Implement dependency and endpoints**
+- [x] **Step 4: Implement dependency and endpoints**
 
 Add `get_current_operator_user()` mirroring the supplier dependency with the operator enum pair. Add profile view/update schemas and aggregate dashboard query. Never accept organization IDs in update payloads.
 
-- [ ] **Step 5: Update public auth routing and verify**
+- [x] **Step 5: Update public auth routing and verify**
 
 Update `publicAuthView()` and `userRoleLabel()` for operators. Run `./start.sh test`, then commit:
 

@@ -40,3 +40,18 @@ def get_current_supplier_user(user: CurrentUser) -> User:
 
 
 SupplierUser = Annotated[User, Depends(get_current_supplier_user)]
+
+
+def get_current_operator_user(user: CurrentUser) -> User:
+    if (
+        user.role != UserRole.OPERATOR.value
+        or user.organization.organization_type != OrganizationType.OPERATOR.value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="需要运营商组织账号权限",
+        )
+    return user
+
+
+OperatorUser = Annotated[User, Depends(get_current_operator_user)]

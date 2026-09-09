@@ -56,6 +56,24 @@ test("supplier session resolves to the supplier workspace", () => {
 });
 
 
+test("operator session resolves to the operator workspace", () => {
+  const { Matrix } = loadMatrix();
+  const view = Matrix.publicAuthView({
+    role: "OPERATOR",
+    organization_type: "OPERATOR",
+    organization_name: "测试运营团队",
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(view)), {
+    authenticated: true,
+    identityLabel: "测试运营团队",
+    workspaceHref: "/operator",
+    workspaceLabel: "进入工作台",
+  });
+  assert.equal(Matrix.userRoleLabel({ role: "OPERATOR" }), "运营商");
+});
+
+
 function jsonResponse(status, data) {
   return {
     status,
