@@ -120,6 +120,7 @@ def list_offers_page(
     cursor: str | None = Query(default=None),
 ) -> OfferPage:
     filters = {
+        "organization_id": user.organization_id,
         "q": q.strip() if q else None,
         "brand": brand.strip() if brand else None,
         "status": offer_status,

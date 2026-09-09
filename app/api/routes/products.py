@@ -97,7 +97,11 @@ def list_products_page(
     limit: int = Query(default=500, ge=1, le=500),
     cursor: str | None = Query(default=None),
 ) -> ProductPage:
-    filters = {"q": q.strip() if q else None, "status": product_status}
+    filters = {
+        "organization_id": user.organization_id,
+        "q": q.strip() if q else None,
+        "status": product_status,
+    }
     after_id = decode_list_cursor(cursor, "products", filters) if cursor else None
     offer_count = (
         select(SupplierOffer.product_id, func.count(SupplierOffer.id).label("offer_count"))

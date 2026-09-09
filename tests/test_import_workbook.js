@@ -305,6 +305,26 @@ test("editing one field keeps the other deterministic row errors", () => {
 });
 
 
+test("integer import grammar matches the shared server vectors", () => {
+  const ImportWorkbook = loadImportWorkbook();
+  const vectors = JSON.parse(fs.readFileSync(path.join(__dirname, "import_integer_vectors.json"), "utf8"));
+  vectors.forEach((vector) => {
+    const errors = Array.from(ImportWorkbook.validateRow({
+      product_name: "商品",
+      brand: "TEST",
+      category: "模型",
+      supplier_sku: "SKU-1",
+      price: "10",
+      stock_qty: vector.raw,
+    }));
+    if (!vector.error) assert.deepEqual(errors, [], vector.raw);
+    else if (vector.error === "negative") assert.deepEqual(errors, ["库存不能小于0"], vector.raw);
+    else if (vector.error === "range") assert.deepEqual(errors, ["库存不能大于2147483647"], vector.raw);
+    else assert.deepEqual(errors, ["库存必须是整数"], vector.raw);
+  });
+});
+
+
 test("pagination retains off-page edits", () => {
   const ImportWorkbook = loadImportWorkbook();
   const rows = Array.from({ length: 120 }, (_, index) => ({

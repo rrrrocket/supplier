@@ -42,6 +42,7 @@ router = APIRouter(prefix="/imports", tags=["数据导入"])
 MAX_FILE_SIZE = 10 * 1024 * 1024
 MAX_IMPORT_FORM_PART_SIZE = 8 * 1024 * 1024
 MAX_FINAL_IMPORT_REQUEST_SIZE = 20 * 1024 * 1024
+MAX_IMPORT_INTEGER = 2_147_483_647
 IMPORT_REQUEST_SIZE_ERROR = "导入请求不能超过 20MB"
 UPLOAD_READ_CHUNK_SIZE = 1024 * 1024
 
@@ -57,15 +58,22 @@ class SubmittedRow:
 def _to_int(value: str, default: int, field_name: str) -> int:
     if not value:
         return default
-    match = re.search(r"[-+]?\d+(?:\.\d+)?", value.replace(",", ""))
-    if not match:
+    normalized = value.replace(",", "").strip()
+    match = re.fullmatch(
+        r"([+-]?[0-9]+)(?:\.0+)?(?:\s*(\S+))?",
+        normalized,
+    )
+    if not match or (match.group(2) is not None and not match.group(2).isalpha()):
         raise ValueError(f"{field_name}必须是整数")
-    try:
-        result = int(float(match.group()))
-    except ValueError as exc:
-        raise ValueError(f"{field_name}必须是整数") from exc
+    integer_text = match.group(1)
+    significant_digits = integer_text.lstrip("+-").lstrip("0") or "0"
+    if len(significant_digits) > 10:
+        raise ValueError(f"{field_name}不能大于{MAX_IMPORT_INTEGER}")
+    result = int(integer_text)
     if result < 0:
         raise ValueError(f"{field_name}不能小于0")
+    if result > MAX_IMPORT_INTEGER:
+        raise ValueError(f"{field_name}不能大于{MAX_IMPORT_INTEGER}")
     return result
 
 

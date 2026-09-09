@@ -9,6 +9,16 @@
     supplier_sku: "供应商SKU不能为空",
     price: "价格不能为空",
   };
+  const MAX_IMPORT_INTEGER = 2147483647;
+  const INTEGER_WITH_OPTIONAL_UNIT = /^([+-]?\d+)(?:\.0+)?(?:\s*[\p{L}]+)?$/u;
+
+  function parseInteger(value) {
+    const normalized = String(value || "").replaceAll(",", "").trim();
+    if (!normalized) return null;
+    const match = normalized.match(INTEGER_WITH_OPTIONAL_UNIT);
+    if (!match) return undefined;
+    return Number(match[1]);
+  }
 
   function validateRow(values) {
     const errors = [];
@@ -25,9 +35,10 @@
     [["moq", "起订量"], ["stock_qty", "库存"], ["lead_time_days", "交期"]].forEach(([field, label]) => {
       const raw = String(values?.[field] || "").trim();
       if (!raw) return;
-      const parsed = Number(raw);
-      if (!Number.isInteger(parsed)) errors.push(`${label}必须是整数`);
+      const parsed = parseInteger(raw);
+      if (parsed === undefined) errors.push(`${label}必须是整数`);
       else if (parsed < 0) errors.push(`${label}不能小于0`);
+      else if (parsed > MAX_IMPORT_INTEGER) errors.push(`${label}不能大于${MAX_IMPORT_INTEGER}`);
     });
     return errors;
   }

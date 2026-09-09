@@ -9,10 +9,23 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status
 
 
+INTEGRATION_SYNC_FENCE_LOCK_ID = 763_295_864_120_260_909
+
+
 def invalid_cursor() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail={"code": "INVALID_CURSOR", "message": "分页游标无效"},
+    )
+
+
+def future_sync_watermark() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={
+            "code": "FUTURE_SYNC_WATERMARK",
+            "message": "updated_since 不能晚于服务端当前同步水位",
+        },
     )
 
 

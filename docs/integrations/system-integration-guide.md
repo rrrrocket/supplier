@@ -179,12 +179,14 @@ supplier_network_supplier_id + supplier_network_sku_id
 
 | 参数 | 默认值/范围 | 说明 |
 |---|---|---|
-| `updated_since` | 可选，带时区时间 | 只返回有效更新时间严格晚于该水位的资源 |
+| `updated_since` | 可选，带时区时间 | 只返回有效更新时间严格晚于该水位的资源；晚于服务端当前水位时返回 400，不允许把检查点向未来推进 |
 | `cursor` | 可选，不透明字符串 | 传入上一页 `next_cursor`；游标绑定资源、供应商、`updated_since`、`include_inactive` 和本轮服务端快照，不得解析、修改或跨查询条件复用 |
 | `limit` | 默认 100，范围 1..500 | 单页条数 |
 | `include_inactive` | 默认 `false` | 为 `true` 时同时返回 `INACTIVE` 资源，供失效映射对账 |
 
-每页（包括空页和最后一页）都返回相同的 `sync_watermark`，它是本轮固定的服务端快照上界。必须拉到 `next_cursor=null` 才算完成一轮同步；同一轮翻页期间保持 `updated_since` 和 `include_inactive` 不变，并在完成后把响应的 `sync_watermark` 持久化为下一轮 `updated_since`。翻页期间发生的新增或更新不会混入当前轮，而会在下一轮返回。
+每页（包括空页和最后一页）都返回相同的 `sync_watermark`，它是本轮固定的服务端快照上界。首请求通过数据库 writer fence 等待此前已开始的资源写事务完成；此后开始的写事务会取得严格晚于该水位的数据库时间，因此不会出现“写入时间早于水位、提交却晚于水位”的缺口。首请求可能因此短暂等待正在提交的目录写事务。
+
+必须拉到 `next_cursor=null` 才算完成一轮同步；同一轮翻页期间保持 `updated_since` 和 `include_inactive` 不变，并在完成后把响应的 `sync_watermark` 持久化为下一轮 `updated_since`。翻页期间发生的新增或更新不会混入当前轮，而会在下一轮返回。
 
 ### 8.1 获取供应商列表
 
@@ -371,7 +373,7 @@ Content-Type: application/json
 | HTTP 状态 | 含义 | 调用方处理 |
 |---|---|---|
 | 200 | 成功；批量响应可能包含单行错误 | 逐行处理 |
-| 400 | 三个列表的 `cursor` 无效（`INVALID_CURSOR`），或批量成本请求 JSON/整体结构无效 | 修正游标或批量请求，不自动重试 |
+| 400 | 三个列表的 `cursor` 无效（`INVALID_CURSOR`）、`updated_since` 晚于服务端当前水位（`FUTURE_SYNC_WATERMARK`），或批量成本请求 JSON/整体结构无效 | 修正游标、水位或批量请求，不自动重试 |
 | 401 | 令牌无效或过期 | 停止重试并告警 |
 | 403 | 权限不足 | 检查 Integration Client scope |
 | 404 | 单资源不存在 | 将本地绑定标为待检查 |

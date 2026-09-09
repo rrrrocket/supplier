@@ -60,8 +60,10 @@ from app.services.catalog import CurrentSkuCost, SkuCostError, resolve_current_s
 from app.services.events import record_event
 from app.services.integration_pagination import (
     BoundCursor,
+    INTEGRATION_SYNC_FENCE_LOCK_ID,
     decode_bound_cursor,
     encode_bound_cursor,
+    future_sync_watermark,
 )
 
 
@@ -113,7 +115,9 @@ INTEGRATION_VALIDATION_RESPONSE = {
     400: {"description": "The integration request is invalid."}
 }
 INTEGRATION_CURSOR_RESPONSE = {
-    400: {"description": "The integration pagination cursor is invalid."}
+    400: {
+        "description": "The integration cursor is invalid or updated_since is in the future."
+    }
 }
 INTEGRATION_NOT_FOUND_RESPONSE = {
     404: {"description": "The requested integration resource does not exist."}
@@ -228,10 +232,18 @@ def page_snapshot(
             updated_since=normalized_since,
             include_inactive=include_inactive,
         )
+        now = db.scalar(select(func.clock_timestamp()))
+        assert now is not None
+        if decoded.sync_watermark > utc_value(now):
+            raise future_sync_watermark()
         return decoded.sync_watermark, decoded
+    db.execute(select(func.pg_advisory_xact_lock(INTEGRATION_SYNC_FENCE_LOCK_ID)))
     watermark = db.scalar(select(func.clock_timestamp()))
     assert watermark is not None
-    return utc_value(watermark), None
+    normalized_watermark = utc_value(watermark)
+    if normalized_since is not None and normalized_since > normalized_watermark:
+        raise future_sync_watermark()
+    return normalized_watermark, None
 
 
 def page_cursor(
@@ -551,7 +563,6 @@ def list_supplier_brands(
     limit: int = Query(default=100, ge=1, le=500),
     include_inactive: bool = Query(default=False),
 ) -> SupplierBrandIntegrationPage:
-    supplier, profile = supplier_context(db, supplier_id)
     sync_watermark, decoded_cursor = page_snapshot(
         db,
         cursor=cursor,
@@ -560,6 +571,7 @@ def list_supplier_brands(
         updated_since=updated_since,
         include_inactive=include_inactive,
     )
+    supplier, profile = supplier_context(db, supplier_id)
     current = ranked_cooperations(supplier_id)
     effective_updated_at = func.greatest(
         supplier_context_updated_at(supplier, profile),
@@ -642,7 +654,6 @@ def list_supplier_skus(
     limit: int = Query(default=100, ge=1, le=500),
     include_inactive: bool = Query(default=False),
 ) -> SupplierSkuIntegrationPage:
-    supplier, profile = supplier_context(db, supplier_id)
     sync_watermark, decoded_cursor = page_snapshot(
         db,
         cursor=cursor,
@@ -651,6 +662,7 @@ def list_supplier_skus(
         updated_since=updated_since,
         include_inactive=include_inactive,
     )
+    supplier, profile = supplier_context(db, supplier_id)
     current = ranked_cooperations(supplier_id)
     effective_updated_at = func.greatest(
         supplier_context_updated_at(supplier, profile),

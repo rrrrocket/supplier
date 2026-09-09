@@ -17,6 +17,7 @@ PREVIOUS_REVISION = "7f22c89a41bd"
 CATALOG_REVISION = "9a61d5c312ef"
 PRE_CONTRACT_REVISION = "b742e6d423f0"
 CONTRACT_REVISION = "cc83f7e534a1"
+SYNC_FENCE_REVISION = "d14f0c6a7e92"
 
 
 def test_catalog_migration_rejects_offered_products_with_empty_brands() -> None:
@@ -633,6 +634,36 @@ def test_complete_upgrade_chain_reaches_contract_revision() -> None:
             assert connection.execute(
                 "SELECT version_num FROM alembic_version"
             ).fetchone()[0] == CONTRACT_REVISION
+
+
+def test_integration_sync_fence_revision_installs_and_removes_writer_triggers() -> None:
+    with temporary_postgresql_database("supplier_integration_sync_fence") as migration_url:
+        database_name = migration_url.database
+        assert database_name is not None
+        run_migrations(migration_url, SYNC_FENCE_REVISION)
+        with connect(migration_url, database_name) as connection:
+            assert connection.execute(
+                """
+                SELECT count(*)
+                FROM pg_trigger
+                WHERE tgname = 'trg_integration_sync_fence'
+                  AND NOT tgisinternal
+                """
+            ).fetchone()[0] == 6
+            assert connection.execute(
+                "SELECT version_num FROM alembic_version"
+            ).fetchone()[0] == SYNC_FENCE_REVISION
+
+        run_downgrade(migration_url, CONTRACT_REVISION)
+        with connect(migration_url, database_name) as connection:
+            assert connection.execute(
+                """
+                SELECT count(*)
+                FROM pg_trigger
+                WHERE tgname = 'trg_integration_sync_fence'
+                  AND NOT tgisinternal
+                """
+            ).fetchone()[0] == 0
 
 
 @pytest.mark.parametrize(

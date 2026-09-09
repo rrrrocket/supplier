@@ -9,8 +9,8 @@
 | JavaScript 语法检查 | 通过 |
 | 5 个 HTML 页面重复 ID 与本地资源检查 | 通过 |
 | PostgreSQL 16 隔离测试环境 | 持久命名卷；迁移到 Alembic head，通过；数据库端口 6432 |
-| Pytest 自动化测试 | 268 项通过；同一持久测试库连续完整执行两次结果一致 |
-| 前端 Node 测试 | 56 项通过，0 失败；同一分支连续完整执行两次结果一致 |
+| Pytest 自动化测试 | 271 项通过；同一持久测试库连续完整执行两次结果一致 |
+| 前端 Node 测试 | 57 项通过，0 失败；同一分支连续完整执行两次结果一致 |
 | 测试卷复用 | 完整与 focused 验证均复用 `supplier-tests` 的持久 PostgreSQL 服务、网络和命名卷；仅 one-shot runner 被移除；每个 Python 测试会话在 `_test` 数据库名硬保护下前后清空业务表 |
 | 测试数据库最终状态 | `supplier-tests-test-db-1` 保持 healthy；Organization、Integration Client、Product、Supplier SKU、Offer 与 Event Log 均为 0 行；无测试 runner 留存 |
 | 已初始化业务卷密码保护 | `.env` 缺失或密码为占位值时停止启动并提示恢复原配置；未初始化卷才生成密码 |
@@ -24,7 +24,7 @@
 | `Sheet1` 独立配置 | 表头行 1；列映射 C/E/N/O/P/R |
 | `Sheet1` 标准化结果 | 3,694 行；首行必填字段非空且成本为正；来源坐标保留为 `Sheet1:2` |
 | 原工作簿字节保持 | 验收前后 SHA-256 均为 `451082f041c936809e9be77c4df681733cb8e3366ce327531458d06b51b85479` |
-| 全新 PostgreSQL 16 数据库执行 Alembic `upgrade head` | 通过；当前唯一 head 为 `cc83f7e534a1` |
+| 全新 PostgreSQL 16 数据库执行 Alembic `upgrade head` | 通过；当前唯一 head 为 `d14f0c6a7e92`；同步围栏 revision 可独立升级、降级 |
 | PostgreSQL 历史供应商角色迁移 | 通过 |
 | 最终供应商目录迁移 | 通过；全量拒绝跨租户、非供应商 owner、Product/Brand/Variant 不一致；`products.brand_id`、`supplier_offers.supplier_sku_id` 非空，历史文本列不存在，既有 ID/报价/库存关系保持；最终父子表约束触发器持续阻断双向越域更新 |
 | Alembic 模型一致性 `check` | 无待生成迁移 |
@@ -50,7 +50,7 @@
 - 伪造/缺失 XLSX dimension、实际 Sheet/行/列/单元格预算和单遍流式扫描；
 - 多 Sheet 合并预览、10,000 行总上限和来源坐标；
 - 最终导入的 Sheet 配置/来源归属，以及真实完整 payload 的 10,000/10,001/excluded 传输与业务边界；
-- 品牌必填在 mapping、服务端预览、浏览器整行校验与最终导入保持一致；多错误行编辑后只消除已修正错误；
+- 品牌必填在 mapping、服务端预览、浏览器整行校验与最终导入保持一致；整数与可选文字单位使用 Python/浏览器共享向量验证，拒绝小数截断和科学计数法歧义；多错误行编辑后只消除已修正错误；
 - included 行重复 SKU 的服务端阻断、并发写入逐行 savepoint 隔离与排除后导入；
 - 需修正行筛选、单行/批量排除、排除计数和无删除恢复；
 - 导入预览 50 行分页、120 行跨页编辑和完整列表/Sheet 配置提交；
@@ -63,7 +63,7 @@
 - Brand、正式供应商—品牌合作、稳定 Supplier SKU 和最终无 legacy 列迁移链，包括迁移前全量域预检与最终父子表约束触发器；
 - 同一 Supplier SKU 两事务并发 upsert 复用唯一稳定 ID；同一供应商首次品牌合作并发创建被稳定行锁串行化且只保留一条 active 关系；
 - Integration Client 一次性令牌、哈希存储、scope、未来到期时间、过期状态 UI、过期/撤销后拒绝轮换、停用、连接生命周期与权限隔离；
-- 供应商/品牌/Supplier SKU 的固定快照增量 cursor 分页、查询语义绑定、显式 `sync_watermark`、页间新增/更新隔离、空轮次、`include_inactive` 及孤儿 SKU 的 nullable `commercial_mode`；
+- 供应商/品牌/Supplier SKU 的提交安全固定快照分页、查询语义绑定、显式 `sync_watermark`、未提交 writer 围栏、未来水位拒绝、页间新增/更新隔离、空轮次、`include_inactive` 及孤儿 SKU 的 nullable `commercial_mode`；
 - 单个/1..500 行批量成本查询、供应商组织与 `SupplierProfile=APPROVED` 资格、8 个业务错误码、`X-Request-ID` 脱敏聚合审计与 600/60 限流。
 
 ## 尚未执行
@@ -76,4 +76,4 @@
 
 ## 已知非阻断警告
 
-- 测试仍报告 Starlette `anyio.abc.BlockingPortal` 弃用警告；不影响本次 268 项 Python 测试与 56 项 Node 测试通过。
+- 测试仍报告 Starlette `anyio.abc.BlockingPortal` 弃用警告；不影响本次 271 项 Python 测试与 57 项 Node 测试通过。

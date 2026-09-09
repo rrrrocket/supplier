@@ -155,7 +155,7 @@ Event Log
 外部系统同步
 ```
 
-供应商工作台保留原 plain-array Product/Offer 接口供兼容调用方使用，界面改用按不可变 ID 排序的专用 cursor page 接口逐页读取完整列表，再在浏览器内按更新时间排序并每页渲染 50 行。导入预览的排除动作只切换行的 `included` 状态：品牌与最终写入同为必填字段，编辑后重跑整行校验；需修正行可以批量排除和恢复，未包含行不参与重复校验或最终写入。
+供应商工作台保留原 plain-array Product/Offer 接口供兼容调用方使用，界面改用按不可变 ID 排序且绑定供应商组织的专用 cursor page 接口逐页读取完整列表，再在浏览器内按更新时间排序并每页渲染 50 行。导入预览的排除动作只切换行的 `included` 状态：品牌与最终写入同为必填字段，编辑后重跑整行校验；整数允许千分位、`.0` 和可选纯文字单位，范围为 `0..2147483647`，但拒绝小数截断、科学计数法或混合数字后缀，前后端共享同一组契约向量；需修正行可以批量排除和恢复，未包含行不参与重复校验或最终写入。
 
 ### 通用系统接入
 
@@ -171,7 +171,7 @@ Bearer 认证 + scope + 每客户端限流
 调用方保存稳定 ID 并完成人工映射
 ```
 
-列表使用 `updated_since + cursor + limit + include_inactive`；cursor 绑定资源、供应商、筛选条件与固定数据库快照，每页都返回可提交为下一轮水位的 `sync_watermark`。成本批量一次 1..500 行。默认限流为每个 Integration Client 每 60 秒 600 次，429 返回 `Retry-After`。当前单 Uvicorn worker 使用进程内限流；多 worker 或多实例部署必须提供共享限流器。
+列表使用 `updated_since + cursor + limit + include_inactive`；cursor 绑定资源、供应商、筛选条件与固定数据库快照，每页都返回可提交为下一轮水位的 `sync_watermark`。数据库触发器让目录 writer 持有共享事务锁，首个同步页以排他事务锁建立提交安全的水位：更早开始的写入先完成，更晚通过的写入由数据库刷新 `updated_at`，从而进入下一轮；未来 `updated_since` 被拒绝。成本批量一次 1..500 行。默认限流为每个 Integration Client 每 60 秒 600 次，429 返回 `Retry-After`。当前单 Uvicorn worker 使用进程内限流；多 worker 或多实例部署必须提供共享限流器。
 
 目录 contract migration 只支持停机发布：停止所有 writer、备份并完成域预检、升级到最终 revision 后再启动最终二进制。跨最终删列 revision 的滚动升级/旧二进制直接回滚不受支持，回滚需先 downgrade 或恢复备份。
 

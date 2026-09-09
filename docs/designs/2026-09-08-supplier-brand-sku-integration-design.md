@@ -201,7 +201,7 @@ GET  /api/integrations/v1/suppliers/{supplier_id}/skus/{supplier_sku_id}/cost
 POST /api/integrations/v1/sku-costs/query
 ```
 
-供应商、品牌合作和 Supplier SKU 列表都支持 `updated_since`、不透明 `cursor`、`include_inactive` 和 `limit`。默认 `limit=100`，范围 1..500。首请求获取数据库服务端时间作为固定快照上界；游标绑定资源、供应商、筛选条件和该快照，每页（包括空页与最后一页）都返回同一 `sync_watermark`。调用方拉到 `next_cursor=null` 后，使用该服务端水位开始下一轮，页间新增或更新不会混入当前轮。`include_inactive=true` 时，缺少当前合作关系的孤儿 Supplier SKU 以 `status=INACTIVE`、`commercial_mode=null` 返回；正常有效行的模式仍只能是三种正式模式之一。
+供应商、品牌合作和 Supplier SKU 列表都支持 `updated_since`、不透明 `cursor`、`include_inactive` 和 `limit`。默认 `limit=100`，范围 1..500。首请求先取得数据库排他事务围栏，等待已持有共享围栏的目录 writer 提交，再获取服务端时间作为固定快照上界；后续 writer 通过触发器在越过围栏后刷新 `updated_at`，保证下一轮可见。游标绑定资源、供应商、筛选条件和该快照，每页（包括空页与最后一页）都返回同一 `sync_watermark`；未来 `updated_since` 返回 400。调用方拉到 `next_cursor=null` 后，使用该服务端水位开始下一轮，页间新增或更新不会混入当前轮。`include_inactive=true` 时，缺少当前合作关系的孤儿 Supplier SKU 以 `status=INACTIVE`、`commercial_mode=null` 返回；正常有效行的模式仍只能是三种正式模式之一。
 
 ### 8.1 批量成本查询
 
@@ -307,7 +307,7 @@ POST /api/integrations/v1/sku-costs/query
 2. 为现有供应商与其品牌创建 `SupplierBrandCooperation`，已注册供应商的既有关系初始化为 `SELF_PURCHASE`。
 3. 从每条既有 `SupplierOffer` 创建稳定 `SupplierSku`，并保留原 Offer ID、价格、库存、MOQ、交期和库存快照关系。
 4. 过渡期 catch-up 迁移再次协调迟到写入，之后把 `products.brand_id` 和 `supplier_offers.supplier_sku_id` 收紧为非空。
-5. 最终迁移 `cc83f7e534a1` 删除历史 `products.brand` 和 `supplier_offers.supplier_sku` 列；当前 Alembic head 为 `cc83f7e534a1`。
+5. 最终目录契约迁移 `cc83f7e534a1` 删除历史 `products.brand` 和 `supplier_offers.supplier_sku` 列；同步围栏迁移 `d14f0c6a7e92` 安装提交安全的资源 writer triggers，当前 Alembic head 为 `d14f0c6a7e92`。
 6. 空品牌、重复身份、跨租户/非供应商 owner、Product/Brand/Variant 不一致或缺失外键会在任何新目录行写入前显式失败，不静默合并或截断。
 7. 最终数据库用约束触发器持续校验 Supplier SKU 的 supplier/brand/product/variant，以及 Offer 的 organization/product/variant 与 SKU 域关系；成本读取仍执行防御性对齐校验。外部调用方映射仍由调用方保存。
 

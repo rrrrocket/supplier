@@ -4,6 +4,7 @@ import asyncio
 import json
 from datetime import datetime, timezone
 from io import BytesIO
+from pathlib import Path
 from uuid import UUID, uuid4
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -31,10 +32,33 @@ from app.models.entities import (
     SupplierOffer,
     SupplierSku,
 )
+from app.services.list_pagination import decode_list_cursor
 from tests.conftest import SUPPLIER_EMAIL, SUPPLIER_PASSWORD
 
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def test_import_integer_grammar_matches_shared_browser_vectors() -> None:
+    vectors = json.loads(
+        (Path(__file__).with_name("import_integer_vectors.json")).read_text()
+    )
+    for vector in vectors:
+        if vector.get("error"):
+            with pytest.raises(ValueError) as exc_info:
+                import_routes._to_int(vector["raw"], 0, "库存")
+            expected = (
+                "库存不能小于0"
+                if vector["error"] == "negative"
+                else (
+                    "库存不能大于2147483647"
+                    if vector["error"] == "range"
+                    else "库存必须是整数"
+                )
+            )
+            assert str(exc_info.value) == expected, vector["raw"]
+        else:
+            assert import_routes._to_int(vector["raw"], 0, "库存") == vector["parsed"]
 
 
 def two_sheet_workbook_content() -> bytes:
@@ -191,6 +215,23 @@ def test_product_page_cursor_does_not_shift_when_an_earlier_row_is_updated(
     )
     assert first.status_code == 200
     assert len(first.json()["items"]) == 2
+    cursor = first.json()["next_cursor"]
+    assert cursor is not None
+    filters = {
+        "organization_id": supplier.id,
+        "q": f"分页商品-{suffix}",
+        "status": None,
+    }
+    assert decode_list_cursor(cursor, "products", filters) == (
+        first.json()["items"][-1]["id"]
+    )
+    with pytest.raises(Exception) as exc_info:
+        decode_list_cursor(
+            cursor,
+            "products",
+            {**filters, "organization_id": "different-supplier"},
+        )
+    assert getattr(exc_info.value, "status_code", None) == 400
     with SessionLocal() as db:
         changed = db.get(Product, first.json()["items"][0]["id"])
         assert changed is not None
@@ -202,7 +243,7 @@ def test_product_page_cursor_does_not_shift_when_an_earlier_row_is_updated(
         params={
             "q": f"分页商品-{suffix}",
             "limit": 2,
-            "cursor": first.json()["next_cursor"],
+            "cursor": cursor,
         },
     )
     assert second.status_code == 200
@@ -273,6 +314,24 @@ def test_offer_page_cursor_does_not_shift_when_an_earlier_row_is_updated(
     )
     assert first.status_code == 200
     assert len(first.json()["items"]) == 2
+    offer_cursor = first.json()["next_cursor"]
+    assert offer_cursor is not None
+    offer_filters = {
+        "organization_id": supplier.id,
+        "q": suffix,
+        "brand": None,
+        "status": None,
+    }
+    assert decode_list_cursor(offer_cursor, "offers", offer_filters) == (
+        first.json()["items"][-1]["id"]
+    )
+    with pytest.raises(Exception) as exc_info:
+        decode_list_cursor(
+            offer_cursor,
+            "offers",
+            {**offer_filters, "organization_id": "different-supplier"},
+        )
+    assert getattr(exc_info.value, "status_code", None) == 400
     with SessionLocal() as db:
         changed = db.get(SupplierOffer, first.json()["items"][0]["id"])
         assert changed is not None
@@ -284,7 +343,7 @@ def test_offer_page_cursor_does_not_shift_when_an_earlier_row_is_updated(
         params={
             "q": suffix,
             "limit": 2,
-            "cursor": first.json()["next_cursor"],
+            "cursor": offer_cursor,
         },
     )
     assert second.status_code == 200

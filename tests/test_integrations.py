@@ -4,6 +4,7 @@ import base64
 import importlib
 import json
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -728,7 +729,17 @@ def test_supplier_list_maps_status_uses_latest_source_update_and_hides_inactive(
         "updated_at",
     }
     assert first["status"] == "ACTIVE"
-    assert datetime.fromisoformat(first["updated_at"]) == integration_catalog["profile_time"]
+    with SessionLocal() as db:
+        supplier = db.get(Organization, integration_catalog["first_supplier_id"])
+        profile = db.scalar(
+            select(SupplierProfile).where(
+                SupplierProfile.organization_id
+                == integration_catalog["first_supplier_id"]
+            )
+        )
+        assert supplier is not None and profile is not None
+        expected_updated_at = max(supplier.updated_at, profile.updated_at)
+    assert datetime.fromisoformat(first["updated_at"]) == expected_updated_at
 
 
 def test_supplier_detail_reports_inactive_suppliers_but_does_not_enumerate_other_orgs(
@@ -918,11 +929,77 @@ def test_empty_incremental_page_returns_server_sync_watermark(
         headers=auth_headers(integration_client),
         params={"updated_since": "2099-01-01T00:00:00+00:00"},
     )
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["items"] == []
-    assert payload["next_cursor"] is None
-    assert datetime.fromisoformat(payload["sync_watermark"]).tzinfo is not None
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "FUTURE_SYNC_WATERMARK"
+
+
+def test_supplier_sync_fence_waits_for_an_earlier_uncommitted_writer(
+    client: TestClient,
+    integration_client: dict[str, Any],
+) -> None:
+    supplier_id = f"it-fenced-{uuid4().hex[:8]}"
+    pending = SessionLocal()
+    try:
+        supplier = Organization(
+            id=supplier_id,
+            code=f"IT-FENCED-{uuid4().hex[:8]}",
+            name="提交围栏供应商",
+            organization_type=OrganizationType.SUPPLIER.value,
+            is_active=True,
+        )
+        pending.add(supplier)
+        pending.flush()
+        pending.add(
+            SupplierProfile(
+                organization_id=supplier_id,
+                legal_name=supplier.name,
+                status=SupplierStatus.APPROVED.value,
+            )
+        )
+        pending.flush()
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                client.get,
+                f"{BASE_PATH}/suppliers",
+                headers=auth_headers(integration_client),
+                params={"include_inactive": "true", "limit": 500},
+            )
+            with pytest.raises(FutureTimeoutError):
+                future.result(timeout=0.25)
+            pending.commit()
+            response = future.result(timeout=5)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["next_cursor"] is None
+        assert supplier_id in {item["supplier_id"] for item in payload["items"]}
+
+        next_round = client.get(
+            f"{BASE_PATH}/suppliers",
+            headers=auth_headers(integration_client),
+            params={
+                "include_inactive": "true",
+                "updated_since": payload["sync_watermark"],
+                "limit": 500,
+            },
+        )
+        assert next_round.status_code == 200
+        assert supplier_id not in {
+            item["supplier_id"] for item in next_round.json()["items"]
+        }
+    finally:
+        pending.rollback()
+        pending.close()
+        with SessionLocal() as db:
+            db.execute(
+                delete(SupplierProfile).where(
+                    SupplierProfile.organization_id == supplier_id
+                )
+            )
+            db.execute(delete(Organization).where(Organization.id == supplier_id))
+            db.commit()
+
 
 def test_supplier_list_can_explicitly_include_inactive_snapshots(
     client: TestClient,
@@ -1027,13 +1104,17 @@ def test_brand_updated_since_is_strict_for_visible_brand_changes(
     integration_catalog: dict[str, Any],
 ) -> None:
     brand_id = integration_catalog["active_brand_id"]
-    watermark = integration_catalog["profile_time"]
-    changed_at = watermark + timedelta(minutes=30)
+    baseline = client.get(
+        f"{BASE_PATH}/suppliers/{integration_catalog['first_supplier_id']}/brands",
+        headers=auth_headers(integration_client),
+    )
+    assert baseline.status_code == 200
+    watermark = datetime.fromisoformat(baseline.json()["sync_watermark"])
     with SessionLocal() as db:
         brand = db.get(Brand, brand_id)
         assert brand is not None
-        original_updated_at = brand.updated_at
-        brand.updated_at = changed_at
+        original_aliases = list(brand.aliases)
+        brand.aliases = [*brand.aliases, f"sync-{uuid4().hex[:8]}"]
         db.commit()
 
     try:
@@ -1042,22 +1123,21 @@ def test_brand_updated_since_is_strict_for_visible_brand_changes(
             headers=auth_headers(integration_client),
             params={"updated_since": watermark.isoformat()},
         )
+        assert response.status_code == 200
+        assert [item["brand_id"] for item in response.json()["items"]] == [brand_id]
+        assert datetime.fromisoformat(response.json()["items"][0]["updated_at"]) > watermark
         strict_response = client.get(
             f"{BASE_PATH}/suppliers/{integration_catalog['first_supplier_id']}/brands",
             headers=auth_headers(integration_client),
-            params={"updated_since": changed_at.isoformat()},
+            params={"updated_since": response.json()["items"][0]["updated_at"]},
         )
-
-        assert response.status_code == 200
-        assert [item["brand_id"] for item in response.json()["items"]] == [brand_id]
-        assert datetime.fromisoformat(response.json()["items"][0]["updated_at"]) == changed_at
         assert strict_response.status_code == 200
         assert strict_response.json()["items"] == []
     finally:
         with SessionLocal() as db:
             brand = db.get(Brand, brand_id)
             assert brand is not None
-            brand.updated_at = original_updated_at
+            brand.aliases = original_aliases
             db.commit()
 
 
@@ -1113,15 +1193,20 @@ def test_sku_list_derives_active_cooperation_and_include_inactive_snapshot(
     assert integration_catalog["other_sku_id"] not in inactive_items
 
 
-def test_sku_updated_since_cursor_uses_id_tiebreak_for_identical_timestamps(
+def test_sku_updated_since_cursor_is_duplicate_free_with_database_timestamps(
     client: TestClient,
     integration_client: dict[str, Any],
     integration_catalog: dict[str, Any],
 ) -> None:
     supplier_id = integration_catalog["first_supplier_id"]
     brand_id = integration_catalog["active_brand_id"]
-    watermark = integration_catalog["profile_time"]
-    changed_at = watermark + timedelta(minutes=45)
+    baseline = client.get(
+        f"{BASE_PATH}/suppliers/{supplier_id}/skus",
+        headers=auth_headers(integration_client),
+        params={"include_inactive": "true"},
+    )
+    assert baseline.status_code == 200
+    watermark = datetime.fromisoformat(baseline.json()["sync_watermark"])
     suffix = uuid4().hex[:8]
     with SessionLocal() as db:
         product = Product(
@@ -1146,7 +1231,7 @@ def test_sku_updated_since_cursor_uses_id_tiebreak_for_identical_timestamps(
                     supplier_sku_code=f"CURSOR-{index}-{suffix}",
                     status=CatalogStatus.ACTIVE.value,
                     created_at=watermark,
-                    updated_at=changed_at,
+                    updated_at=watermark,
                 )
                 for index, sku_id in enumerate(sku_ids, start=1)
             ]
@@ -1161,20 +1246,24 @@ def test_sku_updated_since_cursor_uses_id_tiebreak_for_identical_timestamps(
             integration_client,
             updated_since=watermark,
         )
+        target_items = [
+            item for item in items if item["supplier_sku_id"] in sku_ids
+        ]
+        assert {item["supplier_sku_id"] for item in target_items} == set(sku_ids)
+        assert len(target_items) == len(sku_ids)
+        changed_at = max(
+            datetime.fromisoformat(item["updated_at"]) for item in target_items
+        )
+        assert all(
+            datetime.fromisoformat(item["updated_at"]) > watermark
+            for item in target_items
+        )
         strict_items = collect_integration_pages(
             client,
             f"{BASE_PATH}/suppliers/{supplier_id}/skus",
             integration_client,
             updated_since=changed_at,
         )
-
-        target_items = [
-            item for item in items if item["supplier_sku_id"] in sku_ids
-        ]
-        assert [item["supplier_sku_id"] for item in target_items] == sorted(sku_ids)
-        assert {datetime.fromisoformat(item["updated_at"]) for item in target_items} == {
-            changed_at
-        }
         assert not {
             item["supplier_sku_id"] for item in strict_items
         }.intersection(sku_ids)
@@ -1196,13 +1285,13 @@ def test_nested_incremental_sync_tracks_supplier_and_profile_status_changes_once
     supplier_id = integration_catalog["first_supplier_id"]
     brand_path = f"{BASE_PATH}/suppliers/{supplier_id}/brands"
     sku_path = f"{BASE_PATH}/suppliers/{supplier_id}/skus"
-    initial_watermark = integration_catalog["profile_time"]
-    phase_times = [
-        initial_watermark + timedelta(hours=1),
-        initial_watermark + timedelta(hours=2),
-        initial_watermark + timedelta(hours=3),
-        initial_watermark + timedelta(hours=4),
-    ]
+    baseline = client.get(
+        brand_path,
+        headers=auth_headers(integration_client),
+        params={"include_inactive": "true"},
+    )
+    assert baseline.status_code == 200
+    initial_watermark = datetime.fromisoformat(baseline.json()["sync_watermark"])
 
     with SessionLocal() as db:
         supplier = db.get(Organization, supplier_id)
@@ -1230,13 +1319,13 @@ def test_nested_incremental_sync_tracks_supplier_and_profile_status_changes_once
 
     try:
         phases = [
-            ("supplier", False, phase_times[0], "INACTIVE"),
-            ("supplier", True, phase_times[1], "ACTIVE"),
-            ("profile", SupplierStatus.PENDING.value, phase_times[2], "INACTIVE"),
-            ("profile", SupplierStatus.APPROVED.value, phase_times[3], "ACTIVE"),
+            ("supplier", False, "INACTIVE"),
+            ("supplier", True, "ACTIVE"),
+            ("profile", SupplierStatus.PENDING.value, "INACTIVE"),
+            ("profile", SupplierStatus.APPROVED.value, "ACTIVE"),
         ]
         previous_watermark = initial_watermark
-        for source, value, changed_at, active_resource_status in phases:
+        for source, value, active_resource_status in phases:
             with SessionLocal() as db:
                 supplier = db.get(Organization, supplier_id)
                 profile = db.scalar(
@@ -1248,10 +1337,8 @@ def test_nested_incremental_sync_tracks_supplier_and_profile_status_changes_once
                 assert profile is not None
                 if source == "supplier":
                     supplier.is_active = bool(value)
-                    supplier.updated_at = changed_at
                 else:
                     profile.status = str(value)
-                    profile.updated_at = changed_at
                 db.commit()
 
             brand_items = collect_integration_pages(
@@ -1269,14 +1356,16 @@ def test_nested_incremental_sync_tracks_supplier_and_profile_status_changes_once
 
             assert {item["brand_id"] for item in brand_items} == expected_brand_ids
             assert len(brand_items) == len(expected_brand_ids)
-            assert {datetime.fromisoformat(item["updated_at"]) for item in brand_items} == {
-                changed_at
+            brand_updates = {
+                datetime.fromisoformat(item["updated_at"]) for item in brand_items
             }
+            assert len(brand_updates) == 1
             assert {item["supplier_sku_id"] for item in sku_items} == expected_sku_ids
             assert len(sku_items) == len(expected_sku_ids)
-            assert {datetime.fromisoformat(item["updated_at"]) for item in sku_items} == {
-                changed_at
+            sku_updates = {
+                datetime.fromisoformat(item["updated_at"]) for item in sku_items
             }
+            assert sku_updates == brand_updates
 
             brand_by_id = {item["brand_id"]: item for item in brand_items}
             sku_by_id = {item["supplier_sku_id"]: item for item in sku_items}
@@ -1288,7 +1377,7 @@ def test_nested_incremental_sync_tracks_supplier_and_profile_status_changes_once
                 sku_by_id[integration_catalog["active_sku_id"]]["status"]
                 == active_resource_status
             )
-            previous_watermark = changed_at
+            previous_watermark = brand_updates.pop()
     finally:
         with SessionLocal() as db:
             supplier = db.get(Organization, supplier_id)
