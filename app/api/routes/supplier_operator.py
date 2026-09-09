@@ -6,9 +6,10 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
 from app.api.deps import DbSession, SupplierUser
-from app.models.entities import CooperationStatus, ErpBinding, OperatorSupplierCooperation
+from app.models.entities import BindingStatus, CooperationStatus, ErpBinding, OperatorSupplierCooperation
 from app.schemas.cooperation import CooperationResponse, CooperationView
 from app.api.routes.operator_cooperations import view
+from app.services.events import record_event
 
 
 router = APIRouter(prefix="/supplier-operator/cooperations", tags=["供应商运营商合作"])
@@ -40,6 +41,11 @@ def accept(cooperation_id: str, payload: CooperationResponse, db: DbSession, use
     item.status = CooperationStatus.ACTIVE.value; item.response_notes = payload.notes
     item.responded_by_user_id = user.id; item.responded_at = now
     db.add(ErpBinding(cooperation_id=item.id, operator_id=item.operator_id, supplier_id=item.supplier_id, bound_at=now))
+    record_event(
+        db, event_type="OPERATOR_COOPERATION_ACCEPTED",
+        entity_type="OperatorSupplierCooperation", entity_id=item.id,
+        organization_id=user.organization_id, actor_type="USER", actor_id=user.id,
+    )
     db.commit(); db.refresh(item)
     return view(db, item)
 
@@ -49,5 +55,39 @@ def reject(cooperation_id: str, payload: CooperationResponse, db: DbSession, use
     item = pending(db, cooperation_id, user.organization_id)
     item.status = CooperationStatus.REJECTED.value; item.response_notes = payload.notes
     item.responded_by_user_id = user.id; item.responded_at = datetime.now(timezone.utc)
+    record_event(
+        db, event_type="OPERATOR_COOPERATION_REJECTED",
+        entity_type="OperatorSupplierCooperation", entity_id=item.id,
+        organization_id=user.organization_id, actor_type="USER", actor_id=user.id,
+    )
     db.commit(); db.refresh(item)
+    return view(db, item)
+
+
+@router.post("/{cooperation_id}/terminate", response_model=CooperationView)
+def terminate(cooperation_id: str, db: DbSession, user: SupplierUser) -> CooperationView:
+    item = db.scalar(select(OperatorSupplierCooperation).where(
+        OperatorSupplierCooperation.id == cooperation_id,
+        OperatorSupplierCooperation.supplier_id == user.organization_id,
+    ).with_for_update())
+    if not item:
+        raise HTTPException(status_code=404, detail="合作不存在")
+    if item.status != CooperationStatus.ACTIVE.value:
+        raise HTTPException(status_code=409, detail="只有有效合作可以终止")
+    now = datetime.now(timezone.utc)
+    item.status = CooperationStatus.TERMINATED.value
+    item.terminated_by_user_id = user.id
+    item.terminated_at = now
+    binding = db.scalar(select(ErpBinding).where(ErpBinding.cooperation_id == item.id))
+    if binding:
+        binding.status = BindingStatus.INACTIVE.value
+        binding.unbound_at = now
+    record_event(
+        db, event_type="OPERATOR_COOPERATION_TERMINATED",
+        entity_type="OperatorSupplierCooperation", entity_id=item.id,
+        organization_id=user.organization_id, actor_type="USER", actor_id=user.id,
+        payload={"terminated_by": "SUPPLIER"},
+    )
+    db.commit()
+    db.refresh(item)
     return view(db, item)

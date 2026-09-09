@@ -11,6 +11,8 @@
     EXPIRED: "已过期",
     FAILED: "失败",
     REJECTED: "已驳回",
+    TERMINATED: "已终止",
+    INACTIVE: "已失效",
     SUSPENDED: "已停用",
   };
 

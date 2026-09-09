@@ -13,6 +13,7 @@ from app.models.entities import (
     OfferStatus,
     OperatorApplication,
     OperatorProfile,
+    OperatorSupplierCooperation,
     Organization,
     OrganizationType,
     Product,
@@ -29,7 +30,9 @@ from app.schemas.admin import (
     ApplicationReviewRequest,
     SupplierManagementView,
 )
-from app.schemas.operator import OperatorApplicationAdminView
+from app.schemas.cooperation import CooperationView
+from app.schemas.operator import OperatorApplicationAdminView, OperatorManagementView
+from app.api.routes.operator_cooperations import view as cooperation_view
 from app.services.events import record_event
 from app.services.scoring import calculate_profile_completion
 
@@ -123,6 +126,32 @@ def list_operator_applications(
     if application_status:
         stmt = stmt.where(OperatorApplication.status == application_status.upper())
     return [operator_application_view(item) for item in db.scalars(stmt).all()]
+
+
+@router.get("/operators", response_model=list[OperatorManagementView])
+def list_operators(db: DbSession, _: PlatformAdmin) -> list[OperatorManagementView]:
+    rows = db.execute(
+        select(Organization, OperatorProfile)
+        .join(OperatorProfile, OperatorProfile.organization_id == Organization.id)
+        .where(Organization.organization_type == OrganizationType.OPERATOR.value)
+        .order_by(Organization.created_at.desc(), Organization.id.desc())
+    ).all()
+    return [OperatorManagementView(
+        organization_id=organization.id, organization_code=organization.code,
+        organization_name=organization.name, is_active=organization.is_active,
+        contact_name=profile.contact_name, contact_phone=profile.contact_phone,
+        contact_email=profile.contact_email, company_name=profile.company_name,
+        operator_type=profile.operator_type, erp_name=profile.erp_name,
+        created_at=organization.created_at,
+    ) for organization, profile in rows]
+
+
+@router.get("/operator-cooperations", response_model=list[CooperationView])
+def list_operator_cooperations(db: DbSession, _: PlatformAdmin) -> list[CooperationView]:
+    items = db.scalars(select(OperatorSupplierCooperation).order_by(
+        OperatorSupplierCooperation.created_at.desc(), OperatorSupplierCooperation.id.desc()
+    )).all()
+    return [cooperation_view(db, item) for item in items]
 
 
 @router.post(

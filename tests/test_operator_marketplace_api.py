@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
-from app.models.entities import ErpBinding, Organization, SupplierProfile
+from app.models.entities import ErpBinding, EventLog, Organization, SupplierProfile
 from tests.conftest import (
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
@@ -95,3 +95,40 @@ def test_cooperation_acceptance_creates_binding_and_termination_disables_it(clie
         assert binding is not None
         assert binding.operator_id == operator_id
         assert binding.status == "INACTIVE"
+
+
+def test_supplier_can_terminate_active_cooperation_and_transitions_are_audited(client: TestClient) -> None:
+    supplier_id = supplier_id_with_contacts()
+    email, password, _ = approved_operator(client)
+    login(client, email, password)
+    created = client.post("/api/operator/cooperations", json={"supplier_id": supplier_id})
+    cooperation_id = created.json()["id"]
+
+    login(client, SUPPLIER_EMAIL, SUPPLIER_PASSWORD)
+    assert client.post(f"/api/supplier-operator/cooperations/{cooperation_id}/accept", json={}).status_code == 200
+    terminated = client.post(f"/api/supplier-operator/cooperations/{cooperation_id}/terminate")
+    assert terminated.status_code == 200
+    assert terminated.json()["status"] == "TERMINATED"
+    assert terminated.json()["binding"]["status"] == "INACTIVE"
+
+    with SessionLocal() as db:
+        events = db.scalars(select(EventLog.event_type).where(EventLog.entity_id == cooperation_id)).all()
+        assert "OPERATOR_COOPERATION_CREATED" in events
+        assert "OPERATOR_COOPERATION_ACCEPTED" in events
+        assert "OPERATOR_COOPERATION_TERMINATED" in events
+
+
+def test_admin_can_list_operator_accounts_and_cooperations(client: TestClient) -> None:
+    supplier_id = supplier_id_with_contacts()
+    email, password, operator_id = approved_operator(client)
+    login(client, email, password)
+    created = client.post("/api/operator/cooperations", json={"supplier_id": supplier_id})
+    assert created.status_code == 201
+
+    login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+    operators = client.get("/api/admin/operators")
+    assert operators.status_code == 200
+    assert any(item["organization_id"] == operator_id for item in operators.json())
+    cooperations = client.get("/api/admin/operator-cooperations")
+    assert cooperations.status_code == 200
+    assert any(item["id"] == created.json()["id"] for item in cooperations.json())

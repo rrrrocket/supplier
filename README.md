@@ -160,6 +160,8 @@ tests/           API、权限、安全与审核闭环测试
 
 通用集成接口统一使用 `/api/integrations/v1`，提供六条供应商/品牌/Supplier SKU/成本路径。列表支持 `updated_since`、绑定查询条件与固定快照的 `cursor`、每页 `sync_watermark`、`include_inactive` 和 1..500 的 `limit`；批量成本接受 1..500 行并原样回传调用方的 `client_sku_id`。完整接入契约见 [通用系统接入指南](docs/integrations/system-integration-guide.md)。
 
+平台同时提供运营商入驻与供应商市场：访客可从 `/suppliers` 浏览已审核供应商并从 `/operator/apply` 提交运营商申请；管理员审核后创建运营商账号。运营商在 `/operator` 查看完整联系方式、发起合作并管理自己的集成凭证，供应商在工作台确认合作；确认后生成 ERP 绑定 UUID，终止合作后绑定和对应数据权限立即失效。
+
 详细说明见 [文档索引](docs/README.md)、[系统架构](docs/architecture/overview.md) 和 [数据字典](docs/architecture/data-dictionary.md)。
 
 ## 6. 测试与静态检查

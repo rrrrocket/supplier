@@ -145,6 +145,16 @@ def apply_page() -> FileResponse:
     return FileResponse(PAGES / "apply.html")
 
 
+@app.get("/operator/apply", include_in_schema=False)
+def operator_apply_page() -> FileResponse:
+    return FileResponse(PAGES / "operator-apply.html")
+
+
+@app.get("/suppliers", include_in_schema=False)
+def suppliers_page() -> FileResponse:
+    return FileResponse(PAGES / "suppliers.html")
+
+
 @app.get("/login", include_in_schema=False)
 def login_page() -> FileResponse:
     return FileResponse(PAGES / "login.html")
@@ -158,6 +168,11 @@ def supplier_app() -> FileResponse:
 @app.get("/admin", include_in_schema=False)
 def admin_app() -> FileResponse:
     return FileResponse(PAGES / "admin.html")
+
+
+@app.get("/operator", include_in_schema=False)
+def operator_app() -> FileResponse:
+    return FileResponse(PAGES / "operator.html")
 
 
 @app.get("/sample-offers.csv", include_in_schema=False)

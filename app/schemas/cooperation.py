@@ -32,6 +32,8 @@ class CooperationView(BaseModel):
     id: str
     operator_id: str
     supplier_id: str
+    operator_name: str | None = None
+    supplier_name: str | None = None
     status: str
     categories: list[str]
     brands: list[str]

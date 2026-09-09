@@ -60,6 +60,7 @@ const routes = {
   orders: ["分发订单", "全球分发 / 订单协同"],
   settlements: ["结算管理", "全球分发 / 结算"],
   settings: ["企业资料", "账号与企业 / 供应能力档案"],
+  "operator-cooperations": ["运营商合作", "供应网络 / 运营商合作"],
 };
 
 const icons = {
@@ -112,6 +113,7 @@ async function renderRoute(route) {
     }
     if (route === "imports") await loadImports();
     if (route === "settings") await loadProfile();
+    if (route === "operator-cooperations" && window.loadSupplierOperatorCooperations) await window.loadSupplierOperatorCooperations();
   } catch (error) {
     if (error.status === 401) {
       window.location.href = "/login";

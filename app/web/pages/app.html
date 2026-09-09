@@ -11,6 +11,7 @@
   <script src="/assets/import-workbook.js?v=20260909-pagination" defer></script>
   <script src="/assets/pagination.js?v=20260909-pagination" defer></script>
   <script src="/assets/app.js?v=20260909-pagination" defer></script>
+  <script src="/assets/supplier-operator.js?v=20260909" defer></script>
 </head>
 <body class="app-body">
   <div class="app-shell">
@@ -23,6 +24,7 @@
         <button class="nav-item" data-route="offers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>供应报价</button>
         <button class="nav-item" data-route="imports"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 14v5h14v-5"/></svg>批量导入</button>
         <button class="nav-item" data-route="documents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>资质文件</button>
+        <button class="nav-item" data-route="operator-cooperations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 12h8M6 8l-3 4 3 4M18 8l3 4-3 4"/></svg>运营商合作</button>
 
         <span class="nav-section-label">全球分发</span>
         <button class="nav-item" data-route="orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18l-1 13H4L3 7Z"/><path d="M8 7a4 4 0 0 1 8 0"/></svg>分发订单</button>
@@ -185,6 +187,10 @@
               </div>
             </aside>
           </div>
+        </section>
+        <section class="app-view" data-view="operator-cooperations">
+          <div class="view-heading"><div><h1>运营商合作</h1><p>处理代运营商合作申请；确认后平台自动生成 ERP 绑定 UUID。</p></div><button id="refresh-supplier-operator" class="btn btn-secondary">刷新</button></div>
+          <section class="data-card"><div class="table-wrap"><table class="data-table"><thead><tr><th>运营商</th><th>申请内容</th><th>状态</th><th>申请时间</th><th></th></tr></thead><tbody id="supplier-operator-tbody"><tr><td colspan="5" class="table-empty">正在加载…</td></tr></tbody></table></div></section>
         </section>
       </main>
     </section>

@@ -42,6 +42,9 @@ const cooperationModeLabels = {
 const adminRoutes = {
   applications: ["入驻申请", "中国供应网络 / 平台管理 / 入驻申请"],
   suppliers: ["入驻供应商", "中国供应网络 / 平台管理 / 供应商"],
+  "operator-applications": ["运营商申请", "中国供应网络 / 平台管理 / 运营商申请"],
+  operators: ["运营商账户", "中国供应网络 / 平台管理 / 运营商账户"],
+  "operator-cooperations": ["合作审计", "中国供应网络 / 平台管理 / 运营商合作"],
   integrations: ["集成凭证", "中国供应网络 / 平台管理 / 集成凭证"],
   system: ["平台能力", "中国供应网络 / 平台管理 / 平台能力"],
 };

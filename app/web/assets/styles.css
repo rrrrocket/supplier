@@ -696,3 +696,19 @@ dialog::backdrop { background: rgba(7,17,38,.55); backdrop-filter: blur(3px); }
 .system-layer span { color: var(--muted); font-size: 10px; line-height: 1.55; }
 @media (max-width: 900px) { .admin-metric-grid, .admin-system-grid { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .application-detail, .cooperation-form { grid-template-columns: 1fr; } .detail-item.full, .cooperation-current { grid-column: auto; } }
+
+/* Supplier marketplace and operator workspace */
+.directory-toolbar { margin-bottom: 18px; }
+.directory-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; }
+.directory-card h2 { margin: 12px 0 6px; font-size: 15px; }
+.directory-card p { color: var(--muted); font-size: 11px; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.chip { padding: 4px 8px; border-radius: 999px; background: #eef4ff; color: #175cd3; font-size: 9px; }
+.info-list { display: grid; gap: 9px; }
+.info-row { display: flex; justify-content: space-between; gap: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--line); font-size: 11px; }
+.info-row span { color: var(--muted); }
+.operator-sidebar .nav-item.active { background: #155eef; }
+.operator-gap { margin-top: 16px; }
+#operator-token-value { display: block; word-break: break-all; font-size: 11px; }
+@media (max-width: 900px) { .directory-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 640px) { .directory-grid { grid-template-columns: 1fr; } }

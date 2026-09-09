@@ -1,0 +1,4 @@
+document.addEventListener("DOMContentLoaded", () => {
+  const form=document.querySelector("#operator-application-form"),result=document.querySelector("#operator-application-result");
+  form.addEventListener("submit",async(event)=>{event.preventDefault();const button=form.querySelector("button[type=submit]");button.disabled=true;const data=Object.fromEntries(new FormData(form));data.categories=String(data.categories||"").split(/[、,，]/).map(v=>v.trim()).filter(Boolean);for(const key of Object.keys(data))if(data[key]==="")delete data[key];try{const created=await Matrix.api("/api/public/operator-applications",{method:"POST",body:data});result.classList.remove("hidden");result.textContent=`申请已提交：${created.application_no}`;form.reset();}catch(error){Matrix.toast("提交失败",error.message,"error");}finally{button.disabled=false;}});
+});

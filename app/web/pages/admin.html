@@ -10,6 +10,7 @@
   <script src="/assets/common.js?v=20260909-integration-clients" defer></script>
   <script src="/assets/pagination.js?v=20260909-pagination" defer></script>
   <script src="/assets/admin.js?v=20260909-pagination" defer></script>
+  <script src="/assets/admin-operator.js?v=20260909" defer></script>
 </head>
 <body class="app-body">
   <div class="app-shell">
@@ -28,6 +29,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V8l8-4 8 4v12"/><path d="M8 20v-6h8v6M8 10h.01M12 10h.01M16 10h.01"/></svg>
           入驻供应商
         </button>
+        <span class="nav-section-label">运营商接入</span>
+        <button class="nav-item" data-route="operator-applications" type="button">运营商申请</button>
+        <button class="nav-item" data-route="operators" type="button">运营商账户</button>
+        <button class="nav-item" data-route="operator-cooperations" type="button">合作审计</button>
 
         <span class="nav-section-label">平台底座</span>
         <button class="nav-item" data-route="integrations" type="button">
@@ -173,6 +178,9 @@
             <footer class="table-footer"><span id="integration-clients-count" class="sr-only">共 0 个</span><div id="integration-pagination" class="unified-pagination"></div></footer>
           </section>
         </section>
+        <section class="app-view" data-view="operator-applications"><div class="view-heading"><div><h1>运营商入驻申请</h1><p>审核联系人、手机和邮箱；通过后自动创建运营商组织与账号。</p></div><div class="view-actions"><a class="btn btn-secondary" href="/operator/apply" target="_blank">查看申请入口</a><button id="refresh-operator-applications" class="btn btn-primary">刷新</button></div></div><section class="data-card"><div class="table-wrap"><table class="data-table"><thead><tr><th>申请编号</th><th>联系人</th><th>联系方式</th><th>公司 / ERP</th><th>状态</th><th></th></tr></thead><tbody id="operator-applications-tbody"></tbody></table></div></section></section>
+        <section class="app-view" data-view="operators"><div class="view-heading"><div><h1>运营商账户</h1><p>查看审核通过并已建立的运营商组织。</p></div></div><section class="data-card"><div class="table-wrap"><table class="data-table"><thead><tr><th>组织</th><th>联系人</th><th>联系方式</th><th>类型 / ERP</th><th>状态</th></tr></thead><tbody id="operators-tbody"></tbody></table></div></section></section>
+        <section class="app-view" data-view="operator-cooperations"><div class="view-heading"><div><h1>运营商合作审计</h1><p>查看运营商与供应商的申请、绑定和终止状态。</p></div></div><section class="data-card"><div class="table-wrap"><table class="data-table"><thead><tr><th>运营商</th><th>供应商</th><th>合作状态</th><th>ERP 绑定</th><th>申请时间</th></tr></thead><tbody id="admin-operator-cooperations-tbody"></tbody></table></div></section></section>
       </main>
     </section>
   </div>

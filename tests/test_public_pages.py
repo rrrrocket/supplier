@@ -133,3 +133,27 @@ def test_supplier_workspace_uses_only_unified_pagination_controls(client: TestCl
         "import-next-page",
     ):
         assert f'id="{obsolete_id}"' not in html
+
+
+def test_operator_marketplace_pages_and_workspaces_are_exposed(client: TestClient) -> None:
+    for pathname, marker in (
+        ("/operator/apply", 'id="operator-application-form"'),
+        ("/suppliers", 'id="supplier-directory"'),
+        ("/operator", 'data-operator-workspace'),
+    ):
+        response = client.get(pathname)
+        assert response.status_code == 200
+        assert marker in response.text
+
+    application = client.get("/operator/apply").text
+    assert application.count(" required") == 3
+    landing = client.get("/").text
+    assert 'href="/suppliers"' in landing
+    assert 'href="/operator/apply"' in landing
+
+
+def test_supplier_and_admin_workspaces_expose_operator_cooperation_views(client: TestClient) -> None:
+    assert 'data-view="operator-cooperations"' in client.get("/app").text
+    admin = client.get("/admin").text
+    assert 'data-view="operator-applications"' in admin
+    assert 'data-view="operator-cooperations"' in admin

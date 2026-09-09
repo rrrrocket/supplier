@@ -116,3 +116,17 @@ class OperatorDashboardView(BaseModel):
     pending_cooperations: int
     active_cooperations: int
     active_bindings: int
+
+
+class OperatorManagementView(BaseModel):
+    organization_id: str
+    organization_code: str
+    organization_name: str
+    is_active: bool
+    contact_name: str
+    contact_phone: str
+    contact_email: EmailStr
+    company_name: str | None
+    operator_type: str | None
+    erp_name: str | None
+    created_at: datetime

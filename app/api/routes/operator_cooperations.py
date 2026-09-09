@@ -19,8 +19,12 @@ router = APIRouter(prefix="/operator/cooperations", tags=["运营商合作"])
 
 def view(db: DbSession, item: OperatorSupplierCooperation) -> CooperationView:
     binding = db.scalar(select(ErpBinding).where(ErpBinding.cooperation_id == item.id))
+    operator = db.get(Organization, item.operator_id)
+    supplier = db.get(Organization, item.supplier_id)
     return CooperationView(
         id=item.id, operator_id=item.operator_id, supplier_id=item.supplier_id,
+        operator_name=operator.name if operator else None,
+        supplier_name=supplier.name if supplier else None,
         status=item.status, categories=item.categories, brands=item.brands,
         sales_channels=item.sales_channels, target_markets=item.target_markets,
         message=item.message, response_notes=item.response_notes, created_at=item.created_at,
@@ -75,5 +79,11 @@ def terminate(cooperation_id: str, db: DbSession, user: OperatorUser) -> Coopera
     binding = db.scalar(select(ErpBinding).where(ErpBinding.cooperation_id == item.id))
     if binding:
         binding.status = BindingStatus.INACTIVE.value; binding.unbound_at = item.terminated_at
+    record_event(
+        db, event_type="OPERATOR_COOPERATION_TERMINATED",
+        entity_type="OperatorSupplierCooperation", entity_id=item.id,
+        organization_id=user.organization_id, actor_type="USER", actor_id=user.id,
+        payload={"terminated_by": "OPERATOR"},
+    )
     db.commit(); db.refresh(item)
     return view(db, item)
