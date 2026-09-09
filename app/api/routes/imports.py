@@ -23,7 +23,7 @@ from app.models.entities import (
     SupplierOffer,
 )
 from app.services.events import record_event
-from app.services.catalog import ensure_supplier_sku, resolve_brand
+from app.services.catalog import ensure_supplier_sku, resolve_import_brand
 from app.services.import_mapping import (
     FIELD_DEFINITIONS,
     MAX_IMPORT_ROWS,
@@ -155,8 +155,52 @@ def _job_view(job: ImportJob) -> dict[str, Any]:
         "success_rows": job.success_rows,
         "error_rows": job.error_rows,
         "errors": job.errors,
+        "error_summary": job.error_summary or _error_summary(job.errors, job.error_rows),
         "created_at": job.created_at,
     }
+
+
+def _error_summary(
+    errors: list[dict[str, Any]] | None,
+    total_error_rows: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    labels = {
+        "brand is not assigned to supplier": (
+            "BRAND_NOT_ASSIGNED",
+            "导入品牌尚未关联当前供应商",
+            "重新导入即可，系统会自动建立品牌关联；合作模式可稍后配置。",
+        ),
+    }
+    for error in errors or []:
+        message = str(error.get("message") or "未知错误")
+        code, reason, action = labels.get(
+            message,
+            (
+                "ROW_VALIDATION_FAILED",
+                message,
+                "请根据示例行修正数据后重新导入。",
+            ),
+        )
+        item = grouped.setdefault(
+            message,
+            {
+                "code": code,
+                "reason": reason,
+                "affected_rows": 0,
+                "action": action,
+                "examples": [],
+            },
+        )
+        item["affected_rows"] += 1
+        if len(item["examples"]) < 3:
+            item["examples"].append(
+                {"sheet": error.get("sheet"), "row": error.get("row")}
+            )
+    summaries = list(grouped.values())
+    if len(summaries) == 1 and total_error_rows > summaries[0]["affected_rows"]:
+        summaries[0]["affected_rows"] = total_error_rows
+    return summaries
 
 
 async def _read_upload(
@@ -669,7 +713,11 @@ async def import_product_offers(
             moq = max(1, _to_int(row["moq"], 1, "起订量"))
             stock_qty = _to_int(row["stock_qty"], 0, "库存")
             lead_time_days = _to_int(row["lead_time_days"], 3, "交期")
-            brand = resolve_brand(db, row["brand"])
+            brand = resolve_import_brand(
+                db,
+                user.organization_id,
+                row["brand"],
+            )
             model = row["model"] or None
             product = db.scalar(
                 select(Product).where(
@@ -764,6 +812,7 @@ async def import_product_offers(
     job.total_rows = len(rows)
     job.success_rows = success
     job.error_rows = len(errors)
+    job.error_summary = _error_summary(errors, len(errors))
     job.errors = errors[:100]
     if success and errors:
         job.status = ImportStatus.PARTIAL.value

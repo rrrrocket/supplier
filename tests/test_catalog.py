@@ -324,3 +324,51 @@ def test_first_cooperation_writes_are_serialized_for_supplier_and_brand(
             )
         ).all()
         assert len(active) == 1
+
+
+def test_import_brand_auto_link_is_safe_under_concurrent_writes(
+    client: TestClient,
+) -> None:
+    del client
+    from app.services.catalog import resolve_import_brand
+
+    suffix = uuid4().hex[:8]
+    brand_name = f"并发导入品牌-{suffix}"
+    with SessionLocal() as db:
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+        )
+        assert supplier is not None
+        other_supplier = Organization(
+            code=f"RACE-SUPPLIER-{suffix}",
+            name=f"并发供应商-{suffix}",
+            organization_type=OrganizationType.SUPPLIER.value,
+        )
+        db.add(other_supplier)
+        db.commit()
+        supplier_ids = [supplier.id, other_supplier.id]
+
+    barrier = Barrier(2)
+
+    def create(supplier_id: str) -> str:
+        with SessionLocal() as db:
+            barrier.wait(timeout=5)
+            brand = resolve_import_brand(db, supplier_id, brand_name)
+            db.commit()
+            return brand.id
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        brand_ids = list(executor.map(create, supplier_ids))
+
+    assert brand_ids[0] == brand_ids[1]
+    with SessionLocal() as db:
+        active = db.scalars(
+            select(SupplierBrandCooperation).where(
+                SupplierBrandCooperation.supplier_id.in_(supplier_ids),
+                SupplierBrandCooperation.brand_id == brand_ids[0],
+                SupplierBrandCooperation.status == CatalogStatus.ACTIVE.value,
+            )
+        ).all()
+        assert len(active) == 2
+        assert {item.supplier_id for item in active} == set(supplier_ids)
+        assert all(item.commercial_mode is None for item in active)

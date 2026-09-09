@@ -31,7 +31,7 @@ class CooperationView(BaseModel):
     supplier_id: str
     brand_id: str
     brand_name: str
-    commercial_mode: str
+    commercial_mode: str | None
     status: str
     valid_from: date | None
     valid_to: date | None
@@ -42,5 +42,5 @@ class SupplierBrandCooperationView(BaseModel):
     brand_id: str
     brand_code: str
     brand_name: str
-    commercial_mode: str
+    commercial_mode: str | None
     status: str

@@ -186,6 +186,28 @@ const brandB = {
 };
 
 
+test("auto-linked supplier brands show cooperation mode as pending", () => {
+  const { context, elements } = adminHarness(async () => []);
+  vm.runInContext(
+    `adminState.brandCooperations = [{
+      id: "pending-cooperation",
+      supplier_id: "supplier-a",
+      brand_id: "brand-a",
+      brand_name: "Trumpeter",
+      commercial_mode: null,
+      status: "ACTIVE",
+    }]; renderBrandCooperations();`,
+    context,
+  );
+
+  assert.match(elements.get("#brand-cooperation-list").innerHTML, /待配置/);
+  elements.get("#brand-cooperation-brand").value = "brand-a";
+  vm.runInContext("syncBrandCooperationForm();", context);
+  assert.equal(elements.get("#brand-cooperation-mode").value, "");
+  assert.match(elements.get("#brand-cooperation-current").innerHTML, /待配置/);
+});
+
+
 test("expired integration clients are labeled expired and cannot rotate", () => {
   const { context, elements } = adminHarness(async () => []);
   vm.runInContext(

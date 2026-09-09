@@ -376,9 +376,7 @@ class SupplierBrandCooperation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     brand_id: Mapped[str] = mapped_column(
         ForeignKey("brands.id", ondelete="RESTRICT"), nullable=False, index=True
     )
-    commercial_mode: Mapped[str] = mapped_column(
-        String(40), default=CommercialMode.SELF_PURCHASE.value, nullable=False
-    )
+    commercial_mode: Mapped[str | None] = mapped_column(String(40), nullable=True)
     status: Mapped[str] = mapped_column(
         String(30), default=CatalogStatus.ACTIVE.value, nullable=False, index=True
     )
@@ -537,6 +535,9 @@ class ImportJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     success_rows: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     error_rows: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     errors: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    error_summary: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
 
 
 class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):

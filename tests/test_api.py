@@ -1385,7 +1385,7 @@ def test_reimporting_supplier_sku_code_reuses_stable_id(
     assert second_offer["price"] == "12.5000"
 
 
-def test_import_rejects_unassigned_brand_without_partial_catalog_writes(
+def test_import_auto_links_unassigned_brand_without_commercial_mode(
     authenticated_client: TestClient,
 ) -> None:
     suffix = uuid4().hex[:8]
@@ -1404,16 +1404,64 @@ def test_import_rejects_unassigned_brand_without_partial_catalog_writes(
     )
 
     assert response.status_code == 201
-    assert response.json()["status"] == "FAILED"
-    assert response.json()["success_rows"] == 0
-    assert response.json()["error_rows"] == 1
-    assert response.json()["errors"][0]["message"] == (
-        "brand is not assigned to supplier"
-    )
+    assert response.json()["status"] == "COMPLETED"
+    assert response.json()["success_rows"] == 1
+    assert response.json()["error_rows"] == 0
     products = authenticated_client.get(
         "/api/products", params={"q": f"未分配导入商品-{suffix}"}
     ).json()
-    assert products == []
+    assert len(products) == 1
+    with SessionLocal() as db:
+        brand = db.scalar(
+            select(Brand).where(
+                Brand.normalized_name == row["values"]["brand"].lower()
+            )
+        )
+        assert brand is not None
+        cooperation = db.scalar(
+            select(SupplierBrandCooperation).where(
+                SupplierBrandCooperation.brand_id == brand.id,
+                SupplierBrandCooperation.status == CatalogStatus.ACTIVE.value,
+            )
+        )
+        assert cooperation is not None
+        assert cooperation.commercial_mode is None
+
+
+def test_import_history_persists_complete_grouped_failure_counts(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    rows = []
+    for index in range(101):
+        row = submitted_offer_row(
+            sku=f"SUMMARY-{suffix}-{index}",
+            name=f"失败汇总商品-{suffix}-{index}",
+            source_sheet="Sheet1",
+            source_row=index + 2,
+        )
+        if index < 100:
+            row["values"]["category"] = ""
+        else:
+            row["values"]["price"] = "0"
+        rows.append(row)
+
+    created = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={"rows_json": json.dumps(rows, ensure_ascii=False)},
+        files={"file": ("mixed-errors.csv", BytesIO(b"source file"), "text/csv")},
+    )
+
+    assert created.status_code == 201
+    summaries = {item["reason"]: item for item in created.json()["error_summary"]}
+    assert summaries["类目不能为空"]["affected_rows"] == 100
+    assert summaries["价格必须大于0"]["affected_rows"] == 1
+    history = authenticated_client.get("/api/imports")
+    assert history.status_code == 200
+    persisted = next(
+        item for item in history.json() if item["id"] == created.json()["id"]
+    )
+    assert persisted["error_summary"] == created.json()["error_summary"]
 
 
 def test_import_does_not_update_same_code_offer_from_other_tenant(

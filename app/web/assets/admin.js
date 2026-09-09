@@ -161,7 +161,7 @@ function renderBrandCooperations() {
   }
   container.innerHTML = adminState.brandCooperations.map((item) => `
     <div class="cooperation-item">
-      <div><strong>${Matrix.escapeHtml(item.brand_name)}</strong><span>${Matrix.escapeHtml(cooperationModeLabels[item.commercial_mode] || item.commercial_mode)}</span></div>
+      <div><strong>${Matrix.escapeHtml(item.brand_name)}</strong><span>${Matrix.escapeHtml(cooperationModeLabels[item.commercial_mode] || "待配置")}</span></div>
       ${Matrix.statusBadge(item.status)}
     </div>
   `).join("");
@@ -303,9 +303,9 @@ async function revokeIntegrationClient(clientId) {
 function syncBrandCooperationForm() {
   const brandId = document.querySelector("#brand-cooperation-brand").value;
   const current = adminState.brandCooperations.find((item) => item.brand_id === brandId);
-  document.querySelector("#brand-cooperation-mode").value = current?.commercial_mode || "SELF_PURCHASE";
+  document.querySelector("#brand-cooperation-mode").value = current?.commercial_mode || "";
   document.querySelector("#brand-cooperation-current").innerHTML = current
-    ? `当前合作：<strong>${Matrix.escapeHtml(cooperationModeLabels[current.commercial_mode] || current.commercial_mode)}</strong> ${Matrix.statusBadge(current.status)}`
+    ? `当前合作：<strong>${Matrix.escapeHtml(cooperationModeLabels[current.commercial_mode] || "待配置")}</strong> ${Matrix.statusBadge(current.status)}`
     : "当前合作：尚未配置";
 }
 

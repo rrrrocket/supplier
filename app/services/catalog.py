@@ -65,15 +65,63 @@ def resolve_brand(db: Session, name: str) -> Brand:
     digest = md5(
         normalized_name.encode("utf-8"), usedforsecurity=False
     ).hexdigest()[:10].upper()
-    brand = Brand(
-        code=f"BR-{digest}",
-        name=name.strip(),
-        normalized_name=normalized_name,
-        aliases=[],
-        status=CatalogStatus.ACTIVE.value,
+    identifier = new_id()
+    timestamp = utcnow()
+    inserted_id = db.scalar(
+        insert(Brand)
+        .values(
+            id=identifier,
+            code=f"BR-{digest}",
+            name=name.strip(),
+            normalized_name=normalized_name,
+            aliases=[],
+            status=CatalogStatus.ACTIVE.value,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        .on_conflict_do_nothing(index_elements=[Brand.normalized_name])
+        .returning(Brand.id)
     )
-    db.add(brand)
-    db.flush()
+    if inserted_id is not None:
+        created = db.get(Brand, inserted_id)
+        if created is not None:
+            return created
+    existing = db.scalar(
+        select(Brand).where(Brand.normalized_name == normalized_name)
+    )
+    if existing is None:
+        raise RuntimeError("brand could not be resolved after concurrent insert")
+    return existing
+
+
+def resolve_import_brand(db: Session, supplier_id: str, name: str) -> Brand:
+    """Resolve a brand and create a pending supplier link under one supplier lock."""
+    supplier = db.execute(
+        select(Organization.id)
+        .where(Organization.id == supplier_id)
+        .with_for_update()
+    ).one_or_none()
+    if supplier is None:
+        raise ValueError("supplier does not exist")
+
+    brand = resolve_brand(db, name)
+    cooperation = db.scalar(
+        select(SupplierBrandCooperation).where(
+            SupplierBrandCooperation.supplier_id == supplier_id,
+            SupplierBrandCooperation.brand_id == brand.id,
+            SupplierBrandCooperation.status == CatalogStatus.ACTIVE.value,
+        )
+    )
+    if cooperation is None:
+        db.add(
+            SupplierBrandCooperation(
+                supplier_id=supplier_id,
+                brand_id=brand.id,
+                commercial_mode=None,
+                status=CatalogStatus.ACTIVE.value,
+            )
+        )
+        db.flush()
     return brand
 
 

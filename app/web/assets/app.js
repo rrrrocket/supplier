@@ -389,12 +389,26 @@ function renderImports() {
     root.innerHTML = '<div class="table-empty"><strong>暂无导入记录</strong>下载模板并上传第一批商品报价。</div>';
     return;
   }
-  root.innerHTML = state.imports.map((job) => `
+  root.innerHTML = state.imports.map((job) => {
+    const summaries = (job.error_summary || []).map((summary) => {
+      const examples = (summary.examples || [])
+        .filter((example) => example.row)
+        .map((example) => `${example.sheet ? `${Matrix.escapeHtml(example.sheet)} ` : ""}第 ${Matrix.escapeHtml(example.row)} 行`)
+        .join("、");
+      return `<div class="import-error-summary">
+        <strong>${Matrix.escapeHtml(summary.reason)}</strong>
+        <span>影响 ${Matrix.escapeHtml(summary.affected_rows)} 行${examples ? ` · 示例：${examples}` : ""}</span>
+        <p>${Matrix.escapeHtml(summary.action)}</p>
+      </div>`;
+    }).join("");
+    return `
     <div class="import-job">
       <div><strong>${Matrix.escapeHtml(job.file_name)}</strong><span>${Matrix.formatDate(job.created_at, true)} · 成功 ${job.success_rows} / ${job.total_rows} · 失败 ${job.error_rows}</span></div>
       ${Matrix.statusBadge(job.status)}
+      ${summaries ? `<details class="import-error-details" ${job.status === "FAILED" ? "open" : ""}><summary>查看失败原因和处理方案</summary>${summaries}</details>` : ""}
     </div>
-  `).join("");
+  `;
+  }).join("");
 }
 
 async function loadProfile() {

@@ -198,6 +198,35 @@ function previewResult(fileName, sku = "SKU-1") {
 }
 
 
+test("failed import history shows a user-facing reason and recovery action", () => {
+  const app = loadImportApp(() => Promise.reject(new Error("API should not be called")));
+  app.context.jobs = [{
+    id: "failed-job",
+    file_name: "Trumpeter.xlsx",
+    status: "FAILED",
+    total_rows: 3056,
+    success_rows: 0,
+    error_rows: 3056,
+    created_at: "2026-09-09T16:54:34Z",
+    error_summary: [{
+      code: "BRAND_NOT_ASSIGNED",
+      reason: "品牌 Trumpeter 尚未关联当前供应商",
+      affected_rows: 3056,
+      action: "重新导入即可，系统会自动建立品牌关联；合作模式可稍后配置。",
+      examples: [{ sheet: "Sheet1", row: 2 }],
+    }],
+  }];
+
+  app.evaluate("state.imports = jobs; renderImports();");
+
+  const html = app.element("#import-job-list").innerHTML;
+  assert.match(html, /品牌 Trumpeter 尚未关联当前供应商/);
+  assert.match(html, /影响 3056 行/);
+  assert.match(html, /重新导入即可/);
+  assert.match(html, /Sheet1 第 2 行/);
+});
+
+
 test("active Excel sheet is selected after inspection", () => {
   const ImportWorkbook = loadImportWorkbook();
   const state = ImportWorkbook.createWorkbookState({
