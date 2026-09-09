@@ -6,12 +6,13 @@
   <meta name="robots" content="noindex,nofollow">
   <title>供应商工作台 · Matrix One</title>
   <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/styles.css?v=20260909-pagination-font">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260910-supplier-erp">
   <script src="/assets/common.js?v=20260908-supplier-role" defer></script>
   <script src="/assets/import-workbook.js?v=20260909-pagination" defer></script>
   <script src="/assets/pagination.js?v=20260909-pagination" defer></script>
-  <script src="/assets/app.js?v=20260909-pagination" defer></script>
-  <script src="/assets/supplier-operator.js?v=20260909" defer></script>
+  <script src="/assets/supplier-integration.js?v=20260910" defer></script>
+  <script src="/assets/app.js?v=20260910-supplier-erp" defer></script>
+  <script src="/assets/supplier-operator.js?v=20260910-binding-copy" defer></script>
 </head>
 <body class="app-body">
   <div class="app-shell">
@@ -30,7 +31,8 @@
         <button class="nav-item" data-route="orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18l-1 13H4L3 7Z"/><path d="M8 7a4 4 0 0 1 8 0"/></svg>分发订单</button>
         <button class="nav-item" data-route="settlements"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M8 15h3"/></svg>结算管理</button>
 
-        <span class="nav-section-label">账号与企业</span>
+        <span class="nav-section-label">账号与接入</span>
+        <button class="nav-item" data-route="erp-integration"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 12h8M12 8v8"/><rect x="3" y="4" width="18" height="16" rx="2"/></svg>ERP 接入</button>
         <button class="nav-item" data-route="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>企业资料</button>
       </nav>
       <div class="sidebar-footer">
@@ -189,12 +191,52 @@
           </div>
         </section>
         <section class="app-view" data-view="operator-cooperations">
-          <div class="view-heading"><div><h1>运营商合作</h1><p>处理代运营商合作申请；确认后平台自动生成 ERP 绑定 UUID。</p></div><button id="refresh-supplier-operator" class="btn btn-secondary">刷新</button></div>
-          <section class="data-card"><div class="table-wrap"><table class="data-table"><thead><tr><th>运营商</th><th>申请内容</th><th>合作状态</th><th>ERP 绑定信息</th><th>申请时间</th><th></th></tr></thead><tbody id="supplier-operator-tbody"><tr><td colspan="6" class="table-empty">正在加载…</td></tr></tbody></table></div><footer class="table-footer"><div id="supplier-operator-pagination" class="unified-pagination"></div></footer></section>
+          <div class="view-heading"><div><h1>运营商合作</h1><p>处理代运营商合作申请；确认后平台自动生成合作绑定 UUID。</p></div><button id="refresh-supplier-operator" class="btn btn-secondary">刷新</button></div>
+          <section class="data-card"><div class="table-wrap"><table class="data-table"><thead><tr><th>运营商</th><th>申请内容</th><th>合作状态</th><th>合作绑定 UUID</th><th>申请时间</th><th></th></tr></thead><tbody id="supplier-operator-tbody"><tr><td colspan="6" class="table-empty">正在加载…</td></tr></tbody></table></div><footer class="table-footer"><div id="supplier-operator-pagination" class="unified-pagination"></div></footer></section>
+        </section>
+
+        <section class="app-view" data-view="erp-integration">
+          <div class="view-heading"><div><h1>ERP 接入</h1><p>为自有 ERP 创建只读 API 凭证；明文 token 仅在创建或轮换后展示一次。</p></div></div>
+          <div class="integration-guide-grid">
+            <section class="panel">
+              <header class="panel-head"><div><h2>接口信息</h2><p>通过标准 Bearer 认证读取已授权的供应数据。</p></div></header>
+              <div class="panel-body info-list">
+                <div class="info-row"><span>API 基础路径</span><code>/api/integrations/v1</code></div>
+                <div class="info-row"><span>认证方式</span><strong>Authorization: Bearer &lt;token&gt;</strong></div>
+                <div class="info-row"><span>访问模式</span><strong>只读</strong></div>
+              </div>
+            </section>
+            <section class="panel">
+              <header class="panel-head"><div><h2>只读 API 凭证</h2><p>按实际需要选择权限，凭证可随时轮换或撤销。</p></div></header>
+              <div class="panel-body">
+                <form id="supplier-client-form" class="form-grid">
+                  <label class="form-group"><span class="form-label">凭证名称 *</span><input class="input" name="name" maxlength="120" required placeholder="例如：仓储 ERP"></label>
+                  <label class="form-group"><span class="form-label">过期时间</span><input class="input" name="expires_at" type="datetime-local"><span class="form-hint">留空表示永不过期。</span></label>
+                  <fieldset class="form-group full integration-scopes"><legend class="form-label">只读权限 *</legend>
+                    <label class="checkbox-row"><input type="checkbox" name="scopes" value="suppliers:read" checked><span>供应商读取</span></label>
+                    <label class="checkbox-row"><input type="checkbox" name="scopes" value="supplier-brands:read"><span>品牌合作读取</span></label>
+                    <label class="checkbox-row"><input type="checkbox" name="scopes" value="supplier-skus:read"><span>SKU 读取</span></label>
+                    <label class="checkbox-row"><input type="checkbox" name="scopes" value="supplier-costs:read"><span>成本读取</span></label>
+                  </fieldset>
+                  <div class="full"><button class="btn btn-primary" type="submit">创建凭证</button></div>
+                </form>
+              </div>
+            </section>
+          </div>
+          <section class="data-card integration-client-list">
+            <div class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>Token 前缀</th><th>权限</th><th>过期时间</th><th>最近使用</th><th>状态</th><th></th></tr></thead><tbody id="supplier-clients-tbody"><tr><td colspan="7" class="table-empty">正在加载…</td></tr></tbody></table></div>
+            <footer class="table-footer"><div id="supplier-client-pagination" class="unified-pagination"></div></footer>
+          </section>
         </section>
       </main>
     </section>
   </div>
+
+  <dialog id="supplier-token-dialog">
+    <header class="dialog-head"><div><h2>立即保存 API token</h2><p>这是唯一一次显示完整 token。关闭后无法再次查看，只能轮换。</p></div><button class="icon-btn" type="button" data-close-supplier-token aria-label="关闭">×</button></header>
+    <div class="dialog-body"><div class="credential-box"><h3>请存入安全的凭证管理工具</h3><p>不要通过聊天、邮件或工单传递此 token。</p><code id="supplier-token-value"></code></div></div>
+    <footer class="dialog-actions"><button id="copy-supplier-token" class="btn btn-secondary" type="button">复制</button><button class="btn btn-primary" type="button" data-close-supplier-token>我已安全保存</button></footer>
+  </dialog>
 
   <dialog id="product-dialog">
     <form id="product-form">

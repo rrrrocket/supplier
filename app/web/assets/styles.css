@@ -741,6 +741,10 @@ dialog::backdrop { background: rgba(7,17,38,.55); backdrop-filter: blur(3px); }
 .info-row span { color: var(--muted); }
 .operator-sidebar .nav-item.active { background: #155eef; }
 .operator-gap { margin-top: 16px; }
-#operator-token-value { display: block; word-break: break-all; font-size: 11px; }
+.integration-guide-grid { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 16px; }
+.integration-client-list { margin-top: 16px; }
+.integration-scopes { margin: 0; padding: 0; border: 0; }
+.integration-scopes .checkbox-row { margin-top: 8px; }
+#supplier-token-value { display: block; word-break: break-all; font-size: 11px; }
 @media (max-width: 900px) { .directory-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
-@media (max-width: 640px) { .directory-grid { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .directory-grid, .integration-guide-grid { grid-template-columns: 1fr; } }

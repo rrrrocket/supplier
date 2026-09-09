@@ -59,7 +59,8 @@ const routes = {
   documents: ["资质文件", "中国供应网络 / 资质文件"],
   orders: ["分发订单", "全球分发 / 订单协同"],
   settlements: ["结算管理", "全球分发 / 结算"],
-  settings: ["企业资料", "账号与企业 / 供应能力档案"],
+  settings: ["企业资料", "账号与接入 / 供应能力档案"],
+  "erp-integration": ["ERP 接入", "账号与接入 / 只读 API 凭证"],
   "operator-cooperations": ["运营商合作", "供应网络 / 运营商合作"],
 };
 
@@ -93,6 +94,7 @@ function setRoute(route) {
 
 async function renderRoute(route) {
   const offerRouteRevision = ++state.offerRouteRevision;
+  if (route !== "erp-integration") window.SupplierIntegration?.clearSupplierToken();
   document.querySelectorAll(".app-view").forEach((node) => {
     node.classList.toggle("active", node.dataset.view === route);
   });
@@ -113,6 +115,7 @@ async function renderRoute(route) {
     }
     if (route === "imports") await loadImports();
     if (route === "settings") await loadProfile();
+    if (route === "erp-integration") await window.SupplierIntegration.loadSupplierClients();
     if (route === "operator-cooperations" && window.loadSupplierOperatorCooperations) await window.loadSupplierOperatorCooperations();
   } catch (error) {
     if (error.status === 401) {
@@ -1126,6 +1129,7 @@ function bindEvents() {
     document.querySelector("#sidebar").classList.toggle("open");
   });
   document.querySelector("#logout-button").addEventListener("click", async () => {
+    window.SupplierIntegration?.clearSupplierToken();
     try { await Matrix.api("/api/auth/logout", { method: "POST" }); } finally { window.location.href = "/login"; }
   });
 

@@ -193,4 +193,32 @@ def test_supplier_and_admin_workspaces_expose_operator_cooperation_views(client:
     operator = client.get("/operator").text
     assert 'id="operator-cooperation-pagination"' in operator
     assert 'id="operator-binding-pagination"' in operator
-    assert 'id="operator-client-pagination"' in operator
+
+
+def test_supplier_workspace_exposes_erp_access_and_operator_credentials_are_removed(
+    client: TestClient,
+) -> None:
+    supplier = client.get("/app").text
+    assert 'data-view="erp-integration"' in supplier
+    assert 'id="supplier-client-form"' in supplier
+    assert 'id="supplier-client-pagination"' in supplier
+    assert "ERP 接入" in supplier
+    assert "只读 API 凭证" in supplier
+
+    operator = client.get("/operator").text
+    for obsolete_marker in (
+        'data-view="integration"',
+        'id="operator-client-form"',
+        'id="operator-token-dialog"',
+        "集成凭证",
+    ):
+        assert obsolete_marker not in operator
+
+
+def test_user_facing_binding_copy_uses_cooperation_binding_uuid(client: TestClient) -> None:
+    for pathname in ("/", "/app", "/operator", "/admin"):
+        html = client.get(pathname).text
+        assert "ERP 绑定" not in html
+
+    for pathname in ("/app", "/operator", "/admin"):
+        assert "合作绑定 UUID" in client.get(pathname).text

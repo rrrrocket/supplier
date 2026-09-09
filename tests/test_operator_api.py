@@ -41,6 +41,25 @@ def test_operator_can_login_and_use_only_operator_profile(client: TestClient) ->
     assert client.get("/api/admin/applications").status_code == 403
 
 
+def test_operator_credential_lifecycle_routes_are_not_exposed(client: TestClient) -> None:
+    schema = client.get("/api/openapi.json")
+    assert schema.status_code == 200
+    assert not any(
+        path.startswith("/api/operator/integration-clients")
+        for path in schema.json()["paths"]
+    )
+
+    email, password = create_approved_operator(client)
+    assert client.post(
+        "/api/auth/login", json={"email": email, "password": password}
+    ).status_code == 200
+    response = client.post(
+        "/api/operator/integration-clients",
+        json={"name": "不应创建", "scopes": ["supplier-skus:read"]},
+    )
+    assert response.status_code == 404
+
+
 def test_operator_profile_keeps_required_contact_fields(client: TestClient) -> None:
     email, password = create_approved_operator(client)
     assert client.post("/api/auth/login", json={"email": email, "password": password}).status_code == 200
