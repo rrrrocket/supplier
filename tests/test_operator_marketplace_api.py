@@ -88,6 +88,10 @@ def test_public_directory_is_paginated_and_masks_contacts(client: TestClient) ->
     assert item["contact_phone"] != "13812345678"
     assert item["contact_email"] != "contact@supplier.example"
 
+    compact_page = client.get("/api/public/suppliers?page=1&page_size=20")
+    assert compact_page.status_code == 200
+    assert compact_page.json()["page_size"] == 20
+
 
 def test_operator_detail_returns_full_contact_and_records_access(client: TestClient) -> None:
     supplier_id = supplier_id_with_contacts()
@@ -122,6 +126,10 @@ def test_public_operator_directory_filters_and_masks_contacts(client: TestClient
     assert item["categories"] == ["工业自动化", "消费电子"]
     assert item["contact_phone"] == "139****5678"
     assert item["contact_email"] == "c***@operator.example"
+
+    compact_page = client.get("/api/public/operators?page=1&page_size=20")
+    assert compact_page.status_code == 200
+    assert compact_page.json()["page_size"] == 20
 
 
 def test_supplier_can_view_full_operator_contact_and_access_is_audited(client: TestClient) -> None:

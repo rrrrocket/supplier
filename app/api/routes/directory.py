@@ -96,8 +96,8 @@ def list_suppliers(
     supports_dropshipping: bool | None = None, supports_oem: bool | None = None,
     has_export_experience: bool | None = None,
 ) -> SupplierDirectoryPage:
-    if page_size not in {50, 100, 200}:
-        raise HTTPException(status_code=422, detail="页面行数仅支持 50、100 或 200")
+    if page_size not in {20, 50, 100, 200}:
+        raise HTTPException(status_code=422, detail="页面行数仅支持 20、50、100 或 200")
     rows = eligible_rows(db)
     key = (keyword or "").strip().lower()
     def matches(row: tuple[Organization, SupplierProfile]) -> bool:
@@ -184,8 +184,8 @@ def list_operators(
     operator_type: str | None = None,
     erp_name: str | None = None,
 ) -> OperatorDirectoryPage:
-    if page_size not in {50, 100, 200}:
-        raise HTTPException(status_code=422, detail="页面行数仅支持 50、100 或 200")
+    if page_size not in {20, 50, 100, 200}:
+        raise HTTPException(status_code=422, detail="页面行数仅支持 20、50、100 或 200")
     key = (keyword or "").strip().lower()
 
     def matches(row: tuple[Organization, OperatorProfile]) -> bool:
