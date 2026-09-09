@@ -19,7 +19,9 @@ from app.models.entities import (
     ProductVariant,
     SupplierBrandCooperation,
     SupplierOffer,
+    SupplierProfile,
     SupplierSku,
+    SupplierStatus,
 )
 from app.schemas.integration import SkuCostErrorCode
 from app.services.events import record_event
@@ -209,6 +211,13 @@ def resolve_current_sku_cost(
     ):
         raise SkuCostError(SkuCostErrorCode.SUPPLIER_NOT_FOUND, "供应商不存在")
     if not supplier.is_active:
+        raise SkuCostError(SkuCostErrorCode.SUPPLIER_INACTIVE, "供应商已停用")
+    profile = db.scalar(
+        select(SupplierProfile).where(
+            SupplierProfile.organization_id == supplier_id,
+        )
+    )
+    if profile is None or profile.status != SupplierStatus.APPROVED.value:
         raise SkuCostError(SkuCostErrorCode.SUPPLIER_INACTIVE, "供应商已停用")
 
     supplier_sku = db.get(SupplierSku, supplier_sku_id)

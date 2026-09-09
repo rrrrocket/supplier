@@ -9,7 +9,7 @@
 | JavaScript 语法检查 | 通过 |
 | 5 个 HTML 页面重复 ID 与本地资源检查 | 通过 |
 | PostgreSQL 16 隔离测试环境 | 持久命名卷；迁移到 Alembic head，通过；数据库端口 6432 |
-| Pytest 自动化测试 | 236 项通过 |
+| Pytest 自动化测试 | 240 项通过 |
 | 前端 Node 测试 | 52 项通过，0 失败 |
 | 测试卷复用 | 完整与 focused 验证均复用 `supplier-tests` 的持久 PostgreSQL 服务、网络和命名卷；仅 one-shot runner 被移除 |
 | 测试数据库最终状态 | `supplier-tests-test-db-1` 保持 healthy |
@@ -28,7 +28,7 @@
 | PostgreSQL 历史供应商角色迁移 | 通过 |
 | 最终供应商目录迁移 | 通过；`products.brand_id`、`supplier_offers.supplier_sku_id` 非空，历史文本列不存在，既有 ID/报价/库存关系保持 |
 | Alembic 模型一致性 `check` | 无待生成迁移 |
-| 通用集成 OpenAPI 契约 | 6 条 caller-neutral 路径的方法、schema、Bearer security、scope、成本错误码、400/404/409、429 与 `Retry-After` 通过运行时契约测试 |
+| 通用集成 OpenAPI 契约 | 6 条 caller-neutral 路径的方法、schema、Bearer security、scope、成本错误码与精确响应集合通过运行时契约测试；列表无效 cursor/批量结构为 400，普通参数校验为 422，401 声明 `WWW-Authenticate`，429 声明 `Retry-After`，两条成本操作不发布不可达的自动 422 |
 | FastAPI 真实启动 | 通过 |
 | `./start.sh status` | app 与 db 均为 healthy |
 | `/api/health` | `{"status":"ok","service":"supplier-network","environment":"development"}` |
@@ -62,7 +62,7 @@
 - Brand、正式供应商—品牌合作、稳定 Supplier SKU 和最终无 legacy 列迁移链；
 - Integration Client 一次性令牌、哈希存储、scope、到期、轮换、停用、连接生命周期与权限隔离；
 - 供应商/品牌/Supplier SKU 的增量 cursor 分页、`include_inactive` 及孤儿 SKU 的 nullable `commercial_mode`；
-- 单个/1..500 行批量成本查询、8 个业务错误码、`X-Request-ID` 脱敏聚合审计与 600/60 限流。
+- 单个/1..500 行批量成本查询、供应商组织与 `SupplierProfile=APPROVED` 资格、8 个业务错误码、`X-Request-ID` 脱敏聚合审计与 600/60 限流。
 
 ## 尚未执行
 
@@ -74,4 +74,4 @@
 
 ## 已知非阻断警告
 
-- 测试仍报告 Starlette `anyio.abc.BlockingPortal` 弃用警告；不影响本次 236 项 Python 测试与 52 项 Node 测试通过。
+- 测试仍报告 Starlette `anyio.abc.BlockingPortal` 弃用警告；不影响本次 240 项 Python 测试与 52 项 Node 测试通过。

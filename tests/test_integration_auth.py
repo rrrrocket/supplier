@@ -250,6 +250,7 @@ def test_missing_malformed_and_invalid_bearer_tokens_are_unauthorized(
     response = client.get("/api/test/integration-supplier-reader", headers=headers)
 
     assert response.status_code == expected_status
+    assert response.headers["www-authenticate"] == "Bearer"
 
 
 def test_expired_and_revoked_tokens_are_unauthorized(client: TestClient) -> None:

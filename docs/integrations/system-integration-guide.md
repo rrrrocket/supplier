@@ -69,7 +69,7 @@ supplier-costs:read
 - 调用方不得使用供应商或平台管理员的网页 Session。
 - 令牌必须存入密钥管理或受控环境变量，不得写入代码或日志。
 - 测试和正式环境使用不同令牌。
-- 收到 HTTP 401 时停止业务重试并检查令牌；收到 HTTP 403 时检查权限范围。
+- 收到 HTTP 401（响应包含 `WWW-Authenticate: Bearer`）时停止业务重试并检查令牌；收到 HTTP 403 时检查权限范围。
 - 平台管理员在管理端创建 Integration Client；完整令牌只在创建或轮换成功时展示一次，数据库仅保存令牌哈希和可检索前缀。
 - 为凭证设置最小 scope 和合理到期时间；轮换后旧令牌立即失效，停用后该令牌立即返回 401。
 - 不要把 `token_prefix` 当作凭证；令牌遗失时必须轮换，不能从平台取回明文。
@@ -169,7 +169,7 @@ supplier-costs:read
 supplier_network_supplier_id + supplier_network_sku_id
 ```
 
-调用成本接口。Supplier Network 验证 SKU 归属及模式 A 状态后，返回当前成本价。
+调用成本接口。Supplier Network 先验证供应商组织存在且类型正确，再确认组织已启用、`SupplierProfile` 存在且状态为 `APPROVED`，之后验证 SKU 归属及模式 A 状态并返回当前成本价。组织停用、缺少档案或档案不是 `APPROVED` 均视为 `SUPPLIER_INACTIVE`，不能读取成本。
 
 ## 8. API 说明
 
@@ -368,10 +368,12 @@ Content-Type: application/json
 | HTTP 状态 | 含义 | 调用方处理 |
 |---|---|---|
 | 200 | 成功；批量响应可能包含单行错误 | 逐行处理 |
-| 400 | 请求结构或参数无效 | 修正请求，不自动重试 |
+| 400 | 三个列表的 `cursor` 无效（`INVALID_CURSOR`），或批量成本请求 JSON/整体结构无效 | 修正游标或批量请求，不自动重试 |
 | 401 | 令牌无效或过期 | 停止重试并告警 |
 | 403 | 权限不足 | 检查 Integration Client scope |
 | 404 | 单资源不存在 | 将本地绑定标为待检查 |
+| 409 | 单个成本查询的资源状态、归属、合作模式或成本条件不满足 | 按业务错误码修正绑定或停止使用成本 |
+| 422 | 列表/路径/查询参数未通过框架校验，例如 `limit` 越界或时间格式错误 | 修正参数，不自动重试 |
 | 429 | 调用频率过高 | 按 `Retry-After` 重试 |
 | 500/502/503/504 | 服务异常 | 指数退避重试 |
 
@@ -380,7 +382,7 @@ Content-Type: application/json
 | 错误码 | 含义 | 调用方建议处理 |
 |---|---|---|
 | `SUPPLIER_NOT_FOUND` | 供应商不存在 | 解除或重新选择供应商 |
-| `SUPPLIER_INACTIVE` | 供应商停用 | 禁止继续使用并提示业务人员 |
+| `SUPPLIER_INACTIVE` | 供应商组织停用、缺少供应商档案或档案未审核通过 | 禁止继续使用并提示业务人员 |
 | `SKU_NOT_FOUND` | Supplier SKU 不存在 | 将映射标为 `INVALID` |
 | `SKU_INACTIVE` | Supplier SKU 已停用 | 将映射标为 `INVALID` |
 | `SKU_SUPPLIER_MISMATCH` | SKU 不属于传入供应商 | 修正本地绑定 |

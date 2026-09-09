@@ -27,6 +27,57 @@ PUBLIC_OPERATIONS = {
     ),
     "/api/integrations/v1/sku-costs/query": ("post", "SkuCostBatchResponse"),
 }
+EXPECTED_RESPONSE_STATUSES = {
+    "/api/integrations/v1/suppliers": {
+        "200",
+        "400",
+        "401",
+        "403",
+        "422",
+        "429",
+    },
+    "/api/integrations/v1/suppliers/{supplier_id}": {
+        "200",
+        "401",
+        "403",
+        "404",
+        "422",
+        "429",
+    },
+    "/api/integrations/v1/suppliers/{supplier_id}/brands": {
+        "200",
+        "400",
+        "401",
+        "403",
+        "404",
+        "422",
+        "429",
+    },
+    "/api/integrations/v1/suppliers/{supplier_id}/skus": {
+        "200",
+        "400",
+        "401",
+        "403",
+        "404",
+        "422",
+        "429",
+    },
+    "/api/integrations/v1/suppliers/{supplier_id}/skus/{supplier_sku_id}/cost": {
+        "200",
+        "401",
+        "403",
+        "404",
+        "409",
+        "429",
+    },
+    "/api/integrations/v1/sku-costs/query": {
+        "200",
+        "400",
+        "401",
+        "403",
+        "429",
+    },
+}
 EXPECTED_SCOPES = {
     "suppliers:read",
     "supplier-brands:read",
@@ -125,13 +176,11 @@ def test_list_openapi_exposes_incremental_pagination_contract() -> None:
             "limit",
             "include_inactive",
         }
-        assert parameters["limit"]["schema"] == {
-            "type": "integer",
-            "maximum": 500,
-            "minimum": 1,
-            "default": 100,
-            "title": "Limit",
-        }
+        limit_schema = parameters["limit"]["schema"]
+        assert limit_schema["type"] == "integer"
+        assert limit_schema["maximum"] == 500
+        assert limit_schema["minimum"] == 1
+        assert limit_schema["default"] == 100
         assert parameters["include_inactive"]["schema"]["default"] is False
 
 
@@ -203,22 +252,30 @@ def test_every_integration_operation_documents_bearer_auth_and_rate_limits() -> 
     for path, (method, _) in PUBLIC_OPERATIONS.items():
         operation = openapi["paths"][path][method]
         assert operation["security"] == [{"IntegrationBearer": []}]
+        authenticate = operation["responses"]["401"]["headers"][
+            "WWW-Authenticate"
+        ]
+        assert authenticate["schema"]["type"] == "string"
         retry_after = operation["responses"]["429"]["headers"]["Retry-After"]
         assert retry_after["schema"]["type"] == "integer"
         assert retry_after["schema"]["minimum"] == 1
 
 
-def test_cost_operations_publish_validation_and_business_responses() -> None:
-    """Catch the cost API documenting only its success branch."""
+def test_each_operation_publishes_only_its_reachable_response_statuses() -> None:
+    """Catch documented responses that are missing at runtime or cannot occur."""
     openapi = app.openapi()
-    single = openapi["paths"][
-        "/api/integrations/v1/suppliers/{supplier_id}/skus/{supplier_sku_id}/cost"
-    ]["get"]
-    batch = openapi["paths"]["/api/integrations/v1/sku-costs/query"]["post"]
 
-    assert {"200", "400", "401", "403", "404", "409", "429"}.issubset(
-        single["responses"]
-    )
-    assert {"200", "400", "401", "403", "429"}.issubset(batch["responses"])
-    assert schema_ref_name(response_schema(single, 200)) == "CurrentSkuCostView"
-    assert schema_ref_name(response_schema(batch, 200)) == "SkuCostBatchResponse"
+    for path, expected_statuses in EXPECTED_RESPONSE_STATUSES.items():
+        method = PUBLIC_OPERATIONS[path][0]
+        assert set(openapi["paths"][path][method]["responses"]) == expected_statuses
+
+
+def test_openapi_schema_cache_keeps_the_normalized_cost_contract() -> None:
+    """Catch custom schema normalization rebuilding or mutating on every request."""
+    app.openapi_schema = None
+
+    first = app.openapi()
+    second = app.openapi()
+
+    assert first is second
+    assert app.openapi_schema is first

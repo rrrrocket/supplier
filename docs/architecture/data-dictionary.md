@@ -56,6 +56,7 @@
 | `token_prefix` / `token_hash` | 前缀只用于定位候选，认证比较哈希；完整令牌只在创建/轮换时展示一次 |
 | `scopes` | `suppliers:read`、`supplier-brands:read`、`supplier-skus:read`、`supplier-costs:read` |
 | `expires_at` / `is_active` | 到期、轮换旧值或停用后立即拒绝；`last_used_at` 记录最近认证使用 |
+| 集成供应商有效性 | 成本查询要求 `organizations.organization_type=SUPPLIER`、组织 `is_active=true`、对应 `supplier_profiles` 存在且 `status=APPROVED`；档案缺失或非 `APPROVED` 均为 `SUPPLIER_INACTIVE` |
 | 列表分页 | `updated_since`、不透明 `cursor`、`include_inactive`、`limit` 1..500（默认 100） |
 | 失效孤儿 SKU | `include_inactive=true` 时返回 `status=INACTIVE`、`commercial_mode=null` |
 | 批量成本 | 1..500 行；`client_sku_id` 只在请求/响应回传，不持久化 |

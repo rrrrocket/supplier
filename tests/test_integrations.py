@@ -397,8 +397,57 @@ def cost_catalog(client: TestClient) -> dict[str, Any]:
             created_at=base_time,
             updated_at=base_time,
         )
-        db.add_all([first_supplier, second_supplier, disabled_supplier, platform])
+        missing_profile_supplier = Organization(
+            code=f"COST-SUP-NO-PROFILE-{suffix}",
+            name=f"无档案成本供应商 {suffix}",
+            organization_type=OrganizationType.SUPPLIER.value,
+            is_active=True,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        pending_supplier = Organization(
+            code=f"COST-SUP-PENDING-{suffix}",
+            name=f"待审核成本供应商 {suffix}",
+            organization_type=OrganizationType.SUPPLIER.value,
+            is_active=True,
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        db.add_all(
+            [
+                first_supplier,
+                second_supplier,
+                disabled_supplier,
+                platform,
+                missing_profile_supplier,
+                pending_supplier,
+            ]
+        )
         db.flush()
+        db.add_all(
+            [
+                SupplierProfile(
+                    organization_id=first_supplier.id,
+                    legal_name=first_supplier.name,
+                    status=SupplierStatus.APPROVED.value,
+                ),
+                SupplierProfile(
+                    organization_id=second_supplier.id,
+                    legal_name=second_supplier.name,
+                    status=SupplierStatus.APPROVED.value,
+                ),
+                SupplierProfile(
+                    organization_id=disabled_supplier.id,
+                    legal_name=disabled_supplier.name,
+                    status=SupplierStatus.APPROVED.value,
+                ),
+                SupplierProfile(
+                    organization_id=pending_supplier.id,
+                    legal_name=pending_supplier.name,
+                    status=SupplierStatus.PENDING.value,
+                ),
+            ]
+        )
 
         active_brand = Brand(
             code=f"COST-BRAND-A-{suffix}",
@@ -635,6 +684,8 @@ def cost_catalog(client: TestClient) -> dict[str, Any]:
             "first_supplier_id": first_supplier.id,
             "second_supplier_id": second_supplier.id,
             "disabled_supplier_id": disabled_supplier.id,
+            "missing_profile_supplier_id": missing_profile_supplier.id,
+            "pending_supplier_id": pending_supplier.id,
             "platform_id": platform.id,
             "active_sku_id": active_sku.id,
             "inactive_sku_id": inactive_sku.id,
@@ -1365,6 +1416,72 @@ def test_single_cost_returns_exact_current_mode_a_offer_and_aggregate_audit(
     assert integration_client["token"] not in json.dumps(event.payload)
 
 
+@pytest.mark.parametrize(
+    "supplier_key",
+    ["missing_profile_supplier_id", "pending_supplier_id"],
+    ids=["missing-profile", "pending-profile"],
+)
+def test_single_cost_rejects_supplier_without_approved_profile(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    cost_catalog: dict[str, Any],
+    supplier_key: str,
+) -> None:
+    response = client.get(
+        f"{BASE_PATH}/suppliers/{cost_catalog[supplier_key]}"
+        f"/skus/{cost_catalog['active_sku_id']}/cost",
+        headers=auth_headers(integration_client),
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": {"code": "SUPPLIER_INACTIVE", "message": "供应商已停用"}
+    }
+
+
+def test_batch_cost_rejects_suppliers_without_approved_profiles(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    cost_catalog: dict[str, Any],
+) -> None:
+    client_sku_ids = ["missing-profile", "pending-profile"]
+    response = client.post(
+        f"{BASE_PATH}/sku-costs/query",
+        headers=auth_headers(integration_client),
+        json={
+            "items": [
+                {
+                    "client_sku_id": client_sku_id,
+                    "supplier_id": cost_catalog[supplier_key],
+                    "supplier_sku_id": cost_catalog["active_sku_id"],
+                }
+                for client_sku_id, supplier_key in zip(
+                    client_sku_ids,
+                    ("missing_profile_supplier_id", "pending_supplier_id"),
+                    strict=True,
+                )
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == [
+        {
+            "client_sku_id": client_sku_id,
+            "supplier_id": cost_catalog[supplier_key],
+            "supplier_sku_id": cost_catalog["active_sku_id"],
+            "status": "ERROR",
+            "error_code": "SUPPLIER_INACTIVE",
+            "message": "供应商已停用",
+        }
+        for client_sku_id, supplier_key in zip(
+            client_sku_ids,
+            ("missing_profile_supplier_id", "pending_supplier_id"),
+            strict=True,
+        )
+    ]
+
+
 def test_cost_audit_reuses_the_same_caller_request_id_on_retry(
     client: TestClient,
     integration_client: dict[str, Any],
@@ -1916,6 +2033,8 @@ def test_unidentified_401_cost_requests_do_not_fabricate_audit_actors(
 
     assert missing_token.status_code == 401
     assert unknown_token.status_code == 401
+    assert missing_token.headers["www-authenticate"] == "Bearer"
+    assert unknown_token.headers["www-authenticate"] == "Bearer"
     with SessionLocal() as db:
         after = db.scalar(
             select(func.count(EventLog.id)).where(

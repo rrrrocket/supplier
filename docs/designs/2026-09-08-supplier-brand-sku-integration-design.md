@@ -249,7 +249,7 @@ POST /api/integrations/v1/sku-costs/query
 }
 ```
 
-批量请求接受 1..500 行，通过 HTTP 200 按输入顺序返回逐行结果。请求结构整体无效时返回 HTTP 400；认证、权限、限流和服务异常使用对应 HTTP 状态码。
+批量请求接受 1..500 行，通过 HTTP 200 按输入顺序返回逐行结果。批量 JSON 或请求结构整体无效时返回 HTTP 400；三个列表的无效不透明游标也返回 HTTP 400 和 `INVALID_CURSOR`。普通列表/路径/查询参数的 FastAPI 框架校验失败返回 HTTP 422。认证、权限、限流和服务异常使用对应 HTTP 状态码；HTTP 401 声明并返回 `WWW-Authenticate: Bearer`。
 
 业务错误码：
 
@@ -268,12 +268,13 @@ POST /api/integrations/v1/sku-costs/query
 
 依次验证：
 
-1. 供应商存在且启用；
-2. Supplier SKU 存在且属于该供应商；
-3. Supplier SKU 处于启用状态；
-4. 根据 Supplier SKU 的 `brand_id` 找到当前有效的品牌合作关系；
-5. 合作模式为 `SELF_PURCHASE`；
-6. 当前 Supplier Offer 处于有效状态且有价格。
+1. 供应商组织存在且类型为 `SUPPLIER`；
+2. 供应商组织已启用，且 `SupplierProfile` 存在并处于 `APPROVED`；缺失档案或任何非 `APPROVED` 状态都返回 `SUPPLIER_INACTIVE`；
+3. Supplier SKU 存在且属于该供应商；
+4. Supplier SKU 处于启用状态；
+5. 根据 Supplier SKU 的 `brand_id` 找到当前有效的品牌合作关系；
+6. 合作模式为 `SELF_PURCHASE`；
+7. 当前 Supplier Offer 处于有效状态且有价格。
 
 成功时只返回：调用方关联标识、供应商 ID、Supplier SKU ID、供应商货号、成本价、币种和成本更新时间。
 

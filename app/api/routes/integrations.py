@@ -71,12 +71,27 @@ MISSING_COST_CODES = {
     SkuCostErrorCode.SKU_NOT_FOUND,
 }
 COST_BATCH_PATH = "/api/integrations/v1/sku-costs/query"
+COST_SINGLE_OPENAPI_PATH = (
+    "/api/integrations/v1/suppliers/{supplier_id}/skus/{supplier_sku_id}/cost"
+)
+COST_OPENAPI_OPERATIONS = {
+    COST_SINGLE_OPENAPI_PATH: "get",
+    COST_BATCH_PATH: "post",
+}
 COST_SINGLE_PATH_PATTERN = re.compile(
     r"^/api/integrations/v1/suppliers/[^/]+/skus/[^/]+/cost$"
 )
 
 INTEGRATION_AUTH_RESPONSES = {
-    401: {"description": "Integration Client token is invalid or expired."},
+    401: {
+        "description": "Integration Client token is invalid or expired.",
+        "headers": {
+            "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "schema": {"type": "string"},
+            }
+        },
+    },
     403: {"description": "Integration Client scope is insufficient."},
     429: {
         "description": "Integration Client request rate exceeded.",
@@ -90,6 +105,9 @@ INTEGRATION_AUTH_RESPONSES = {
 }
 INTEGRATION_VALIDATION_RESPONSE = {
     400: {"description": "The integration request is invalid."}
+}
+INTEGRATION_CURSOR_RESPONSE = {
+    400: {"description": "The integration pagination cursor is invalid."}
 }
 INTEGRATION_NOT_FOUND_RESPONSE = {
     404: {"description": "The requested integration resource does not exist."}
@@ -364,7 +382,10 @@ def ranked_cooperations(supplier_id: str):
 @router.get(
     "/suppliers",
     response_model=SupplierIntegrationPage,
-    responses={**INTEGRATION_AUTH_RESPONSES},
+    responses={
+        **INTEGRATION_AUTH_RESPONSES,
+        **INTEGRATION_CURSOR_RESPONSE,
+    },
 )
 def list_suppliers(
     db: DbSession,
@@ -459,6 +480,7 @@ def get_supplier(
     responses={
         **INTEGRATION_AUTH_RESPONSES,
         **INTEGRATION_NOT_FOUND_RESPONSE,
+        **INTEGRATION_CURSOR_RESPONSE,
     },
 )
 def list_supplier_brands(
@@ -534,6 +556,7 @@ def list_supplier_brands(
     responses={
         **INTEGRATION_AUTH_RESPONSES,
         **INTEGRATION_NOT_FOUND_RESPONSE,
+        **INTEGRATION_CURSOR_RESPONSE,
     },
 )
 def list_supplier_skus(
@@ -716,7 +739,6 @@ router.add_api_route(
     route_class_override=CostValidationRoute,
     responses={
         **INTEGRATION_AUTH_RESPONSES,
-        **INTEGRATION_VALIDATION_RESPONSE,
         **INTEGRATION_NOT_FOUND_RESPONSE,
         **COST_BUSINESS_RESPONSE,
     },
