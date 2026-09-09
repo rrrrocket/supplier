@@ -153,10 +153,11 @@ def eligible_operator_rows(db: DbSession) -> list[tuple[Organization, OperatorPr
 def serialize_operator(
     org: Organization, profile: OperatorProfile, full: bool
 ) -> OperatorDirectoryItem:
+    public_name = profile.company_name or f"{profile.contact_name[:1]}**的运营团队"
     return OperatorDirectoryItem(
         operator_id=org.id,
         operator_code=org.code,
-        operator_name=org.name,
+        operator_name=org.name if full else public_name,
         company_name=profile.company_name,
         operator_type=profile.operator_type,
         province=profile.province,
@@ -190,7 +191,6 @@ def list_operators(
     def matches(row: tuple[Organization, OperatorProfile]) -> bool:
         org, profile = row
         haystack = " ".join([
-            org.name,
             profile.company_name or "",
             profile.operator_type or "",
             profile.province or "",

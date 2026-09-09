@@ -118,7 +118,7 @@ def test_public_operator_directory_filters_and_masks_contacts(client: TestClient
     assert body["page"] == 1
     assert body["page_size"] == 50
     item = next(item for item in body["items"] if item["operator_id"] == operator_id)
-    assert item["operator_name"] == "华东跨境运营"
+    assert item["operator_name"] == "华东跨境运营有限公司"
     assert item["categories"] == ["工业自动化", "消费电子"]
     assert item["contact_phone"] == "139****5678"
     assert item["contact_email"] == "c***@operator.example"
@@ -149,6 +149,24 @@ def test_operator_cannot_use_operator_directory_to_reveal_peer_contacts(client: 
 
     assert response.status_code == 200
     assert response.json()["contact_phone"] == "139****5678"
+
+
+def test_public_operator_name_does_not_reveal_contact_when_company_name_is_missing(
+    client: TestClient,
+) -> None:
+    _, _, operator_id = approved_operator(client)
+    client.post("/api/auth/logout")
+
+    response = client.get(f"/api/public/operators/{operator_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "市场运营" not in body["operator_name"]
+    assert body["operator_name"] == "市**的运营团队"
+
+    inferred = client.get("/api/public/operators?keyword=市场运营")
+    assert inferred.status_code == 200
+    assert all(item["operator_id"] != operator_id for item in inferred.json()["items"])
 
 
 def test_cooperation_acceptance_creates_binding_and_termination_disables_it(client: TestClient) -> None:
