@@ -1416,7 +1416,7 @@ def test_import_rejects_unassigned_brand_without_partial_catalog_writes(
     assert products == []
 
 
-def test_import_does_not_update_mismatched_other_tenant_offer(
+def test_import_does_not_update_same_code_offer_from_other_tenant(
     authenticated_client: TestClient,
 ) -> None:
     suffix = uuid4().hex[:8]
@@ -1439,30 +1439,40 @@ def test_import_does_not_update_mismatched_other_tenant_offer(
             select(Organization).where(Organization.code == "TEST-SUPPLIER")
         )
         brand = db.scalar(select(Brand).where(Brand.code == "TEST-BRAND"))
-        product = db.get(Product, product_response.json()["id"])
         assert supplier is not None
         assert brand is not None
-        assert product is not None
 
         other_supplier = Organization(
             code=f"MISMATCHED-OFFER-{suffix}",
             name=f"跨租户报价组织-{suffix}",
             organization_type=OrganizationType.SUPPLIER.value,
         )
-        supplier_sku = SupplierSku(
-            supplier_id=supplier.id,
+        db.add(other_supplier)
+        db.flush()
+        other_product = Product(
+            created_by_organization_id=other_supplier.id,
             brand_id=brand.id,
-            product_id=product.id,
+            name=product_name,
+            model=sku_code,
+            category="工业自动化",
+            status="ACTIVE",
+        )
+        db.add(other_product)
+        db.flush()
+        other_supplier_sku = SupplierSku(
+            supplier_id=other_supplier.id,
+            brand_id=brand.id,
+            product_id=other_product.id,
             variant_id=None,
             supplier_sku_code=sku_code,
             status="ACTIVE",
         )
-        db.add_all([other_supplier, supplier_sku])
+        db.add(other_supplier_sku)
         db.flush()
-        mismatched_offer = SupplierOffer(
+        other_offer = SupplierOffer(
             organization_id=other_supplier.id,
-            product_id=product.id,
-            supplier_sku_id=supplier_sku.id,
+            product_id=other_product.id,
+            supplier_sku_id=other_supplier_sku.id,
             price="99.0000",
             currency="CNY",
             moq=1,
@@ -1471,9 +1481,9 @@ def test_import_does_not_update_mismatched_other_tenant_offer(
             fulfillment_mode="PURCHASE",
             status="ACTIVE",
         )
-        db.add(mismatched_offer)
+        db.add(other_offer)
         db.commit()
-        mismatched_offer_id = mismatched_offer.id
+        other_offer_id = other_offer.id
 
     row = submitted_offer_row(
         sku=sku_code,
@@ -1489,12 +1499,13 @@ def test_import_does_not_update_mismatched_other_tenant_offer(
     )
 
     assert response.status_code == 201
-    assert response.json()["status"] == "FAILED"
-    assert response.json()["error_rows"] == 1
+    assert response.json()["status"] == "COMPLETED"
+    assert response.json()["success_rows"] == 1
+    assert response.json()["error_rows"] == 0
     with SessionLocal() as db:
-        mismatched_offer = db.get(SupplierOffer, mismatched_offer_id)
-        assert mismatched_offer is not None
-        assert str(mismatched_offer.price) == "99.0000"
+        other_offer = db.get(SupplierOffer, other_offer_id)
+        assert other_offer is not None
+        assert str(other_offer.price) == "99.0000"
 
 
 def test_offers_can_filter_by_brand(authenticated_client: TestClient) -> None:

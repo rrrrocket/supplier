@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from uuid import uuid4
 
+import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
@@ -115,6 +116,9 @@ def test_supplier_creates_lists_rotates_and_revokes_only_its_credential(
                 .order_by(EventLog.occurred_at)
             ).all()
             assert stored is not None
+            issuer = db.scalar(select(User).where(User.email == SUPPLIER_EMAIL))
+            assert issuer is not None
+            assert stored.issuer_user_id == issuer.id
             assert created["token"] != stored.token_hash
             assert rotated["token"] != stored.token_hash
             assert [event.event_type for event in events] == [
@@ -127,6 +131,59 @@ def test_supplier_creates_lists_rotates_and_revokes_only_its_credential(
             assert rotated["token"] not in serialized_events
     finally:
         delete_integration_clients(client_id)
+
+
+def test_supplier_rotation_records_the_current_supplier_user_as_issuer(
+    client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    second_email = f"supplier-issuer-{suffix}@example.com"
+    second_password = "SupplierIssuer123!"
+    owner_id = supplier_organization_id()
+    with SessionLocal() as db:
+        first_user = db.scalar(select(User).where(User.email == SUPPLIER_EMAIL))
+        assert first_user is not None
+        second_user = User(
+            organization_id=owner_id,
+            email=second_email,
+            name="轮换签发人",
+            role=UserRole.SUPPLIER.value,
+            password_hash=hash_password(second_password),
+        )
+        db.add(second_user)
+        db.commit()
+        first_user_id = first_user.id
+        second_user_id = second_user.id
+
+    login(client, SUPPLIER_EMAIL, SUPPLIER_PASSWORD)
+    created_response = client.post(
+        "/api/supplier/integration-clients",
+        json={"name": f"签发人轮换-{suffix}", "scopes": ["suppliers:read"]},
+    )
+    assert created_response.status_code == status.HTTP_201_CREATED
+    created = created_response.json()
+    client_id = created["id"]
+
+    try:
+        with SessionLocal() as db:
+            stored = db.get(IntegrationClient, client_id)
+            assert stored is not None
+            assert stored.issuer_user_id == first_user_id
+
+        login(client, second_email, second_password)
+        rotated_response = client.post(
+            f"/api/supplier/integration-clients/{client_id}/rotate"
+        )
+        assert rotated_response.status_code == status.HTTP_200_OK
+        with SessionLocal() as db:
+            stored = db.get(IntegrationClient, client_id)
+            assert stored is not None
+            assert stored.issuer_user_id == second_user_id
+    finally:
+        delete_integration_clients(client_id)
+        with SessionLocal() as db:
+            db.execute(delete(User).where(User.id == second_user_id))
+            db.commit()
 
 
 def test_supplier_cannot_manage_another_suppliers_credential(
@@ -142,10 +199,20 @@ def test_supplier_cannot_manage_another_suppliers_credential(
         )
         db.add(other_supplier)
         db.flush()
+        issuer = User(
+            organization_id=other_supplier.id,
+            email=f"other-supplier-issuer-{suffix}@example.com",
+            name="其他供应商签发人",
+            role=UserRole.SUPPLIER.value,
+            password_hash="not-used",
+        )
+        db.add(issuer)
+        db.flush()
         credential = IntegrationClient(
             name=f"其他供应商 ERP-{suffix}",
             client_type=IntegrationClientType.SUPPLIER.value,
             owner_organization_id=other_supplier.id,
+            issuer_user_id=issuer.id,
             token_prefix=token_prefix,
             token_hash=token_hash,
             scopes=["supplier-skus:read"],
@@ -153,6 +220,7 @@ def test_supplier_cannot_manage_another_suppliers_credential(
         db.add(credential)
         db.commit()
         other_supplier_id = other_supplier.id
+        issuer_id = issuer.id
         credential_id = credential.id
 
     try:
@@ -171,6 +239,7 @@ def test_supplier_cannot_manage_another_suppliers_credential(
     finally:
         delete_integration_clients(credential_id)
         with SessionLocal() as db:
+            db.execute(delete(User).where(User.id == issuer_id))
             db.execute(delete(Organization).where(Organization.id == other_supplier_id))
             db.commit()
 
@@ -223,3 +292,19 @@ def test_supplier_credential_list_rejects_unsupported_page_size(
     )
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+@pytest.mark.parametrize("page_size", [20, 50, 100, 200])
+def test_supplier_credential_list_accepts_every_supported_page_size(
+    client: TestClient,
+    page_size: int,
+) -> None:
+    login(client, SUPPLIER_EMAIL, SUPPLIER_PASSWORD)
+
+    response = client.get(
+        "/api/supplier/integration-clients",
+        params={"page": 1, "page_size": page_size},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["page_size"] == page_size

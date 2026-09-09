@@ -57,7 +57,11 @@ function element() {
   };
 }
 
-function supplierIntegrationHarness({ api, confirm = () => true } = {}) {
+function supplierIntegrationHarness({
+  api,
+  clipboard = { writeText() {} },
+  confirm = () => true,
+} = {}) {
   const elements = new Map();
   const toasts = [];
   const windowListeners = new Map();
@@ -125,7 +129,7 @@ function supplierIntegrationHarness({ api, confirm = () => true } = {}) {
         return options;
       },
     },
-    navigator: { clipboard: { writeText() {} } },
+    navigator: { clipboard },
     window,
   });
   vm.runInContext(source, context);
@@ -185,6 +189,42 @@ test("cancel and leaving the ERP view clear the plaintext token", () => {
   tokenValue.textContent = "third-secret";
   harness.window.dispatch("pagehide");
   assert.equal(tokenValue.textContent, "");
+});
+
+test("clipboard rejection tells the supplier to copy the token manually", async () => {
+  const harness = supplierIntegrationHarness({
+    api: async () => page(),
+    clipboard: {
+      async writeText() {
+        throw new Error("clipboard permission denied");
+      },
+    },
+  });
+  harness.elements.get("#supplier-token-value").textContent = "m1i_copy_me";
+
+  await harness.elements.get("#copy-supplier-token").dispatch("click");
+
+  assert.deepEqual(harness.toasts, [[
+    "复制失败",
+    "浏览器无法自动复制，请手动选择并复制上方令牌。",
+    "error",
+  ]]);
+});
+
+test("unavailable clipboard API tells the supplier to copy the token manually", async () => {
+  const harness = supplierIntegrationHarness({
+    api: async () => page(),
+    clipboard: null,
+  });
+  harness.elements.get("#supplier-token-value").textContent = "m1i_copy_me";
+
+  await harness.elements.get("#copy-supplier-token").dispatch("click");
+
+  assert.deepEqual(harness.toasts, [[
+    "复制失败",
+    "浏览器无法自动复制，请手动选择并复制上方令牌。",
+    "error",
+  ]]);
 });
 
 test("rotation clears a previous token before starting the request", async () => {

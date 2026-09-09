@@ -215,6 +215,7 @@ def resolve_current_sku_cost(
     *,
     supplier_id: str,
     supplier_sku_id: str,
+    scope_sku_to_supplier: bool = False,
 ) -> CurrentSkuCost:
     supplier = db.get(Organization, supplier_id)
     if (
@@ -232,7 +233,10 @@ def resolve_current_sku_cost(
     if profile is None or profile.status != SupplierStatus.APPROVED.value:
         raise SkuCostError(SkuCostErrorCode.SUPPLIER_INACTIVE, "供应商已停用")
 
-    supplier_sku = db.get(SupplierSku, supplier_sku_id)
+    sku_conditions = [SupplierSku.id == supplier_sku_id]
+    if scope_sku_to_supplier:
+        sku_conditions.append(SupplierSku.supplier_id == supplier_id)
+    supplier_sku = db.scalar(select(SupplierSku).where(*sku_conditions))
     if supplier_sku is None:
         raise SkuCostError(SkuCostErrorCode.SKU_NOT_FOUND, "Supplier SKU 不存在")
     if supplier_sku.supplier_id != supplier_id:

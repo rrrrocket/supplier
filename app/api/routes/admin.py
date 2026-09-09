@@ -42,6 +42,12 @@ from app.services.scoring import calculate_profile_completion
 
 
 router = APIRouter(prefix="/admin", tags=["平台管理"])
+OPERATOR_APPLICATION_STATUSES = {
+    SupplierStatus.PENDING.value,
+    SupplierStatus.APPROVED.value,
+    SupplierStatus.REJECTED.value,
+}
+LIKE_ESCAPE = "\\"
 
 
 def require_platform_admin(user: CurrentUser) -> User:
@@ -120,7 +126,23 @@ def operator_application_view(item: OperatorApplication) -> OperatorApplicationA
 
 def normalized_keyword_pattern(keyword: str | None) -> str | None:
     normalized = (keyword or "").strip().lower()
-    return f"%{normalized}%" if normalized else None
+    if not normalized:
+        return None
+    escaped = (
+        normalized.replace(LIKE_ESCAPE, LIKE_ESCAPE * 2)
+        .replace("%", f"{LIKE_ESCAPE}%")
+        .replace("_", f"{LIKE_ESCAPE}_")
+    )
+    return f"%{escaped}%"
+
+
+def normalized_legacy_operator_status(value: str | None) -> str | None:
+    normalized = (value or "").strip().upper()
+    if not normalized:
+        return None
+    if normalized not in OPERATOR_APPLICATION_STATUSES:
+        raise HTTPException(status_code=422, detail="status 参数无效")
+    return normalized
 
 
 @router.get("/operator-summary", response_model=OperatorManagementSummary)
@@ -156,9 +178,10 @@ def list_operator_applications(
     db: DbSession,
     _: PlatformAdmin,
     keyword: str | None = Query(default=None, max_length=200),
-    application_status: Literal["PENDING", "APPROVED", "REJECTED"] | None = Query(
+    application_status: str | None = Query(
         default=None,
         alias="status",
+        max_length=30,
     ),
     status_filter: Literal["PENDING", "APPROVED", "REJECTED"] | None = Query(
         default=None
@@ -173,17 +196,32 @@ def list_operator_applications(
     keyword_pattern = normalized_keyword_pattern(keyword)
     if keyword_pattern:
         stmt = stmt.where(or_(
-            func.lower(OperatorApplication.contact_name).like(keyword_pattern),
-            func.lower(OperatorApplication.phone).like(keyword_pattern),
-            func.lower(OperatorApplication.email).like(keyword_pattern),
-            func.lower(OperatorApplication.company_name).like(keyword_pattern),
-            func.lower(OperatorApplication.application_no).like(keyword_pattern),
-            func.lower(OperatorApplication.operator_type).like(keyword_pattern),
-            func.lower(OperatorApplication.erp_name).like(keyword_pattern),
+            func.lower(OperatorApplication.contact_name).like(
+                keyword_pattern, escape=LIKE_ESCAPE
+            ),
+            func.lower(OperatorApplication.phone).like(
+                keyword_pattern, escape=LIKE_ESCAPE
+            ),
+            func.lower(OperatorApplication.email).like(
+                keyword_pattern, escape=LIKE_ESCAPE
+            ),
+            func.lower(OperatorApplication.company_name).like(
+                keyword_pattern, escape=LIKE_ESCAPE
+            ),
+            func.lower(OperatorApplication.application_no).like(
+                keyword_pattern, escape=LIKE_ESCAPE
+            ),
+            func.lower(OperatorApplication.operator_type).like(
+                keyword_pattern, escape=LIKE_ESCAPE
+            ),
+            func.lower(OperatorApplication.erp_name).like(
+                keyword_pattern, escape=LIKE_ESCAPE
+            ),
         ))
-    if application_status and status_filter and application_status != status_filter:
+    legacy_status = normalized_legacy_operator_status(application_status)
+    if legacy_status and status_filter and legacy_status != status_filter:
         raise HTTPException(status_code=422, detail="status 与 status_filter 不能冲突")
-    effective_status = status_filter or application_status
+    effective_status = status_filter or legacy_status
     if effective_status:
         stmt = stmt.where(OperatorApplication.status == effective_status)
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
@@ -210,13 +248,23 @@ def list_operators(
     keyword_pattern = normalized_keyword_pattern(keyword)
     if keyword_pattern:
         stmt = stmt.where(or_(
-            func.lower(Organization.name).like(keyword_pattern),
-            func.lower(Organization.code).like(keyword_pattern),
-            func.lower(OperatorProfile.contact_name).like(keyword_pattern),
-            func.lower(OperatorProfile.contact_email).like(keyword_pattern),
-            func.lower(OperatorProfile.contact_phone).like(keyword_pattern),
-            func.lower(OperatorProfile.operator_type).like(keyword_pattern),
-            func.lower(OperatorProfile.erp_name).like(keyword_pattern),
+            func.lower(Organization.name).like(keyword_pattern, escape=LIKE_ESCAPE),
+            func.lower(Organization.code).like(keyword_pattern, escape=LIKE_ESCAPE),
+            func.lower(OperatorProfile.contact_name).like(
+                keyword_pattern, escape=LIKE_ESCAPE
+            ),
+            func.lower(OperatorProfile.contact_email).like(
+                keyword_pattern, escape=LIKE_ESCAPE
+            ),
+            func.lower(OperatorProfile.contact_phone).like(
+                keyword_pattern, escape=LIKE_ESCAPE
+            ),
+            func.lower(OperatorProfile.operator_type).like(
+                keyword_pattern, escape=LIKE_ESCAPE
+            ),
+            func.lower(OperatorProfile.erp_name).like(
+                keyword_pattern, escape=LIKE_ESCAPE
+            ),
         ))
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     rows = db.execute(stmt.offset((page-1)*page_size).limit(page_size)).all()

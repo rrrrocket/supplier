@@ -29,6 +29,7 @@ def view(db: DbSession, item: OperatorSupplierCooperation) -> CooperationView:
         status=item.status, categories=item.categories, brands=item.brands,
         sales_channels=item.sales_channels, target_markets=item.target_markets,
         message=item.message, response_notes=item.response_notes, created_at=item.created_at,
+        responded_at=item.responded_at,
         binding=BindingView.model_validate(binding, from_attributes=True) if binding else None,
     )
 

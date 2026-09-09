@@ -588,6 +588,50 @@ test("cooperation pagination changes do not alter application or account paginat
 });
 
 
+test("cooperation rows render response time and use a dash while pending", () => {
+  const harness = adminHarness(async () => ({ items: [], total: 0, page: 1, page_size: 50 }), {
+    includeOperator: true,
+  });
+  const data = {
+    items: [
+      {
+        id: "accepted-cooperation",
+        operator_id: "operator-a",
+        supplier_id: "supplier-a",
+        operator_name: "运营商 A",
+        supplier_name: "供应商 A",
+        status: "ACTIVE",
+        binding: null,
+        created_at: "2026-09-09T01:00:00Z",
+        responded_at: "2026-09-10T02:00:00Z",
+      },
+      {
+        id: "pending-cooperation",
+        operator_id: "operator-b",
+        supplier_id: "supplier-b",
+        operator_name: "运营商 B",
+        supplier_name: "供应商 B",
+        status: "PENDING",
+        binding: null,
+        created_at: "2026-09-09T03:00:00Z",
+        responded_at: null,
+      },
+    ],
+    total: 2,
+    page: 1,
+    page_size: 50,
+  };
+  harness.context.cooperationRows = data;
+
+  vm.runInContext("renderAdminOperatorCooperations(cooperationRows)", harness.context);
+
+  const rows = harness.elements.get("#admin-operator-cooperations-tbody").innerHTML
+    .match(/<tr>[\s\S]*?<\/tr>/g);
+  assert.match(rows[0], /2026-09-10T02:00:00Z/);
+  assert.equal((rows[1].match(/>—<\/td>/g) || []).length, 2);
+});
+
+
 test("reviewing an operator refreshes applications accounts and summary", async () => {
   const requests = [];
   const api = async (requestPath, options = {}) => {
@@ -617,4 +661,48 @@ test("reviewing an operator refreshes applications accounts and summary", async 
     harness.elements.get("#operator-admin-metrics").innerHTML.match(/class="metric-card"/g).length,
     3,
   );
+});
+
+
+test("a stale operator summary response cannot replace the latest metrics", async () => {
+  const firstSummary = deferred();
+  const secondSummary = deferred();
+  const summaries = [firstSummary, secondSummary];
+  const harness = adminHarness((requestPath) => {
+    assert.equal(requestPath, "/api/admin/operator-summary");
+    return summaries.shift().promise;
+  }, { includeOperator: true });
+
+  const firstRequest = vm.runInContext("loadAdminOperatorSummary()", harness.context);
+  const secondRequest = vm.runInContext("loadAdminOperatorSummary()", harness.context);
+  secondSummary.resolve({
+    pending_applications: 22,
+    approved_applications: 23,
+    active_operators: 24,
+  });
+  await secondRequest;
+  firstSummary.resolve({
+    pending_applications: 11,
+    approved_applications: 12,
+    active_operators: 13,
+  });
+  await firstRequest;
+
+  const html = harness.elements.get("#operator-admin-metrics").innerHTML;
+  assert.match(html, /metric-value">22</);
+  assert.doesNotMatch(html, /metric-value">11</);
+});
+
+
+test("operator summary errors render an explicit metrics error state", async () => {
+  const harness = adminHarness(async (requestPath) => {
+    assert.equal(requestPath, "/api/admin/operator-summary");
+    throw new Error("统计服务不可用");
+  }, { includeOperator: true });
+
+  await vm.runInContext("loadAdminOperatorSummary()", harness.context);
+
+  const html = harness.elements.get("#operator-admin-metrics").innerHTML;
+  assert.match(html, /运营概览加载失败/);
+  assert.match(html, /统计服务不可用/);
 });

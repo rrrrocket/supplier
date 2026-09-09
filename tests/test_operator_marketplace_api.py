@@ -244,3 +244,35 @@ def test_admin_can_list_operator_accounts_and_cooperations(client: TestClient) -
     assert cooperations.status_code == 200
     assert cooperations.json()["total"] >= 1
     assert any(item["id"] == created.json()["id"] for item in cooperations.json()["items"])
+
+
+def test_cooperation_responses_expose_the_response_time_to_admins(
+    client: TestClient,
+) -> None:
+    supplier_id = supplier_id_with_contacts()
+    email, password, _ = approved_operator(client)
+    login(client, email, password)
+    created = client.post(
+        "/api/operator/cooperations",
+        json={"supplier_id": supplier_id},
+    )
+    assert created.status_code == 201
+    cooperation_id = created.json()["id"]
+    assert created.json().get("responded_at") is None
+
+    login(client, SUPPLIER_EMAIL, SUPPLIER_PASSWORD)
+    accepted = client.post(
+        f"/api/supplier-operator/cooperations/{cooperation_id}/accept",
+        json={},
+    )
+    assert accepted.status_code == 200
+    responded_at = accepted.json().get("responded_at")
+    assert responded_at is not None
+
+    login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+    cooperations = client.get("/api/admin/operator-cooperations")
+    assert cooperations.status_code == 200
+    listed = next(
+        item for item in cooperations.json()["items"] if item["id"] == cooperation_id
+    )
+    assert listed.get("responded_at") == responded_at

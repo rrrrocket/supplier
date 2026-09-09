@@ -17,6 +17,8 @@ from app.models.entities import (
     IntegrationClientType,
     Organization,
     OrganizationType,
+    User,
+    UserRole,
 )
 from app.schemas.integration import IntegrationScope
 
@@ -101,14 +103,26 @@ def authenticate_integration_client(
         ):
             raise unauthorized()
         if client.client_type == IntegrationClientType.SYSTEM.value:
-            if client.owner_organization_id is not None:
+            if (
+                client.owner_organization_id is not None
+                or client.issuer_user_id is not None
+            ):
                 raise unauthorized()
         elif client.client_type == IntegrationClientType.SUPPLIER.value:
             owner = auth_db.get(Organization, client.owner_organization_id)
+            issuer = (
+                auth_db.get(User, client.issuer_user_id)
+                if client.issuer_user_id is not None
+                else None
+            )
             if (
                 owner is None
                 or not owner.is_active
                 or owner.organization_type != OrganizationType.SUPPLIER.value
+                or issuer is None
+                or not issuer.is_active
+                or issuer.role != UserRole.SUPPLIER.value
+                or issuer.organization_id != owner.id
             ):
                 raise unauthorized()
         else:

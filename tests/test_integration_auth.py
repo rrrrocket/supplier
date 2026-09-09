@@ -19,6 +19,7 @@ from app.api import integration_deps
 from app.api.deps import DbSession
 from app.api.integration_deps import SupplierReader
 from app.core.integration_security import create_integration_token, verify_integration_token
+from app.core.security import hash_password
 from app.db.session import SessionLocal, get_db
 from app.main import app
 from app.models.entities import (
@@ -27,6 +28,8 @@ from app.models.entities import (
     IntegrationClientType,
     Organization,
     OrganizationType,
+    User,
+    UserRole,
 )
 from app.schemas.integration import INTEGRATION_SCOPES
 from app.services import integration_clients
@@ -198,8 +201,10 @@ def seeded_legacy_owned_credential(
                 text(
                     "ALTER TABLE integration_clients ADD CONSTRAINT "
                     "ck_integration_client_owner CHECK ("
-                    "(client_type = 'SYSTEM' AND owner_organization_id IS NULL) OR "
-                    "(client_type = 'SUPPLIER' AND owner_organization_id IS NOT NULL))"
+                    "(client_type = 'SYSTEM' AND owner_organization_id IS NULL "
+                    "AND issuer_user_id IS NULL) OR "
+                    "(client_type = 'SUPPLIER' AND owner_organization_id IS NOT NULL "
+                    "AND issuer_user_id IS NOT NULL))"
                 )
             )
             db.execute(delete(Organization).where(Organization.id == owner_id))
@@ -381,10 +386,20 @@ def test_supplier_token_requires_an_active_supplier_owner(
         )
         db.add(owner)
         db.flush()
+        issuer = User(
+            organization_id=owner.id,
+            email=f"invalid-owner-issuer-{suffix}@example.com",
+            name="无效所有者签发人",
+            role=UserRole.SUPPLIER.value,
+            password_hash="not-used",
+        )
+        db.add(issuer)
+        db.flush()
         credential = IntegrationClient(
             name=f"无效供应商凭证-{suffix}",
             client_type=IntegrationClientType.SUPPLIER.value,
             owner_organization_id=owner.id,
+            issuer_user_id=issuer.id,
             token_prefix=prefix,
             token_hash=token_hash,
             scopes=["suppliers:read"],
@@ -393,6 +408,7 @@ def test_supplier_token_requires_an_active_supplier_owner(
         db.commit()
         credential_id = credential.id
         owner_id = owner.id
+        issuer_id = issuer.id
 
     try:
         response = client.get(
@@ -407,6 +423,158 @@ def test_supplier_token_requires_an_active_supplier_owner(
             db.execute(
                 delete(IntegrationClient).where(IntegrationClient.id == credential_id)
             )
+            db.execute(delete(User).where(User.id == issuer_id))
+            db.execute(delete(Organization).where(Organization.id == owner_id))
+            db.commit()
+
+
+@pytest.mark.parametrize(
+    "invalid_issuer_state",
+    ["inactive", "wrong-role", "wrong-organization"],
+)
+def test_supplier_token_requires_an_active_supplier_issuer_in_its_owner_organization(
+    client: TestClient,
+    invalid_issuer_state: str,
+) -> None:
+    suffix = uuid4().hex[:8]
+    email = f"integration-issuer-{suffix}@example.com"
+    password = "IntegrationIssuer123!"
+    with SessionLocal() as db:
+        owner = Organization(
+            code=f"ISSUER-OWNER-{suffix}",
+            name=f"签发组织-{suffix}",
+            organization_type=OrganizationType.SUPPLIER.value,
+            is_active=True,
+        )
+        other_owner = Organization(
+            code=f"ISSUER-OTHER-{suffix}",
+            name=f"其他签发组织-{suffix}",
+            organization_type=OrganizationType.SUPPLIER.value,
+            is_active=True,
+        )
+        db.add_all([owner, other_owner])
+        db.flush()
+        issuer = User(
+            organization_id=owner.id,
+            email=email,
+            name="供应商签发人",
+            role=UserRole.SUPPLIER.value,
+            password_hash=hash_password(password),
+            is_active=True,
+        )
+        db.add(issuer)
+        db.commit()
+        owner_id = owner.id
+        other_owner_id = other_owner.id
+        issuer_id = issuer.id
+
+    login(client, email, password)
+    created_response = client.post(
+        "/api/supplier/integration-clients",
+        json={"name": f"签发校验-{suffix}", "scopes": ["suppliers:read"]},
+    )
+    assert created_response.status_code == status.HTTP_201_CREATED
+    created = created_response.json()
+    client_id = str(created["id"])
+    token = str(created["token"])
+
+    try:
+        with SessionLocal() as db:
+            owner = db.get(Organization, owner_id)
+            issuer = db.get(User, issuer_id)
+            assert owner is not None and owner.is_active
+            assert issuer is not None
+            if invalid_issuer_state == "inactive":
+                issuer.is_active = False
+            elif invalid_issuer_state == "wrong-role":
+                issuer.role = UserRole.OPERATOR.value
+            else:
+                issuer.organization_id = other_owner_id
+            db.commit()
+
+        response = client.get(
+            "/api/test/integration-supplier-reader",
+            headers=bearer(token),
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.headers["www-authenticate"] == "Bearer"
+    finally:
+        with SessionLocal() as db:
+            db.execute(
+                delete(EventLog).where(
+                    EventLog.entity_type == "IntegrationClient",
+                    EventLog.entity_id == client_id,
+                )
+            )
+            db.execute(delete(IntegrationClient).where(IntegrationClient.id == client_id))
+            db.execute(delete(User).where(User.id == issuer_id))
+            db.execute(
+                delete(Organization).where(
+                    Organization.id.in_([owner_id, other_owner_id])
+                )
+            )
+            db.commit()
+
+
+def test_deleting_supplier_issuer_invalidates_its_bearer_token(
+    client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    email = f"deleted-integration-issuer-{suffix}@example.com"
+    password = "DeletedIssuer123!"
+    with SessionLocal() as db:
+        owner = Organization(
+            code=f"DELETED-ISSUER-{suffix}",
+            name=f"删除签发人组织-{suffix}",
+            organization_type=OrganizationType.SUPPLIER.value,
+            is_active=True,
+        )
+        db.add(owner)
+        db.flush()
+        issuer = User(
+            organization_id=owner.id,
+            email=email,
+            name="待删除签发人",
+            role=UserRole.SUPPLIER.value,
+            password_hash=hash_password(password),
+        )
+        db.add(issuer)
+        db.commit()
+        owner_id = owner.id
+        issuer_id = issuer.id
+
+    login(client, email, password)
+    created_response = client.post(
+        "/api/supplier/integration-clients",
+        json={"name": f"删除签发人-{suffix}", "scopes": ["suppliers:read"]},
+    )
+    assert created_response.status_code == status.HTTP_201_CREATED
+    created = created_response.json()
+    client_id = str(created["id"])
+    token = str(created["token"])
+
+    try:
+        with SessionLocal() as db:
+            db.execute(delete(User).where(User.id == issuer_id))
+            db.commit()
+
+        response = client.get(
+            "/api/test/integration-supplier-reader",
+            headers=bearer(token),
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.headers["www-authenticate"] == "Bearer"
+    finally:
+        with SessionLocal() as db:
+            db.execute(
+                delete(EventLog).where(
+                    EventLog.entity_type == "IntegrationClient",
+                    EventLog.entity_id == client_id,
+                )
+            )
+            db.execute(delete(IntegrationClient).where(IntegrationClient.id == client_id))
             db.execute(delete(Organization).where(Organization.id == owner_id))
             db.commit()
 

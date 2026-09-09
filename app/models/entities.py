@@ -134,8 +134,10 @@ class IntegrationClient(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "integration_clients"
     __table_args__ = (
         CheckConstraint(
-            "(client_type = 'SYSTEM' AND owner_organization_id IS NULL) OR "
-            "(client_type = 'SUPPLIER' AND owner_organization_id IS NOT NULL)",
+            "(client_type = 'SYSTEM' AND owner_organization_id IS NULL "
+            "AND issuer_user_id IS NULL) OR "
+            "(client_type = 'SUPPLIER' AND owner_organization_id IS NOT NULL "
+            "AND issuer_user_id IS NOT NULL)",
             name="ck_integration_client_owner",
         ),
     )
@@ -146,6 +148,9 @@ class IntegrationClient(UUIDPrimaryKeyMixin, Base):
     )
     owner_organization_id: Mapped[str | None] = mapped_column(
         ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    issuer_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     token_prefix: Mapped[str] = mapped_column(
         String(24), unique=True, nullable=False, index=True

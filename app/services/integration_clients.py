@@ -42,6 +42,7 @@ def create_client_with_unique_token(
     expires_at: datetime | None,
     client_type: str,
     owner_organization_id: str | None,
+    issuer_user_id: str | None,
 ) -> tuple[IntegrationClient, str]:
     for _ in range(TOKEN_PREFIX_RETRY_LIMIT):
         plaintext, prefix, token_hash = create_integration_token()
@@ -49,6 +50,7 @@ def create_client_with_unique_token(
             name=name,
             client_type=client_type,
             owner_organization_id=owner_organization_id,
+            issuer_user_id=issuer_user_id,
             token_prefix=prefix,
             token_hash=token_hash,
             scopes=scopes,
@@ -72,6 +74,8 @@ def create_client_with_unique_token(
 def rotate_client_with_unique_token(
     db: Session,
     client: IntegrationClient,
+    *,
+    issuer_user_id: str | None,
 ) -> str:
     for _ in range(TOKEN_PREFIX_RETRY_LIMIT):
         plaintext, prefix, token_hash = create_integration_token()
@@ -80,6 +84,7 @@ def rotate_client_with_unique_token(
                 client.token_prefix = prefix
                 client.token_hash = token_hash
                 client.last_used_at = None
+                client.issuer_user_id = issuer_user_id
                 db.flush()
         except IntegrityError as exc:
             if not is_token_prefix_collision(exc):

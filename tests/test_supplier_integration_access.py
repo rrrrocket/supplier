@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from fastapi import status
@@ -10,7 +11,13 @@ from sqlalchemy import and_, delete, or_
 
 from app.core.integration_security import create_integration_token
 from app.db.session import SessionLocal
-from app.models.entities import EventLog, IntegrationClient, IntegrationClientType
+from app.models.entities import (
+    EventLog,
+    IntegrationClient,
+    IntegrationClientType,
+    User,
+    UserRole,
+)
 from app.schemas.integration import INTEGRATION_SCOPES
 from tests.test_integrations import cost_catalog, integration_catalog
 
@@ -19,19 +26,34 @@ BASE_PATH = "/api/integrations/v1"
 SUPPLIER_NOT_FOUND = {
     "detail": {"code": "SUPPLIER_NOT_FOUND", "message": "供应商不存在"}
 }
+SKU_NOT_FOUND = {
+    "detail": {"code": "SKU_NOT_FOUND", "message": "Supplier SKU 不存在"}
+}
+MISSING_SKU_ID = "00000000-0000-0000-0000-000000000000"
 
 
 @pytest.fixture()
 def supplier_token_factory() -> Iterator[Callable[[str], dict[str, str]]]:
     created_ids: list[str] = []
+    issuer_ids: list[str] = []
 
     def create(owner_organization_id: str) -> dict[str, str]:
         plaintext, prefix, token_hash = create_integration_token()
         with SessionLocal() as db:
+            issuer = User(
+                organization_id=owner_organization_id,
+                email=f"integration-access-{uuid4().hex}@example.com",
+                name="集成访问签发人",
+                role=UserRole.SUPPLIER.value,
+                password_hash="not-used",
+            )
+            db.add(issuer)
+            db.flush()
             credential = IntegrationClient(
                 name="供应商租户隔离测试",
                 client_type=IntegrationClientType.SUPPLIER.value,
                 owner_organization_id=owner_organization_id,
+                issuer_user_id=issuer.id,
                 token_prefix=prefix,
                 token_hash=token_hash,
                 scopes=list(INTEGRATION_SCOPES),
@@ -39,6 +61,7 @@ def supplier_token_factory() -> Iterator[Callable[[str], dict[str, str]]]:
             db.add(credential)
             db.commit()
             created_ids.append(credential.id)
+            issuer_ids.append(issuer.id)
         return {
             "id": credential.id,
             "token": plaintext,
@@ -66,6 +89,7 @@ def supplier_token_factory() -> Iterator[Callable[[str], dict[str, str]]]:
             db.execute(
                 delete(IntegrationClient).where(IntegrationClient.id.in_(created_ids))
             )
+            db.execute(delete(User).where(User.id.in_(issuer_ids)))
             db.commit()
 
 
@@ -129,6 +153,31 @@ def test_supplier_token_single_cost_rejects_foreign_supplier_before_sku_lookup(
     assert foreign.json() == SUPPLIER_NOT_FOUND
 
 
+def test_supplier_token_single_cost_hides_foreign_sku_existence(
+    client: TestClient,
+    supplier_token_factory: Callable[[str], dict[str, str]],
+    cost_catalog: dict[str, Any],
+) -> None:
+    token = supplier_token_factory(cost_catalog["first_supplier_id"])
+    headers = {"Authorization": f"Bearer {token['token']}"}
+    path = f"{BASE_PATH}/suppliers/{cost_catalog['first_supplier_id']}/skus"
+
+    foreign = client.get(
+        f"{path}/{cost_catalog['other_sku_id']}/cost",
+        headers=headers,
+    )
+    missing = client.get(f"{path}/{MISSING_SKU_ID}/cost", headers=headers)
+
+    assert (foreign.status_code, foreign.json()) == (
+        status.HTTP_404_NOT_FOUND,
+        SKU_NOT_FOUND,
+    )
+    assert (missing.status_code, missing.json()) == (
+        status.HTTP_404_NOT_FOUND,
+        SKU_NOT_FOUND,
+    )
+
+
 def test_supplier_token_batch_cost_isolates_each_foreign_supplier_item(
     client: TestClient,
     supplier_token_factory: Callable[[str], dict[str, str]],
@@ -171,6 +220,52 @@ def test_supplier_token_batch_cost_isolates_each_foreign_supplier_item(
             "status": "ERROR",
             "error_code": "SUPPLIER_NOT_FOUND",
             "message": "供应商不存在",
+        },
+    ]
+
+
+def test_supplier_token_batch_cost_hides_foreign_sku_existence(
+    client: TestClient,
+    supplier_token_factory: Callable[[str], dict[str, str]],
+    cost_catalog: dict[str, Any],
+) -> None:
+    token = supplier_token_factory(cost_catalog["first_supplier_id"])
+    response = client.post(
+        f"{BASE_PATH}/sku-costs/query",
+        headers={"Authorization": f"Bearer {token['token']}"},
+        json={
+            "items": [
+                {
+                    "client_sku_id": "foreign-existing",
+                    "supplier_id": cost_catalog["first_supplier_id"],
+                    "supplier_sku_id": cost_catalog["other_sku_id"],
+                },
+                {
+                    "client_sku_id": "missing",
+                    "supplier_id": cost_catalog["first_supplier_id"],
+                    "supplier_sku_id": MISSING_SKU_ID,
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["items"] == [
+        {
+            "client_sku_id": "foreign-existing",
+            "supplier_id": cost_catalog["first_supplier_id"],
+            "supplier_sku_id": cost_catalog["other_sku_id"],
+            "status": "ERROR",
+            "error_code": "SKU_NOT_FOUND",
+            "message": "Supplier SKU 不存在",
+        },
+        {
+            "client_sku_id": "missing",
+            "supplier_id": cost_catalog["first_supplier_id"],
+            "supplier_sku_id": MISSING_SKU_ID,
+            "status": "ERROR",
+            "error_code": "SKU_NOT_FOUND",
+            "message": "Supplier SKU 不存在",
         },
     ]
 

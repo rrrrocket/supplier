@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from typing import Any
 from uuid import uuid4
 
+import pytest
 from fastapi import Response
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, func, select
@@ -576,10 +579,13 @@ def test_admin_cannot_rotate_but_can_revoke_supplier_owned_credential(
             select(Organization).where(Organization.code == "TEST-SUPPLIER")
         )
         assert supplier is not None
+        issuer = db.scalar(select(User).where(User.email == SUPPLIER_EMAIL))
+        assert issuer is not None
         credential = IntegrationClient(
             name=f"供应商监管凭证-{uuid4().hex[:8]}",
             client_type=IntegrationClientType.SUPPLIER.value,
             owner_organization_id=supplier.id,
+            issuer_user_id=issuer.id,
             token_prefix=token_prefix,
             token_hash=token_hash,
             scopes=["supplier-skus:read"],
@@ -756,9 +762,130 @@ def test_operator_admin_summary_and_filters(client: TestClient) -> None:
             db.commit()
 
 
-def test_operator_application_status_parameters_preserve_legacy_contract(
+@pytest.mark.parametrize(
+    ("target_keyword", "wildcard_decoy"),
+    [
+        ("literal%term", "literalXterm"),
+        ("literal_term", "literalXterm"),
+        (r"literal\term", "literalterm"),
+    ],
+    ids=["percent", "underscore", "escape"],
+)
+def test_operator_application_keyword_treats_like_metacharacters_literally(
     client: TestClient,
+    target_keyword: str,
+    wildcard_decoy: str,
 ) -> None:
+    suffix = uuid4().hex[:8]
+    target = OperatorApplication(
+        application_no=f"OPR-LITERAL-TARGET-{suffix}",
+        contact_name=f"{target_keyword}-{suffix}",
+        phone="18800000001",
+        email=f"literal-target-{suffix}@example.com",
+    )
+    decoy = OperatorApplication(
+        application_no=f"OPR-LITERAL-DECOY-{suffix}",
+        contact_name=f"{wildcard_decoy}-{suffix}",
+        phone="18800000002",
+        email=f"literal-decoy-{suffix}@example.com",
+    )
+    with SessionLocal() as db:
+        db.add_all([target, decoy])
+        db.commit()
+        target_id = target.id
+        application_ids = [target.id, decoy.id]
+
+    try:
+        login_admin(client)
+        response = client.get(
+            "/api/admin/operator-applications",
+            params={"keyword": f"{target_keyword}-{suffix}"},
+        )
+
+        assert response.status_code == 200
+        assert [item["id"] for item in response.json()["items"]] == [target_id]
+    finally:
+        with SessionLocal() as db:
+            db.execute(
+                delete(OperatorApplication).where(
+                    OperatorApplication.id.in_(application_ids)
+                )
+            )
+            db.commit()
+
+
+@pytest.mark.parametrize(
+    ("target_keyword", "wildcard_decoy"),
+    [
+        ("literal%operator", "literalXoperator"),
+        ("literal_operator", "literalXoperator"),
+        (r"literal\operator", "literaloperator"),
+    ],
+    ids=["percent", "underscore", "escape"],
+)
+def test_operator_account_keyword_treats_like_metacharacters_literally(
+    client: TestClient,
+    target_keyword: str,
+    wildcard_decoy: str,
+) -> None:
+    suffix = uuid4().hex[:8]
+    target = Organization(
+        code=f"OPR-LIKE-TARGET-{suffix}",
+        name=f"{target_keyword}-{suffix}",
+        organization_type=OrganizationType.OPERATOR.value,
+    )
+    decoy = Organization(
+        code=f"OPR-LIKE-DECOY-{suffix}",
+        name=f"{wildcard_decoy}-{suffix}",
+        organization_type=OrganizationType.OPERATOR.value,
+    )
+    with SessionLocal() as db:
+        db.add_all([target, decoy])
+        db.flush()
+        db.add_all(
+            [
+                OperatorProfile(
+                    organization_id=target.id,
+                    contact_name="目标联系人",
+                    contact_phone="18800000001",
+                    contact_email=f"operator-target-{suffix}@example.com",
+                ),
+                OperatorProfile(
+                    organization_id=decoy.id,
+                    contact_name="对照联系人",
+                    contact_phone="18800000002",
+                    contact_email=f"operator-decoy-{suffix}@example.com",
+                ),
+            ]
+        )
+        db.commit()
+        target_id = target.id
+        operator_ids = [target.id, decoy.id]
+
+    try:
+        login_admin(client)
+        response = client.get(
+            "/api/admin/operators",
+            params={"keyword": f"{target_keyword}-{suffix}"},
+        )
+
+        assert response.status_code == 200
+        assert [item["organization_id"] for item in response.json()["items"]] == [
+            target_id
+        ]
+    finally:
+        with SessionLocal() as db:
+            db.execute(
+                delete(OperatorProfile).where(
+                    OperatorProfile.organization_id.in_(operator_ids)
+                )
+            )
+            db.execute(delete(Organization).where(Organization.id.in_(operator_ids)))
+            db.commit()
+
+
+@pytest.fixture()
+def operator_status_applications() -> Iterator[dict[str, Any]]:
     suffix = uuid4().hex[:8]
     keyword = f"状态兼容-{suffix}"
     pending_application = OperatorApplication(
@@ -782,41 +909,11 @@ def test_operator_application_status_parameters_preserve_legacy_contract(
         application_ids = [pending_application.id, rejected_application.id]
 
     try:
-        login_admin(client)
-
-        legacy = client.get(
-            "/api/admin/operator-applications",
-            params={"keyword": keyword, "status": "PENDING"},
-        )
-        assert legacy.status_code == 200
-        assert legacy.json()["total"] == 1
-        assert [item["id"] for item in legacy.json()["items"]] == [pending_id]
-
-        matching_parameters = client.get(
-            "/api/admin/operator-applications",
-            params={
-                "keyword": keyword,
-                "status": "PENDING",
-                "status_filter": "PENDING",
-            },
-        )
-        assert matching_parameters.status_code == 200
-        assert matching_parameters.json()["total"] == 1
-        assert [item["id"] for item in matching_parameters.json()["items"]] == [
-            pending_id
-        ]
-
-        conflicting_parameters = client.get(
-            "/api/admin/operator-applications",
-            params={"status": "PENDING", "status_filter": "REJECTED"},
-        )
-        assert conflicting_parameters.status_code == 422
-
-        invalid_legacy_status = client.get(
-            "/api/admin/operator-applications",
-            params={"status": "pending"},
-        )
-        assert invalid_legacy_status.status_code == 422
+        yield {
+            "keyword": keyword,
+            "pending_id": pending_id,
+            "application_ids": application_ids,
+        }
     finally:
         with SessionLocal() as db:
             db.execute(
@@ -825,3 +922,105 @@ def test_operator_application_status_parameters_preserve_legacy_contract(
                 )
             )
             db.commit()
+
+
+@pytest.mark.parametrize("legacy_status", ["pending", "PeNdInG"])
+def test_operator_application_legacy_status_is_case_insensitive(
+    client: TestClient,
+    operator_status_applications: dict[str, Any],
+    legacy_status: str,
+) -> None:
+    login_admin(client)
+
+    response = client.get(
+        "/api/admin/operator-applications",
+        params={
+            "keyword": operator_status_applications["keyword"],
+            "status": legacy_status,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert [item["id"] for item in response.json()["items"]] == [
+        operator_status_applications["pending_id"]
+    ]
+
+
+def test_operator_application_empty_legacy_status_means_no_filter(
+    client: TestClient,
+    operator_status_applications: dict[str, Any],
+) -> None:
+    login_admin(client)
+
+    response = client.get(
+        "/api/admin/operator-applications",
+        params={
+            "keyword": operator_status_applications["keyword"],
+            "status": "",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 2
+
+
+def test_operator_application_matching_mixed_case_legacy_and_strict_status_do_not_conflict(
+    client: TestClient,
+    operator_status_applications: dict[str, Any],
+) -> None:
+    login_admin(client)
+
+    response = client.get(
+        "/api/admin/operator-applications",
+        params={
+            "keyword": operator_status_applications["keyword"],
+            "status": "pEnDiNg",
+            "status_filter": "PENDING",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert [item["id"] for item in response.json()["items"]] == [
+        operator_status_applications["pending_id"]
+    ]
+
+
+def test_operator_application_invalid_legacy_status_is_rejected(
+    client: TestClient,
+) -> None:
+    login_admin(client)
+
+    response = client.get(
+        "/api/admin/operator-applications",
+        params={"status": "not-a-status"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_operator_application_conflicting_normalized_status_parameters_are_rejected(
+    client: TestClient,
+) -> None:
+    login_admin(client)
+
+    response = client.get(
+        "/api/admin/operator-applications",
+        params={"status": "pending", "status_filter": "REJECTED"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_operator_application_status_filter_remains_strict(
+    client: TestClient,
+) -> None:
+    login_admin(client)
+
+    response = client.get(
+        "/api/admin/operator-applications",
+        params={"status_filter": "pending"},
+    )
+
+    assert response.status_code == 422

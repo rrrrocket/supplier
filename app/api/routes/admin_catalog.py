@@ -83,6 +83,7 @@ def create_integration_client(
         expires_at=expires_at,
         client_type=IntegrationClientType.SYSTEM.value,
         owner_organization_id=None,
+        issuer_user_id=None,
     )
     record_event(
         db,
@@ -127,7 +128,7 @@ def rotate_integration_client(
             status_code=status.HTTP_409_CONFLICT,
             detail="已撤销或已过期的凭证不能轮换，请新建调用方",
         )
-    plaintext = rotate_client_with_unique_token(db, client)
+    plaintext = rotate_client_with_unique_token(db, client, issuer_user_id=None)
     record_event(
         db,
         event_type="INTEGRATION_CLIENT_ROTATED",

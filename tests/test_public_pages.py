@@ -277,6 +277,8 @@ def test_admin_management_views_share_structure_and_keep_cooperations_separate(
     assert markup.nav_routes["合作管理"] == ["operator-cooperations"]
     assert "operator-cooperations" not in markup.nav_routes["运营商管理"]
     assert response.text.count("平台 API 凭证") >= 2
+    assert "入驻供应商" not in response.text
+    assert response.text.count("供应商列表") >= 2
 
     for view, count_id, search_id, pagination_id in (
         ("applications", "applications-count", "applications-search", "application-pagination"),

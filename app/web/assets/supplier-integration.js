@@ -192,8 +192,17 @@
     document.querySelectorAll("[data-close-supplier-token]").forEach((button) => {
       button.addEventListener("click", () => dialog.close());
     });
-    document.querySelector("#copy-supplier-token").addEventListener("click", () => {
-      navigator.clipboard.writeText(tokenValue().textContent);
+    document.querySelector("#copy-supplier-token").addEventListener("click", async () => {
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+        await navigator.clipboard.writeText(tokenValue().textContent);
+      } catch (_error) {
+        Matrix.toast(
+          "复制失败",
+          "浏览器无法自动复制，请手动选择并复制上方令牌。",
+          "error",
+        );
+      }
     });
     document.querySelector("#logout-button")?.addEventListener("click", clearSupplierToken);
     window.addEventListener("hashchange", () => {

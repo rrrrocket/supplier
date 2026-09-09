@@ -42,6 +42,7 @@ class CooperationView(BaseModel):
     message: str | None
     response_notes: str | None
     created_at: datetime
+    responded_at: datetime | None
     binding: BindingView | None = None
 
 

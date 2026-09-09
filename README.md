@@ -174,7 +174,9 @@ Python 测试在独立的 PostgreSQL 16 服务和持久命名卷中执行，使�
 
 ## 7. 数据库迁移
 
-`./start.sh` 和 `./start.sh restart` 都会在应用启动前自动执行现有 Alembic 升级。当前 Alembic head 是 `d14f0c6a7e92`；最终表只保留非空 `products.brand_id` 和 `supplier_offers.supplier_sku_id`，不再保留对应的历史文本列。该 head 还为公共增量同步安装 writer fence，使首请求水位与并发提交保持无缺口顺序。
+`./start.sh` 和 `./start.sh restart` 都会在应用启动前自动执行现有 Alembic 升级。当前 Alembic head 是 `6f4a2b8c9d10`；最终表只保留非空 `products.brand_id` 和 `supplier_offers.supplier_sku_id`，不再保留对应的历史文本列。该 head 还为公共增量同步安装 writer fence，使首请求水位与并发提交保持无缺口顺序。
+
+**不可逆迁移警告：**升级到 `6f4a2b8c9d10` 会永久删除全部 `OPERATOR` 集成凭证；后续 downgrade 只能恢复旧约束结构，无法恢复已删除的凭证或令牌。执行升级前必须完成可恢复备份并确认已停止所有旧版 writer。
 
 该迁移链只支持停机发布，不支持跨 `cc83f7e534a1` 的滚动升级：
 

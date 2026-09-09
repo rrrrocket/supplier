@@ -3,6 +3,7 @@ const adminOperatorState = {
   operators: { page: 1, pageSize: 50, keyword: "", generation: 0 },
   cooperations: { page: 1, pageSize: 50, generation: 0 },
   summary: null,
+  summaryGeneration: 0,
 };
 
 function adminOperatorQuery(path, state, filters = {}) {
@@ -41,8 +42,20 @@ function renderAdminOperatorSummary(summary) {
 }
 
 async function loadAdminOperatorSummary() {
-  const summary = await Matrix.api("/api/admin/operator-summary");
-  renderAdminOperatorSummary(summary);
+  const generation = adminOperatorState.summaryGeneration + 1;
+  adminOperatorState.summaryGeneration = generation;
+  try {
+    const summary = await Matrix.api("/api/admin/operator-summary");
+    if (generation !== adminOperatorState.summaryGeneration) return;
+    renderAdminOperatorSummary(summary);
+  } catch (error) {
+    if (generation !== adminOperatorState.summaryGeneration) return;
+    adminOperatorState.summary = null;
+    document.querySelector("#operator-admin-metrics").innerHTML = `
+      <div class="table-empty table-error">
+        <strong>运营概览加载失败</strong>${Matrix.escapeHtml(error.message)}
+      </div>`;
+  }
 }
 
 function renderAdminOperatorApplications(data) {
@@ -134,8 +147,9 @@ function renderAdminOperatorCooperations(data) {
       <td>${Matrix.statusBadge(item.status)}</td>
       <td>${item.binding ? `<code>${Matrix.escapeHtml(item.binding.id)}</code> ${Matrix.statusBadge(item.binding.status)}` : "—"}</td>
       <td>${Matrix.formatDate(item.created_at, true)}</td>
+      <td>${item.responded_at ? Matrix.formatDate(item.responded_at, true) : "—"}</td>
     </tr>
-  `).join("") : '<tr><td colspan="5" class="table-empty">暂无合作记录</td></tr>';
+  `).join("") : '<tr><td colspan="6" class="table-empty">暂无合作记录</td></tr>';
 }
 
 async function loadAdminOperatorCooperations() {
@@ -149,7 +163,7 @@ async function loadAdminOperatorCooperations() {
     renderAdminOperatorCooperations(data);
   } catch (error) {
     if (generation !== state.generation) return;
-    document.querySelector("#admin-operator-cooperations-tbody").innerHTML = `<tr><td colspan="5" class="table-empty table-error"><strong>合作记录加载失败</strong>${Matrix.escapeHtml(error.message)}</td></tr>`;
+    document.querySelector("#admin-operator-cooperations-tbody").innerHTML = `<tr><td colspan="6" class="table-empty table-error"><strong>合作记录加载失败</strong>${Matrix.escapeHtml(error.message)}</td></tr>`;
   }
 }
 

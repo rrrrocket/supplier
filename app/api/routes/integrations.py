@@ -37,6 +37,7 @@ from app.db.session import SessionLocal
 from app.models.entities import (
     Brand,
     CatalogStatus,
+    IntegrationClientType,
     Organization,
     OrganizationType,
     Product,
@@ -763,6 +764,9 @@ def get_supplier_sku_cost(
             db,
             supplier_id=supplier_id,
             supplier_sku_id=supplier_sku_id,
+            scope_sku_to_supplier=(
+                principal.client_type == IntegrationClientType.SUPPLIER.value
+            ),
         )
     except SkuCostError as exc:
         set_cost_query_counts(request, result_count=0, error_count=1)
@@ -796,6 +800,9 @@ def query_supplier_sku_costs(
                 db,
                 supplier_id=item.supplier_id,
                 supplier_sku_id=item.supplier_sku_id,
+                scope_sku_to_supplier=(
+                    principal.client_type == IntegrationClientType.SUPPLIER.value
+                ),
             )
         except HTTPException as exc:
             if exc.status_code != status.HTTP_404_NOT_FOUND:
