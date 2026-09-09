@@ -405,10 +405,37 @@ function renderImports() {
     <div class="import-job">
       <div><strong>${Matrix.escapeHtml(job.file_name)}</strong><span>${Matrix.formatDate(job.created_at, true)} · 成功 ${job.success_rows} / ${job.total_rows} · 失败 ${job.error_rows}</span></div>
       ${Matrix.statusBadge(job.status)}
+      ${job.retryable
+        ? `<button class="btn btn-secondary btn-sm import-retry-action" type="button" data-retry-import="${Matrix.escapeHtml(job.id)}">重试失败数据</button>`
+        : (["FAILED", "PARTIAL"].includes(job.status)
+          ? `<button class="btn btn-secondary btn-sm import-retry-action" type="button" data-reselect-import="${Matrix.escapeHtml(job.id)}">重新选择文件</button>`
+          : "")}
       ${summaries ? `<details class="import-error-details" ${job.status === "FAILED" ? "open" : ""}><summary>查看失败原因和处理方案</summary>${summaries}</details>` : ""}
     </div>
   `;
   }).join("");
+}
+
+async function retryImport(jobId, button = null) {
+  if (button) {
+    button.disabled = true;
+    button.textContent = "正在重试…";
+  }
+  try {
+    const result = await Matrix.api(`/api/imports/${jobId}/retry`, { method: "POST" });
+    await loadImports();
+    Matrix.toast("重试完成", `成功 ${result.success_rows} 行，失败 ${result.error_rows} 行`, result.error_rows ? "warning" : "success");
+  } catch (error) {
+    Matrix.toast("重试失败", error.message, "error");
+    if (button) {
+      button.disabled = false;
+      button.textContent = "重试失败数据";
+    }
+  }
+}
+
+function reselectImportFile() {
+  document.querySelector("#csv-file").click();
 }
 
 async function loadProfile() {
@@ -1132,6 +1159,14 @@ async function saveProfile(event) {
 }
 
 function bindEvents() {
+  document.querySelector("#import-job-list").addEventListener("click", (event) => {
+    const retryButton = event.target.closest("[data-retry-import]");
+    if (retryButton) {
+      retryImport(retryButton.dataset.retryImport, retryButton);
+      return;
+    }
+    if (event.target.closest("[data-reselect-import]")) reselectImportFile();
+  });
   window.addEventListener("hashchange", () => renderRoute(currentRoute()));
   document.querySelectorAll(".nav-item[data-route]").forEach((item) => {
     item.addEventListener("click", () => {

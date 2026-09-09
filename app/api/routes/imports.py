@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import defer
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 
@@ -156,6 +157,9 @@ def _job_view(job: ImportJob) -> dict[str, Any]:
         "error_rows": job.error_rows,
         "errors": job.errors,
         "error_summary": job.error_summary or _error_summary(job.errors, job.error_rows),
+        "retryable": job.status in {ImportStatus.FAILED.value, ImportStatus.PARTIAL.value}
+        and job.retry_row_count > 0,
+        "retry_of_id": job.retry_of_id,
         "created_at": job.created_at,
     }
 
@@ -496,11 +500,205 @@ def _submitted_rows(
 def list_imports(db: DbSession, user: SupplierUser) -> list[dict[str, Any]]:
     jobs = db.scalars(
         select(ImportJob)
+        .options(defer(ImportJob.retry_rows))
         .where(ImportJob.organization_id == user.organization_id)
         .order_by(ImportJob.created_at.desc())
         .limit(30)
     ).all()
     return [_job_view(job) for job in jobs]
+
+
+def _process_product_offer_rows(
+    db: DbSession,
+    user: SupplierUser,
+    rows: list[SubmittedRow],
+) -> tuple[int, list[dict[str, Any]], list[dict[str, Any]]]:
+    errors: list[dict[str, Any]] = []
+    failed_rows: list[dict[str, Any]] = []
+    success = 0
+    for submitted in rows:
+        row = submitted.values
+        row_transaction = db.begin_nested()
+        try:
+            row_errors = _validate_row(row)
+            if row_errors:
+                raise ValueError("；".join(row_errors))
+
+            price = _to_decimal(row["price"])
+            moq = max(1, _to_int(row["moq"], 1, "起订量"))
+            stock_qty = _to_int(row["stock_qty"], 0, "库存")
+            lead_time_days = _to_int(row["lead_time_days"], 3, "交期")
+            brand = resolve_import_brand(db, user.organization_id, row["brand"])
+            model = row["model"] or None
+            product = db.scalar(
+                select(Product).where(
+                    Product.created_by_organization_id == user.organization_id,
+                    Product.name == row["product_name"],
+                    Product.brand_id == brand.id,
+                    Product.model == model,
+                )
+            )
+            if product is None:
+                product = Product(
+                    created_by_organization_id=user.organization_id,
+                    name=row["product_name"],
+                    brand_id=brand.id,
+                    model=model,
+                    category=row["category"],
+                    status=ProductStatus.ACTIVE.value,
+                )
+                db.add(product)
+                db.flush()
+
+            supplier_sku = ensure_supplier_sku(
+                db,
+                supplier_id=user.organization_id,
+                brand_id=brand.id,
+                product_id=product.id,
+                variant_id=None,
+                supplier_sku_code=row["supplier_sku"],
+            )
+            offer = db.scalar(
+                select(SupplierOffer).where(
+                    SupplierOffer.supplier_sku_id == supplier_sku.id,
+                    SupplierOffer.organization_id == user.organization_id,
+                )
+            )
+            if offer is None:
+                mismatched_offer_id = db.scalar(
+                    select(SupplierOffer.id).where(
+                        SupplierOffer.supplier_sku_id == supplier_sku.id
+                    )
+                )
+                if mismatched_offer_id is not None:
+                    raise ValueError("supplier SKU offer does not belong to supplier")
+                offer = SupplierOffer(
+                    organization_id=user.organization_id,
+                    product_id=product.id,
+                    supplier_sku_id=supplier_sku.id,
+                    price=price,
+                    currency=(row["currency"] or "CNY").upper(),
+                    moq=moq,
+                    stock_qty=stock_qty,
+                    lead_time_days=lead_time_days,
+                    fulfillment_mode=_normalize_fulfillment(row["fulfillment_mode"]),
+                    status=_normalize_status(row["status"]),
+                )
+                db.add(offer)
+                db.flush()
+            else:
+                offer.product_id = product.id
+                offer.price = price
+                offer.currency = (row["currency"] or "CNY").upper()
+                offer.moq = moq
+                offer.stock_qty = stock_qty
+                offer.lead_time_days = lead_time_days
+                offer.fulfillment_mode = _normalize_fulfillment(row["fulfillment_mode"])
+                offer.status = _normalize_status(row["status"])
+
+            db.add(
+                InventorySnapshot(
+                    offer_id=offer.id,
+                    quantity=stock_qty,
+                    source="SMART_TABLE_IMPORT",
+                )
+            )
+            row_transaction.commit()
+            success += 1
+        except (ValueError, IntegrityError) as exc:
+            row_transaction.rollback()
+            message = (
+                str(exc)
+                if isinstance(exc, ValueError)
+                else "该行与并发写入的数据冲突"
+            )
+            errors.append(
+                {
+                    "sheet": submitted.source_sheet,
+                    "row": submitted.source_row,
+                    "message": message,
+                }
+            )
+            failed_rows.append(asdict(submitted))
+    return success, errors, failed_rows
+
+
+def _finish_import_job(
+    job: ImportJob,
+    success: int,
+    errors: list[dict[str, Any]],
+    failed_rows: list[dict[str, Any]],
+) -> None:
+    job.total_rows = success + len(errors)
+    job.success_rows = success
+    job.error_rows = len(errors)
+    job.error_summary = _error_summary(errors, len(errors))
+    job.errors = errors[:100]
+    job.retry_rows = failed_rows
+    job.retry_row_count = len(failed_rows)
+    if success and errors:
+        job.status = ImportStatus.PARTIAL.value
+    elif success:
+        job.status = ImportStatus.COMPLETED.value
+    else:
+        job.status = ImportStatus.FAILED.value
+
+
+@router.post("/{job_id}/retry", status_code=status.HTTP_201_CREATED)
+def retry_import(job_id: str, db: DbSession, user: SupplierUser) -> dict[str, Any]:
+    original = db.scalar(
+        select(ImportJob)
+        .where(
+            ImportJob.id == job_id,
+            ImportJob.organization_id == user.organization_id,
+        )
+        .with_for_update()
+    )
+    if original is None:
+        raise HTTPException(status_code=404, detail="导入任务不存在")
+    if original.status not in {ImportStatus.FAILED.value, ImportStatus.PARTIAL.value}:
+        raise HTTPException(status_code=409, detail="该导入任务没有失败数据可重试")
+    if original.import_type != "SMART_PRODUCT_OFFER":
+        raise HTTPException(status_code=409, detail="该导入类型暂不支持重试")
+    existing_retry_id = db.scalar(
+        select(ImportJob.id).where(ImportJob.retry_of_id == original.id)
+    )
+    if existing_retry_id is not None:
+        raise HTTPException(status_code=409, detail="该导入任务的失败数据已经重试")
+    if original.retry_row_count <= 0 or not original.retry_rows:
+        raise HTTPException(status_code=409, detail="该导入任务未保留失败数据，请重新选择原文件")
+
+    rows = [SubmittedRow(**saved) for saved in original.retry_rows]
+    original.retry_rows = []
+    original.retry_row_count = 0
+    job = ImportJob(
+        organization_id=user.organization_id,
+        file_name=original.file_name,
+        import_type=original.import_type,
+        status=ImportStatus.PROCESSING.value,
+        retry_of_id=original.id,
+    )
+    db.add(job)
+    db.flush()
+    success, errors, failed_rows = _process_product_offer_rows(db, user, rows)
+    _finish_import_job(job, success, errors, failed_rows)
+    record_event(
+        db,
+        event_type="PRODUCT_OFFERS_IMPORT_RETRIED",
+        entity_type="ImportJob",
+        entity_id=job.id,
+        organization_id=user.organization_id,
+        actor_type="USER",
+        actor_id=user.id,
+        payload={
+            "retry_of_id": original.id,
+            "success_rows": success,
+            "error_rows": len(errors),
+        },
+    )
+    db.commit()
+    db.refresh(job)
+    return _job_view(job)
 
 
 @router.post("/product-offers/workbook/inspect")
@@ -699,127 +897,8 @@ async def import_product_offers(
             raise
         raise HTTPException(status_code=400, detail=message) from exc
 
-    errors: list[dict[str, Any]] = []
-    success = 0
-    for submitted in rows:
-        row = submitted.values
-        row_transaction = db.begin_nested()
-        try:
-            row_errors = _validate_row(row)
-            if row_errors:
-                raise ValueError("；".join(row_errors))
-
-            price = _to_decimal(row["price"])
-            moq = max(1, _to_int(row["moq"], 1, "起订量"))
-            stock_qty = _to_int(row["stock_qty"], 0, "库存")
-            lead_time_days = _to_int(row["lead_time_days"], 3, "交期")
-            brand = resolve_import_brand(
-                db,
-                user.organization_id,
-                row["brand"],
-            )
-            model = row["model"] or None
-            product = db.scalar(
-                select(Product).where(
-                    Product.created_by_organization_id == user.organization_id,
-                    Product.name == row["product_name"],
-                    Product.brand_id == brand.id,
-                    Product.model == model,
-                )
-            )
-            if product is None:
-                product = Product(
-                    created_by_organization_id=user.organization_id,
-                    name=row["product_name"],
-                    brand_id=brand.id,
-                    model=model,
-                    category=row["category"],
-                    status=ProductStatus.ACTIVE.value,
-                )
-                db.add(product)
-                db.flush()
-
-            supplier_sku = ensure_supplier_sku(
-                db,
-                supplier_id=user.organization_id,
-                brand_id=brand.id,
-                product_id=product.id,
-                variant_id=None,
-                supplier_sku_code=row["supplier_sku"],
-            )
-            offer = db.scalar(
-                select(SupplierOffer).where(
-                    SupplierOffer.supplier_sku_id == supplier_sku.id,
-                    SupplierOffer.organization_id == user.organization_id,
-                )
-            )
-            if offer is None:
-                mismatched_offer_id = db.scalar(
-                    select(SupplierOffer.id).where(
-                        SupplierOffer.supplier_sku_id == supplier_sku.id,
-                    )
-                )
-                if mismatched_offer_id is not None:
-                    raise ValueError("supplier SKU offer does not belong to supplier")
-                offer = SupplierOffer(
-                    organization_id=user.organization_id,
-                    product_id=product.id,
-                    supplier_sku_id=supplier_sku.id,
-                    price=price,
-                    currency=(row["currency"] or "CNY").upper(),
-                    moq=moq,
-                    stock_qty=stock_qty,
-                    lead_time_days=lead_time_days,
-                    fulfillment_mode=_normalize_fulfillment(row["fulfillment_mode"]),
-                    status=_normalize_status(row["status"]),
-                )
-                db.add(offer)
-                db.flush()
-            else:
-                offer.product_id = product.id
-                offer.price = price
-                offer.currency = (row["currency"] or "CNY").upper()
-                offer.moq = moq
-                offer.stock_qty = stock_qty
-                offer.lead_time_days = lead_time_days
-                offer.fulfillment_mode = _normalize_fulfillment(row["fulfillment_mode"])
-                offer.status = _normalize_status(row["status"])
-
-            db.add(
-                InventorySnapshot(
-                    offer_id=offer.id,
-                    quantity=stock_qty,
-                    source="SMART_TABLE_IMPORT",
-                )
-            )
-            row_transaction.commit()
-            success += 1
-        except (ValueError, IntegrityError) as exc:
-            row_transaction.rollback()
-            message = (
-                str(exc)
-                if isinstance(exc, ValueError)
-                else "该行与并发写入的数据冲突"
-            )
-            errors.append(
-                {
-                    "sheet": submitted.source_sheet,
-                    "row": submitted.source_row,
-                    "message": message,
-                }
-            )
-
-    job.total_rows = len(rows)
-    job.success_rows = success
-    job.error_rows = len(errors)
-    job.error_summary = _error_summary(errors, len(errors))
-    job.errors = errors[:100]
-    if success and errors:
-        job.status = ImportStatus.PARTIAL.value
-    elif success:
-        job.status = ImportStatus.COMPLETED.value
-    else:
-        job.status = ImportStatus.FAILED.value
+    success, errors, failed_rows = _process_product_offer_rows(db, user, rows)
+    _finish_import_job(job, success, errors, failed_rows)
 
     record_event(
         db,

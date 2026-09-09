@@ -64,6 +64,7 @@ function loadImportApp(api) {
       this.textContent = "";
       this.value = "";
       this.listeners = new Map();
+      this.clickCount = 0;
     }
 
     addEventListener(type, listener) {
@@ -85,6 +86,10 @@ function loadImportApp(api) {
 
     querySelectorAll() {
       return [];
+    }
+
+    click() {
+      this.clickCount += 1;
     }
 
     scrollIntoView() {}
@@ -224,6 +229,51 @@ test("failed import history shows a user-facing reason and recovery action", () 
   assert.match(html, /影响 3056 行/);
   assert.match(html, /重新导入即可/);
   assert.match(html, /Sheet1 第 2 行/);
+});
+
+
+test("failed import history offers retry when a snapshot exists and file selection otherwise", () => {
+  const app = loadImportApp(() => Promise.reject(new Error("API should not be called")));
+  app.context.jobs = [
+    { id: "new-job", file_name: "new.xlsx", status: "PARTIAL", total_rows: 2, success_rows: 1, error_rows: 1, retryable: true, error_summary: [] },
+    { id: "old-job", file_name: "old.xlsx", status: "FAILED", total_rows: 1, success_rows: 0, error_rows: 1, retryable: false, error_summary: [] },
+  ];
+
+  app.evaluate("state.imports = jobs; renderImports();");
+
+  const html = app.element("#import-job-list").innerHTML;
+  assert.match(html, /data-retry-import="new-job"[^>]*>重试失败数据/);
+  assert.match(html, /data-reselect-import="old-job"[^>]*>重新选择文件/);
+});
+
+
+test("retrying an import posts the saved failures and refreshes its result", async () => {
+  const calls = [];
+  const app = loadImportApp(async (url, options = {}) => {
+    calls.push([url, options.method || "GET"]);
+    if (url === "/api/imports/retry-job/retry") {
+      return { status: "COMPLETED", success_rows: 2, error_rows: 0 };
+    }
+    if (url === "/api/imports") return [];
+    throw new Error(`unexpected API ${url}`);
+  });
+
+  await app.evaluate("retryImport('retry-job')");
+
+  assert.deepEqual(calls, [
+    ["/api/imports/retry-job/retry", "POST"],
+    ["/api/imports", "GET"],
+  ]);
+  assert.deepEqual(app.toasts.at(-1), ["重试完成", "成功 2 行，失败 0 行", "success"]);
+});
+
+
+test("snapshotless failed imports open the file picker for a new upload", () => {
+  const app = loadImportApp(() => Promise.reject(new Error("API should not be called")));
+
+  app.evaluate("reselectImportFile()");
+
+  assert.equal(app.element("#csv-file").clickCount, 1);
 });
 
 

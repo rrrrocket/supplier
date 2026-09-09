@@ -538,6 +538,14 @@ class ImportJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     error_summary: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON, default=list, nullable=False
     )
+    retry_rows: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    retry_row_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    retry_of_id: Mapped[str | None] = mapped_column(
+        ForeignKey("import_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        unique=True,
+    )
 
 
 class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):

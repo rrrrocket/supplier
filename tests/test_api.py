@@ -25,12 +25,15 @@ from app.models.entities import (
     Brand,
     CatalogStatus,
     CommercialMode,
+    ImportJob,
+    ImportStatus,
     Organization,
     OrganizationType,
     Product,
     SupplierBrandCooperation,
     SupplierOffer,
     SupplierSku,
+    User,
 )
 from app.services.list_pagination import decode_list_cursor
 from tests.conftest import SUPPLIER_EMAIL, SUPPLIER_PASSWORD
@@ -737,6 +740,138 @@ def test_final_import_excludes_duplicate_row_and_preserves_partial_error_source(
     offers = authenticated_client.get("/api/offers", params={"q": sku}).json()
     assert len(offers) == 1
     assert offers[0]["supplier_sku_code"] == sku
+
+
+def test_partial_import_persists_only_failed_rows_for_retry(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    successful_sku = f"RETRY-OK-{suffix}"
+    failed_sku = f"RETRY-BAD-{suffix}"
+    rows = [
+        submitted_offer_row(
+            sku=successful_sku,
+            name=f"成功商品-{suffix}",
+            source_sheet="Sheet1",
+            source_row=2,
+        ),
+        submitted_offer_row(
+            sku=failed_sku,
+            name=f"失败商品-{suffix}",
+            source_sheet="Sheet1",
+            source_row=3,
+            price="错误价格",
+        ),
+    ]
+
+    response = authenticated_client.post(
+        "/api/imports/product-offers",
+        data={"rows_json": json.dumps(rows, ensure_ascii=False)},
+        files={"file": ("retry.csv", BytesIO(b"ignored"), "text/csv")},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["status"] == "PARTIAL"
+    assert payload["retryable"] is True
+    assert "retry_rows" not in payload
+    with SessionLocal() as db:
+        job = db.get(ImportJob, payload["id"])
+        assert job is not None
+        assert len(job.retry_rows) == 1
+        assert job.retry_rows[0]["values"]["supplier_sku"] == failed_sku
+
+
+def test_retry_import_creates_linked_job_and_processes_saved_failed_rows(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    retry_sku = f"RETRY-SAVED-{suffix}"
+    with SessionLocal() as db:
+        supplier_user = db.scalar(select(User).where(User.email == SUPPLIER_EMAIL))
+        assert supplier_user is not None
+        original = ImportJob(
+            organization_id=supplier_user.organization_id,
+            file_name="retry-source.xlsx",
+            import_type="SMART_PRODUCT_OFFER",
+            status=ImportStatus.FAILED.value,
+            total_rows=1,
+            error_rows=1,
+            retry_rows=[
+                submitted_offer_row(
+                    sku=retry_sku,
+                    name=f"重试商品-{suffix}",
+                    source_sheet="Sheet1",
+                    source_row=9,
+                )
+            ],
+            retry_row_count=1,
+        )
+        db.add(original)
+        db.commit()
+        original_id = original.id
+
+    response = authenticated_client.post(f"/api/imports/{original_id}/retry")
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["status"] == "COMPLETED"
+    assert payload["success_rows"] == 1
+    assert payload["retry_of_id"] == original_id
+    offers = authenticated_client.get("/api/offers", params={"q": retry_sku}).json()
+    assert [offer["supplier_sku_code"] for offer in offers] == [retry_sku]
+
+    repeated = authenticated_client.post(f"/api/imports/{original_id}/retry")
+    assert repeated.status_code == 409
+    assert repeated.json()["detail"] == "该导入任务的失败数据已经重试"
+    history = authenticated_client.get("/api/imports").json()
+    original_view = next(job for job in history if job["id"] == original_id)
+    assert original_view["retryable"] is False
+
+
+def test_retry_import_rejects_foreign_or_snapshotless_jobs(
+    authenticated_client: TestClient,
+) -> None:
+    with SessionLocal() as db:
+        supplier_user = db.scalar(select(User).where(User.email == SUPPLIER_EMAIL))
+        assert supplier_user is not None
+        other_supplier = Organization(
+            code=f"OTHER-{uuid4().hex[:8]}",
+            name="其他供应商",
+            organization_type=OrganizationType.SUPPLIER.value,
+        )
+        db.add(other_supplier)
+        db.flush()
+        foreign_job = ImportJob(
+            organization_id=other_supplier.id,
+            file_name="foreign.xlsx",
+            status=ImportStatus.FAILED.value,
+            retry_rows=[
+                submitted_offer_row(
+                    sku="FOREIGN",
+                    name="其他",
+                    source_sheet="S",
+                    source_row=2,
+                )
+            ],
+            retry_row_count=1,
+        )
+        old_job = ImportJob(
+            organization_id=supplier_user.organization_id,
+            file_name="old.xlsx",
+            import_type="SMART_PRODUCT_OFFER",
+            status=ImportStatus.FAILED.value,
+            error_rows=1,
+        )
+        db.add_all([foreign_job, old_job])
+        db.commit()
+        foreign_id = foreign_job.id
+        old_id = old_job.id
+
+    assert authenticated_client.post(f"/api/imports/{foreign_id}/retry").status_code == 404
+    response = authenticated_client.post(f"/api/imports/{old_id}/retry")
+    assert response.status_code == 409
+    assert response.json()["detail"] == "该导入任务未保留失败数据，请重新选择原文件"
 
 
 @pytest.mark.parametrize(
