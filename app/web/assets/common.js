@@ -162,6 +162,9 @@
       node.textContent = view.workspaceLabel;
       node.href = view.workspaceHref;
     });
+    document.querySelectorAll("[data-auth-role]").forEach((node) => {
+      node.hidden = !view.authenticated || node.dataset.authRole !== user?.role;
+    });
   }
 
   async function syncPublicAuth() {

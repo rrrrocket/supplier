@@ -20,7 +20,7 @@ class AuthMarkupParser(HTMLParser):
         self.auth_redirect: str | None = None
         self.region_markers: dict[str, dict[str, int]] = {
             region: {marker: 0 for marker in self.auth_markers}
-            for region in ("header", "hero", "cta", "footer", "marketing")
+            for region in ("header", "hero", "cta", "footer", "role_entry")
         }
         self.region_text: dict[str, list[str]] = {region: [] for region in self.region_markers}
         self.stack: list[tuple[str, set[str]]] = []
@@ -37,8 +37,8 @@ class AuthMarkupParser(HTMLParser):
             regions.add("cta")
         if tag == "footer" and "site-footer" in classes:
             regions.add("footer")
-        if "network-card" in classes:
-            regions.add("marketing")
+        if "role-entry-panel" in classes:
+            regions.add("role_entry")
         for marker in self.auth_markers:
             if marker in attributes:
                 self.auth_markers[marker] += 1
@@ -86,19 +86,26 @@ def test_landing_page_exposes_guest_and_authenticated_actions(client: TestClient
         "data-auth-workspace": 1,
     }
     assert markup.region_markers["cta"] == {
-        "data-auth-guest": 2,
+        "data-auth-guest": 0,
         "data-auth-member": 2,
         "data-auth-identity": 1,
         "data-auth-workspace": 1,
     }
     assert markup.region_markers["footer"] == {
-        "data-auth-guest": 2,
-        "data-auth-member": 1,
+        "data-auth-guest": 4,
+        "data-auth-member": 2,
         "data-auth-identity": 0,
-        "data-auth-workspace": 1,
+        "data-auth-workspace": 0,
     }
-    assert all(value == 0 for value in markup.region_markers["marketing"].values())
-    assert "中国供应商" in "".join(markup.region_text["marketing"])
+    assert markup.region_markers["role_entry"] == {
+        "data-auth-guest": 2,
+        "data-auth-member": 3,
+        "data-auth-identity": 0,
+        "data-auth-workspace": 0,
+    }
+    role_entry_text = "".join(markup.region_text["role_entry"])
+    assert "我是供应商" in role_entry_text
+    assert "我是运营商" in role_entry_text
 
 
 def test_guest_only_pages_redirect_authenticated_visitors(client: TestClient) -> None:
@@ -150,6 +157,26 @@ def test_operator_marketplace_pages_and_workspaces_are_exposed(client: TestClien
     landing = client.get("/").text
     assert 'href="/suppliers"' in landing
     assert 'href="/operator/apply"' in landing
+
+
+def test_landing_page_routes_each_non_admin_role_to_its_actions(client: TestClient) -> None:
+    landing = client.get("/").text
+
+    assert 'class="role-entry-card supplier-entry"' in landing
+    assert 'href="/apply"' in landing
+    assert 'href="/operators"' in landing
+    assert 'class="role-entry-card operator-entry"' in landing
+    assert 'href="/operator/apply"' in landing
+    assert 'href="/suppliers"' in landing
+    assert "管理员入口" not in landing
+
+
+def test_operator_directory_page_is_exposed(client: TestClient) -> None:
+    response = client.get("/operators")
+
+    assert response.status_code == 200
+    assert 'id="operator-directory"' in response.text
+    assert 'id="operator-directory-pagination"' in response.text
 
 
 def test_supplier_and_admin_workspaces_expose_operator_cooperation_views(client: TestClient) -> None:

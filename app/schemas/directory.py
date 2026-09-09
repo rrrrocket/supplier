@@ -29,3 +29,28 @@ class SupplierDirectoryPage(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class OperatorDirectoryItem(BaseModel):
+    operator_id: str
+    operator_code: str
+    operator_name: str
+    company_name: str | None
+    operator_type: str | None
+    province: str | None
+    city: str | None
+    website: str | None
+    erp_name: str | None
+    sales_channels: list[str]
+    categories: list[str]
+    target_markets: list[str]
+    contact_name: str | None
+    contact_phone: str | None
+    contact_email: str | None
+
+
+class OperatorDirectoryPage(BaseModel):
+    items: list[OperatorDirectoryItem]
+    total: int
+    page: int
+    page_size: int

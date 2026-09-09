@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="寻找已通过平台审核的运营商，了解服务类目、销售渠道、目标市场和 ERP 能力。">
+  <title>寻找运营商 · Matrix One</title>
+  <link rel="icon" href="/assets/logo.svg">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260909-home-portals">
+  <script src="/assets/common.js?v=20260909-home-portals" defer></script>
+  <script src="/assets/pagination.js?v=20260909-pagination" defer></script>
+  <script src="/assets/operator-directory.js?v=20260909-home-portals" defer></script>
+</head>
+<body class="landing-body">
+  <header class="site-header">
+    <div class="container site-header-inner">
+      <a class="brand" href="/"><img src="/assets/logo.svg" alt=""><span class="brand-copy"><span class="brand-name">Matrix One</span><span class="brand-sub">运营商市场</span></span></a>
+      <div class="site-actions">
+        <a class="btn btn-secondary" href="/suppliers">寻找供应商</a>
+        <a class="btn btn-ghost" href="/login" data-auth-guest>登录</a>
+        <a class="btn btn-primary" href="/apply" data-auth-guest>供应商入驻</a>
+        <a class="btn btn-ghost auth-identity" href="/app" data-auth-member data-auth-identity hidden></a>
+        <a class="btn btn-primary" href="/app" data-auth-member data-auth-workspace hidden>进入工作台</a>
+      </div>
+    </div>
+  </header>
+  <main class="section directory-page">
+    <div class="container">
+      <div class="section-heading">
+        <span class="section-kicker">Operator Marketplace</span>
+        <h1>寻找运营商</h1>
+        <p>查看已通过平台审核的运营服务方。供应商登录后可查看完整联系方式。</p>
+      </div>
+      <div class="toolbar directory-toolbar">
+        <input id="operator-directory-keyword" class="input" placeholder="搜索运营商、渠道或市场">
+        <input id="operator-directory-category" class="input" placeholder="服务类目">
+        <input id="operator-directory-region" class="input" placeholder="地区">
+        <input id="operator-directory-type" class="input" placeholder="运营类型">
+        <input id="operator-directory-erp" class="input" placeholder="ERP 系统">
+        <button id="operator-directory-search" class="btn btn-primary">查询</button>
+      </div>
+      <div id="operator-directory" class="directory-grid" aria-live="polite"></div>
+      <div id="operator-directory-pagination" class="unified-pagination"></div>
+    </div>
+  </main>
+  <dialog id="operator-contact-dialog" class="dialog">
+    <div class="dialog-head"><div><h2 id="operator-contact-title">运营商联系方式</h2><p>供应商可通过以下信息联系运营商。</p></div><button class="icon-btn" type="button" data-close-operator-contact aria-label="关闭">×</button></div>
+    <div id="operator-contact-content" class="dialog-body"></div>
+    <div class="dialog-actions"><button class="btn btn-secondary" type="button" data-close-operator-contact>关闭</button></div>
+  </dialog>
+</body>
+</html>

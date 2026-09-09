@@ -6,8 +6,8 @@
   <meta name="description" content="Matrix One 中国供应网络：用软件、数据和 AI，把中国供应能力与海外需求进行规模化匹配。">
   <title>Matrix One 中国供应网络</title>
   <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/styles.css?v=20260908-auth-visibility">
-  <script src="/assets/common.js?v=20260908-supplier-role" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260909-home-portals">
+  <script src="/assets/common.js?v=20260909-home-portals" defer></script>
 </head>
 <body class="landing-body">
   <header class="site-header">
@@ -17,16 +17,15 @@
         <span class="brand-copy"><span class="brand-name">Matrix One</span><span class="brand-sub">中国供应网络</span></span>
       </a>
       <nav class="site-nav" aria-label="主导航">
-        <a href="/suppliers">寻找供应商</a>
-        <a href="/operator/apply">运营商入驻</a>
+        <a href="#role-entry">角色入口</a>
+        <a href="/suppliers">供应商市场</a>
+        <a href="/operators">运营商市场</a>
         <a href="#value">平台价值</a>
         <a href="#modes">合作方式</a>
-        <a href="#process">接入流程</a>
-        <a href="#data">数据原则</a>
       </nav>
       <div class="site-actions">
-        <a class="btn btn-ghost" href="/login" data-auth-guest>供应商登录</a>
-        <a class="btn btn-primary" href="/apply" data-auth-guest>申请入驻</a>
+        <a class="btn btn-ghost" href="/login" data-auth-guest>登录</a>
+        <a class="btn btn-primary" href="#role-entry" data-auth-guest>选择身份</a>
         <a class="btn btn-ghost auth-identity" href="/app" data-auth-member data-auth-identity hidden></a>
         <a class="btn btn-primary" href="/app" data-auth-member data-auth-workspace hidden>进入工作台</a>
       </div>
@@ -37,13 +36,14 @@
     <section class="hero">
       <div class="container hero-inner">
         <div>
-          <div class="eyebrow"><span class="eyebrow-dot"></span>中国供应网络开放入驻</div>
-          <h1>让中国供应能力，<br><span>进入适合它的全球市场</span></h1>
-          <p class="hero-lead">接入一次，统一管理商品、供货价、库存、交期与合作能力。Matrix One 通过软件、数据和 AI，把分散的中国供给转化为可匹配、可执行、可持续优化的全球分发能力。</p>
+          <div class="eyebrow"><span class="eyebrow-dot"></span>供应商与运营商协作网络</div>
+          <h1>连接真实供给，<br><span>找到合适的合作伙伴</span></h1>
+          <p class="hero-lead">供应商沉淀商品与履约能力，运营商连接市场与销售渠道。Matrix One 让双方能够被发现、建立合作并持续同步业务数据。</p>
           <div class="hero-actions">
-            <a class="btn btn-primary btn-lg" href="/apply" data-auth-guest>申请加入供应网络</a>
+            <a class="btn btn-primary btn-lg" href="#role-entry" data-auth-guest>选择你的身份</a>
             <a class="btn btn-primary btn-lg" href="/app" data-auth-member data-auth-workspace hidden>进入工作台</a>
-            <a class="btn btn-secondary btn-lg" href="#modes">查看合作方式</a>
+            <a class="btn btn-secondary btn-lg" href="/suppliers">浏览供应商</a>
+            <a class="btn btn-secondary btn-lg" href="/operators">浏览运营商</a>
           </div>
           <div class="hero-note">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4 10-10"/></svg>
@@ -57,33 +57,21 @@
           </div>
         </div>
 
-        <div class="network-card" aria-label="供应能力档案">
-          <div class="network-card-head">
-            <span class="network-card-title">供应能力档案</span>
-            <span class="status-pill blue">持续同步</span>
-          </div>
-          <div class="supply-profile">
-            <div class="supply-company">
-              <span class="company-avatar" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V10l5 3v-3l5 3V5h4v16"/><path d="M8 17h1M12 17h1M16 17h1"/></svg></span>
-              <span><strong>中国供应商</strong><span>企业、产品与履约能力统一接入</span></span>
-            </div>
-            <div class="profile-progress">
-              <div class="progress-label"><span>数据完整度</span><strong>78%</strong></div>
-              <div class="progress"><span style="width:78%"></span></div>
-            </div>
-            <div class="supply-metrics">
-              <div class="supply-metric"><span>商品主数据</span><strong>可标准化</strong></div>
-              <div class="supply-metric"><span>价格与库存</span><strong>可更新</strong></div>
-              <div class="supply-metric"><span>履约结果</span><strong>可追踪</strong></div>
-            </div>
-          </div>
-          <div class="network-path">
-            <div class="path-node">中国供应<span><strong>商品与工厂</strong></span></div>
-            <span class="path-arrow">→</span>
-            <div class="path-node">Matrix One<span><strong>匹配与执行</strong></span></div>
-            <span class="path-arrow">→</span>
-            <div class="path-node">全球需求<span><strong>ToC + ToB</strong></span></div>
-          </div>
+        <div class="role-entry-panel" id="role-entry" aria-label="角色入口">
+          <div class="role-entry-head"><span>选择你的身份</span><strong>从这里开始</strong></div>
+          <article class="role-entry-card supplier-entry">
+            <span class="role-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21h18M5 21V10l5 3v-3l5 3V5h4v16"/><path d="M8 17h1M12 17h1M16 17h1"/></svg></span>
+            <div class="role-entry-copy"><span class="role-label">我是供应商</span><h2>展示供应能力，寻找运营伙伴</h2><p>管理商品、报价、库存与交期，并查看平台内运营商的服务能力和联系方式。</p></div>
+            <div class="role-entry-actions" data-auth-guest><a class="btn btn-primary" href="/apply">申请入驻</a><a class="btn btn-secondary" href="/login">供应商登录</a><a class="role-text-link" href="/operators">寻找运营商 →</a></div>
+            <div class="role-entry-actions" data-auth-member data-auth-role="SUPPLIER" hidden><a class="btn btn-primary" href="/app">进入供应商工作台</a><a class="role-text-link" href="/operators">寻找运营商 →</a></div>
+          </article>
+          <article class="role-entry-card operator-entry">
+            <span class="role-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="7" r="3"/><path d="M5 21v-2a7 7 0 0 1 14 0v2M4 12h3M17 12h3"/></svg></span>
+            <div class="role-entry-copy"><span class="role-label">我是运营商</span><h2>发现优质供应商，建立 ERP 连接</h2><p>按类目筛选供应商、提交合作申请，并在确认合作后获得 ERP 绑定信息。</p></div>
+            <div class="role-entry-actions" data-auth-guest><a class="btn btn-primary" href="/operator/apply">申请入驻</a><a class="btn btn-secondary" href="/login">运营商登录</a><a class="role-text-link" href="/suppliers">寻找供应商 →</a></div>
+            <div class="role-entry-actions" data-auth-member data-auth-role="OPERATOR" hidden><a class="btn btn-primary" href="/operator">进入运营商工作台</a><a class="role-text-link" href="/suppliers">寻找供应商 →</a></div>
+          </article>
+          <p class="role-entry-note" data-auth-member>你仍可浏览另一侧市场；工作台入口会按照当前账号身份显示。</p>
         </div>
       </div>
     </section>
@@ -187,10 +175,10 @@
 
     <section class="cta-band">
       <div class="container cta-inner">
-        <div><h2>把你的供应能力，接入全球需求</h2><p>完成企业审核和商品数据接入后，即可参与市场匹配与合作评估。</p></div>
+        <div><h2>找到适合你的合作伙伴</h2><p>供应商与运营商分别建立能力档案，让合作从可发现、可联系开始。</p></div>
         <div class="cta-actions">
-          <a class="btn btn-secondary btn-lg" href="/login" data-auth-guest>已有账号登录</a>
-          <a class="btn btn-primary btn-lg" style="background:#fff;color:#155eef" href="/apply" data-auth-guest>提交入驻申请</a>
+          <a class="btn btn-secondary btn-lg" href="/operators">寻找运营商</a>
+          <a class="btn btn-primary btn-lg" style="background:#fff;color:#155eef" href="/suppliers">寻找供应商</a>
           <a class="btn btn-secondary btn-lg auth-identity" href="/app" data-auth-member data-auth-identity hidden></a>
           <a class="btn btn-primary btn-lg" style="background:#fff;color:#155eef" href="/app" data-auth-member data-auth-workspace hidden>进入工作台</a>
         </div>
@@ -205,9 +193,9 @@
           <a class="brand" href="/"><img src="/assets/logo.svg" alt=""><span class="brand-copy"><span class="brand-name">Matrix One</span><span class="brand-sub">中国供应网络</span></span></a>
           <p>中国供应能力的全球化分发。用软件、数据和 AI，把中国高度分散的供应能力，与海外高度分散的需求进行规模化匹配。</p>
         </div>
-        <div class="footer-column"><h4>供应商</h4><a href="/apply" data-auth-guest>申请入驻</a><a href="/login" data-auth-guest>供应商登录</a><a href="/app" data-auth-member data-auth-workspace hidden>进入工作台</a><a href="#process">接入流程</a></div>
-        <div class="footer-column"><h4>合作</h4><a href="#modes">自营采购</a><a href="#modes">联营代运营</a><a href="#modes">ToB 外贸</a></div>
-        <div class="footer-column"><h4>平台</h4><a href="#value">平台价值</a><a href="#data">数据原则</a><a href="/api/docs">API 文档</a></div>
+        <div class="footer-column"><h4>供应商</h4><a href="/apply" data-auth-guest>申请入驻</a><a href="/login" data-auth-guest>供应商登录</a><a href="/operators">寻找运营商</a><a href="/app" data-auth-member data-auth-role="SUPPLIER" hidden>进入供应商工作台</a></div>
+        <div class="footer-column"><h4>运营商</h4><a href="/operator/apply" data-auth-guest>申请入驻</a><a href="/login" data-auth-guest>运营商登录</a><a href="/suppliers">寻找供应商</a><a href="/operator" data-auth-member data-auth-role="OPERATOR" hidden>进入运营商工作台</a></div>
+        <div class="footer-column"><h4>平台</h4><a href="#value">平台价值</a><a href="#modes">合作方式</a><a href="#data">数据原则</a><a href="/api/docs">API 文档</a></div>
       </div>
       <div class="footer-bottom"><span>© <span data-current-year></span> Matrix One. All rights reserved.</span><span>supplier.matrix-one.tech</span></div>
     </div>

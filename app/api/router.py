@@ -23,6 +23,7 @@ from app.api.routes import (
 api_router = APIRouter()
 api_router.include_router(public.router)
 api_router.include_router(directory.router)
+api_router.include_router(directory.operator_router)
 api_router.include_router(admin.router)
 api_router.include_router(admin_catalog.router)
 api_router.include_router(auth.router)

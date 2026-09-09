@@ -123,6 +123,33 @@ test("authenticated session replaces every guest action with workspace actions",
 });
 
 
+test("authenticated session reveals only the matching role-specific action", async () => {
+  const roleNodes = [
+    { hidden: true, dataset: { authRole: "SUPPLIER" } },
+    { hidden: true, dataset: { authRole: "OPERATOR" } },
+  ];
+  const user = {
+    role: "SUPPLIER",
+    organization_type: "SUPPLIER",
+    organization_name: "测试供应企业",
+  };
+  const { Matrix } = loadMatrix({
+    documentOverrides: {
+      querySelectorAll(selector) {
+        if (selector === "[data-auth-role]") return roleNodes;
+        return [];
+      },
+    },
+    fetchImpl: async () => jsonResponse(200, user),
+  });
+
+  await Matrix.syncPublicAuth();
+
+  assert.equal(roleNodes[0].hidden, false);
+  assert.equal(roleNodes[1].hidden, true);
+});
+
+
 test("unauthenticated session restores guest actions without an uncaught error", async () => {
   const guestNodes = [{ hidden: true }, { hidden: true }];
   const memberNodes = [{ hidden: false }, { hidden: false }];

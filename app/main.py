@@ -155,6 +155,11 @@ def suppliers_page() -> FileResponse:
     return FileResponse(PAGES / "suppliers.html")
 
 
+@app.get("/operators", include_in_schema=False)
+def operators_page() -> FileResponse:
+    return FileResponse(PAGES / "operators.html")
+
+
 @app.get("/login", include_in_schema=False)
 def login_page() -> FileResponse:
     return FileResponse(PAGES / "login.html")
