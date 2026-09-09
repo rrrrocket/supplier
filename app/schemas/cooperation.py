@@ -47,3 +47,10 @@ class CooperationView(BaseModel):
 
 class CooperationResponse(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
+
+
+class CooperationPage(BaseModel):
+    items: list[CooperationView]
+    total: int
+    page: int
+    page_size: int

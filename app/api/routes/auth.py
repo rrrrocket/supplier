@@ -31,7 +31,7 @@ def login(payload: LoginRequest, request: Request, db: DbSession) -> LoginRespon
     user = db.scalar(
         select(User).where(func.lower(User.email) == payload.email.lower())
     )
-    if user is None or not user.is_active or not verify_password(payload.password, user.password_hash):
+    if user is None or not user.is_active or not user.organization.is_active or not verify_password(payload.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="邮箱或密码错误",

@@ -63,6 +63,13 @@ class IntegrationClientCredential(IntegrationClientView):
     token: str
 
 
+class IntegrationClientPage(BaseModel):
+    items: list[IntegrationClientView]
+    total: int
+    page: int
+    page_size: int
+
+
 class SupplierIntegrationView(BaseModel):
     supplier_id: str
     supplier_code: str

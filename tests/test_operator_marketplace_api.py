@@ -133,7 +133,10 @@ def test_admin_can_list_operator_accounts_and_cooperations(client: TestClient) -
     login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
     operators = client.get("/api/admin/operators")
     assert operators.status_code == 200
-    assert any(item["organization_id"] == operator_id for item in operators.json())
+    assert operators.json()["page"] == 1
+    assert operators.json()["page_size"] == 50
+    assert any(item["organization_id"] == operator_id for item in operators.json()["items"])
     cooperations = client.get("/api/admin/operator-cooperations")
     assert cooperations.status_code == 200
-    assert any(item["id"] == created.json()["id"] for item in cooperations.json())
+    assert cooperations.json()["total"] >= 1
+    assert any(item["id"] == created.json()["id"] for item in cooperations.json()["items"])

@@ -77,3 +77,18 @@ def test_disabled_operator_organization_invalidates_existing_session(client: Tes
     assert detail.status_code == 200
     assert not full_phone or detail.json()["contact_phone"] != full_phone
     assert client.get("/api/operator/profile").status_code == 401
+
+
+def test_operator_credit_code_stays_unique_on_profile_update(client: TestClient) -> None:
+    first_email, first_password = create_approved_operator(client)
+    assert client.post("/api/auth/login", json={"email": first_email, "password": first_password}).status_code == 200
+    assert client.patch("/api/operator/profile", json={
+        "unified_social_credit_code": "91310000OPERATOR001"
+    }).status_code == 200
+
+    second_email, second_password = create_approved_operator(client)
+    assert client.post("/api/auth/login", json={"email": second_email, "password": second_password}).status_code == 200
+    duplicate = client.patch("/api/operator/profile", json={
+        "unified_social_credit_code": "91310000OPERATOR001"
+    })
+    assert duplicate.status_code == 409

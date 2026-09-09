@@ -152,3 +152,17 @@ class OperatorManagementView(BaseModel):
     operator_type: str | None
     erp_name: str | None
     created_at: datetime
+
+
+class OperatorApplicationAdminPage(BaseModel):
+    items: list[OperatorApplicationAdminView]
+    total: int
+    page: int
+    page_size: int
+
+
+class OperatorManagementPage(BaseModel):
+    items: list[OperatorManagementView]
+    total: int
+    page: int
+    page_size: int

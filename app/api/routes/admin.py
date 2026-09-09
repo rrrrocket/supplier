@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.security import hash_password
@@ -30,8 +31,11 @@ from app.schemas.admin import (
     ApplicationReviewRequest,
     SupplierManagementView,
 )
-from app.schemas.cooperation import CooperationView
-from app.schemas.operator import OperatorApplicationAdminView, OperatorManagementView
+from app.schemas.cooperation import CooperationPage, CooperationView
+from app.schemas.operator import (
+    OperatorApplicationAdminPage, OperatorApplicationAdminView,
+    OperatorManagementPage, OperatorManagementView,
+)
 from app.api.routes.operator_cooperations import view as cooperation_view
 from app.services.events import record_event
 from app.services.scoring import calculate_profile_completion
@@ -114,29 +118,42 @@ def operator_application_view(item: OperatorApplication) -> OperatorApplicationA
     )
 
 
-@router.get("/operator-applications", response_model=list[OperatorApplicationAdminView])
+@router.get("/operator-applications", response_model=OperatorApplicationAdminPage)
 def list_operator_applications(
     db: DbSession,
     _: PlatformAdmin,
     application_status: str | None = Query(default=None, alias="status"),
-) -> list[OperatorApplicationAdminView]:
+    page: int = Query(1, ge=1), page_size: int = Query(50),
+) -> OperatorApplicationAdminPage:
+    if page_size not in {20, 50, 100, 200}:
+        raise HTTPException(status_code=422, detail="页面行数仅支持 20、50、100 或 200")
     stmt = select(OperatorApplication).order_by(
         OperatorApplication.created_at.desc(), OperatorApplication.id.desc()
     )
     if application_status:
         stmt = stmt.where(OperatorApplication.status == application_status.upper())
-    return [operator_application_view(item) for item in db.scalars(stmt).all()]
+    total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
+    items = db.scalars(stmt.offset((page-1)*page_size).limit(page_size)).all()
+    return OperatorApplicationAdminPage(
+        items=[operator_application_view(item) for item in items], total=total,
+        page=page, page_size=page_size,
+    )
 
 
-@router.get("/operators", response_model=list[OperatorManagementView])
-def list_operators(db: DbSession, _: PlatformAdmin) -> list[OperatorManagementView]:
-    rows = db.execute(
-        select(Organization, OperatorProfile)
+@router.get("/operators", response_model=OperatorManagementPage)
+def list_operators(
+    db: DbSession, _: PlatformAdmin, page: int = Query(1, ge=1),
+    page_size: int = Query(50),
+) -> OperatorManagementPage:
+    if page_size not in {20, 50, 100, 200}:
+        raise HTTPException(status_code=422, detail="页面行数仅支持 20、50、100 或 200")
+    stmt = (select(Organization, OperatorProfile)
         .join(OperatorProfile, OperatorProfile.organization_id == Organization.id)
         .where(Organization.organization_type == OrganizationType.OPERATOR.value)
-        .order_by(Organization.created_at.desc(), Organization.id.desc())
-    ).all()
-    return [OperatorManagementView(
+        .order_by(Organization.created_at.desc(), Organization.id.desc()))
+    total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
+    rows = db.execute(stmt.offset((page-1)*page_size).limit(page_size)).all()
+    items = [OperatorManagementView(
         organization_id=organization.id, organization_code=organization.code,
         organization_name=organization.name, is_active=organization.is_active,
         contact_name=profile.contact_name, contact_phone=profile.contact_phone,
@@ -144,14 +161,24 @@ def list_operators(db: DbSession, _: PlatformAdmin) -> list[OperatorManagementVi
         operator_type=profile.operator_type, erp_name=profile.erp_name,
         created_at=organization.created_at,
     ) for organization, profile in rows]
+    return OperatorManagementPage(items=items, total=total, page=page, page_size=page_size)
 
 
-@router.get("/operator-cooperations", response_model=list[CooperationView])
-def list_operator_cooperations(db: DbSession, _: PlatformAdmin) -> list[CooperationView]:
+@router.get("/operator-cooperations", response_model=CooperationPage)
+def list_operator_cooperations(
+    db: DbSession, _: PlatformAdmin, page: int = Query(1, ge=1),
+    page_size: int = Query(50),
+) -> CooperationPage:
+    if page_size not in {20, 50, 100, 200}:
+        raise HTTPException(status_code=422, detail="页面行数仅支持 20、50、100 或 200")
+    total = db.scalar(select(func.count(OperatorSupplierCooperation.id))) or 0
     items = db.scalars(select(OperatorSupplierCooperation).order_by(
         OperatorSupplierCooperation.created_at.desc(), OperatorSupplierCooperation.id.desc()
-    )).all()
-    return [cooperation_view(db, item) for item in items]
+    ).offset((page-1)*page_size).limit(page_size)).all()
+    return CooperationPage(
+        items=[cooperation_view(db, item) for item in items], total=total,
+        page=page, page_size=page_size,
+    )
 
 
 @router.post(
@@ -216,7 +243,11 @@ def approve_operator_application(
         actor_type="USER", actor_id=admin.id,
         payload={"application_no": application.application_no, "organization_code": code},
     )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="运营商邮箱或统一社会信用代码已存在") from error
     return ApplicationApprovalResponse(
         application_id=application.id, application_no=application.application_no,
         status=application.status, organization_id=organization.id,

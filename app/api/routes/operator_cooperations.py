@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import DbSession, OperatorUser
@@ -11,7 +11,7 @@ from app.models.entities import (
     BindingStatus, CooperationStatus, ErpBinding, OperatorSupplierCooperation,
     Organization, OrganizationType, SupplierProfile, SupplierStatus,
 )
-from app.schemas.cooperation import BindingView, CooperationCreate, CooperationView
+from app.schemas.cooperation import BindingView, CooperationCreate, CooperationPage, CooperationView
 from app.services.events import record_event
 
 
@@ -33,12 +33,21 @@ def view(db: DbSession, item: OperatorSupplierCooperation) -> CooperationView:
     )
 
 
-@router.get("", response_model=list[CooperationView])
-def list_cooperations(db: DbSession, user: OperatorUser) -> list[CooperationView]:
-    items = db.scalars(select(OperatorSupplierCooperation).where(
-        OperatorSupplierCooperation.operator_id == user.organization_id
-    ).order_by(OperatorSupplierCooperation.created_at.desc())).all()
-    return [view(db, item) for item in items]
+@router.get("", response_model=CooperationPage)
+def list_cooperations(
+    db: DbSession, user: OperatorUser, page: int = Query(1, ge=1),
+    page_size: int = Query(50), binding_only: bool = False,
+) -> CooperationPage:
+    if page_size not in {20, 50, 100, 200}:
+        raise HTTPException(status_code=422, detail="页面行数仅支持 20、50、100 或 200")
+    conditions = [OperatorSupplierCooperation.operator_id == user.organization_id]
+    if binding_only:
+        conditions.append(OperatorSupplierCooperation.id.in_(select(ErpBinding.cooperation_id)))
+    total = db.scalar(select(func.count(OperatorSupplierCooperation.id)).where(*conditions)) or 0
+    items = db.scalars(select(OperatorSupplierCooperation).where(*conditions)
+        .order_by(OperatorSupplierCooperation.created_at.desc())
+        .offset((page-1)*page_size).limit(page_size)).all()
+    return CooperationPage(items=[view(db, item) for item in items], total=total, page=page, page_size=page_size)
 
 
 @router.post("", response_model=CooperationView, status_code=status.HTTP_201_CREATED)

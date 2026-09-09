@@ -262,7 +262,7 @@ class OperatorProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("organizations.id", ondelete="CASCADE"), unique=True, nullable=False, index=True
     )
     company_name: Mapped[str | None] = mapped_column(String(240))
-    unified_social_credit_code: Mapped[str | None] = mapped_column(String(40), index=True)
+    unified_social_credit_code: Mapped[str | None] = mapped_column(String(40), unique=True, index=True)
     operator_type: Mapped[str | None] = mapped_column(String(80))
     province: Mapped[str | None] = mapped_column(String(80))
     city: Mapped[str | None] = mapped_column(String(80))

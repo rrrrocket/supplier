@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import timezone
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import DbSession, OperatorUser
 from app.models.entities import (
@@ -25,7 +26,7 @@ from app.api.routes.admin_catalog import (
     integration_client_view,
     rotate_client_with_unique_token,
 )
-from app.schemas.integration import IntegrationClientCreate, IntegrationClientCredential, IntegrationClientView
+from app.schemas.integration import IntegrationClientCreate, IntegrationClientCredential, IntegrationClientPage, IntegrationClientView
 from app.schemas.operator import OperatorDashboardView, OperatorProfileUpdate, OperatorProfileView
 from app.services.events import record_event
 
@@ -44,13 +45,26 @@ def owned_client(db: DbSession, client_id: str, organization_id: str) -> Integra
     return client
 
 
-@router.get("/integration-clients", response_model=list[IntegrationClientView])
-def list_operator_clients(db: DbSession, user: OperatorUser) -> list[IntegrationClientView]:
-    clients = db.scalars(select(IntegrationClient).where(
+@router.get("/integration-clients", response_model=IntegrationClientPage)
+def list_operator_clients(
+    db: DbSession, user: OperatorUser, page: int = Query(1, ge=1),
+    page_size: int = Query(50),
+) -> IntegrationClientPage:
+    if page_size not in {20, 50, 100, 200}:
+        raise HTTPException(status_code=422, detail="页面行数仅支持 20、50、100 或 200")
+    condition = (
         IntegrationClient.owner_organization_id == user.organization_id,
         IntegrationClient.client_type == IntegrationClientType.OPERATOR.value,
-    ).order_by(IntegrationClient.name, IntegrationClient.id)).all()
-    return [integration_client_view(item) for item in clients]
+    )
+    total = db.scalar(select(func.count(IntegrationClient.id)).where(*condition)) or 0
+    clients = db.scalars(select(IntegrationClient).where(
+        *condition
+    ).order_by(IntegrationClient.name, IntegrationClient.id)
+        .offset((page-1)*page_size).limit(page_size)).all()
+    return IntegrationClientPage(
+        items=[integration_client_view(item) for item in clients], total=total,
+        page=page, page_size=page_size,
+    )
 
 
 @router.post("/integration-clients", response_model=IntegrationClientCredential, status_code=status.HTTP_201_CREATED)
@@ -136,7 +150,11 @@ def update_profile(
         entity_id=profile.id, organization_id=user.organization_id,
         actor_type="USER", actor_id=user.id,
     )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="该统一社会信用代码已关联运营商组织") from error
     db.refresh(profile)
     return profile_view(profile)
 

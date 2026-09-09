@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy import func, select
 
 from app.api.deps import DbSession, SupplierUser
 from app.models.entities import BindingStatus, CooperationStatus, ErpBinding, OperatorSupplierCooperation
-from app.schemas.cooperation import CooperationResponse, CooperationView
+from app.schemas.cooperation import CooperationPage, CooperationResponse, CooperationView
 from app.api.routes.operator_cooperations import view
 from app.services.events import record_event
 
@@ -15,12 +15,19 @@ from app.services.events import record_event
 router = APIRouter(prefix="/supplier-operator/cooperations", tags=["供应商运营商合作"])
 
 
-@router.get("", response_model=list[CooperationView])
-def list_cooperations(db: DbSession, user: SupplierUser) -> list[CooperationView]:
-    items = db.scalars(select(OperatorSupplierCooperation).where(
-        OperatorSupplierCooperation.supplier_id == user.organization_id
-    ).order_by(OperatorSupplierCooperation.created_at.desc())).all()
-    return [view(db, item) for item in items]
+@router.get("", response_model=CooperationPage)
+def list_cooperations(
+    db: DbSession, user: SupplierUser, page: int = Query(1, ge=1),
+    page_size: int = Query(50),
+) -> CooperationPage:
+    if page_size not in {20, 50, 100, 200}:
+        raise HTTPException(status_code=422, detail="页面行数仅支持 20、50、100 或 200")
+    condition = OperatorSupplierCooperation.supplier_id == user.organization_id
+    total = db.scalar(select(func.count(OperatorSupplierCooperation.id)).where(condition)) or 0
+    items = db.scalars(select(OperatorSupplierCooperation).where(condition)
+        .order_by(OperatorSupplierCooperation.created_at.desc())
+        .offset((page-1)*page_size).limit(page_size)).all()
+    return CooperationPage(items=[view(db, item) for item in items], total=total, page=page, page_size=page_size)
 
 
 def pending(db: DbSession, cooperation_id: str, supplier_id: str) -> OperatorSupplierCooperation:

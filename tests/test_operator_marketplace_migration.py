@@ -9,7 +9,7 @@ from tests.migration_utils import (
 
 
 PREVIOUS_REVISION = "d14f0c6a7e92"
-OPERATOR_REVISION = "e8c4a91d2f70"
+OPERATOR_REVISION = "f3b8a2197c41"
 
 
 def test_operator_marketplace_migration_is_reversible_and_backfills_clients() -> None:
@@ -66,6 +66,12 @@ def test_operator_marketplace_migration_is_reversible_and_backfills_clients() ->
             assert "UNIQUE" in active_index
             assert "PENDING" in active_index
             assert "ACTIVE" in active_index
+            profile_index = connection.execute(
+                "SELECT indexdef FROM pg_indexes WHERE tablename = 'operator_profiles' "
+                "AND indexname = 'ix_operator_profiles_unified_social_credit_code'"
+            ).fetchone()
+            assert profile_index is not None
+            assert "UNIQUE" in profile_index[0]
 
         run_downgrade(migration_url, PREVIOUS_REVISION)
         with connect(migration_url, database_name) as connection:
