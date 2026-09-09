@@ -68,6 +68,72 @@ def parse_auth_markup(html: str) -> AuthMarkupParser:
     return parser
 
 
+class AdminMarkupParser(HTMLParser):
+    void_tags = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+        "meta", "param", "source", "track", "wbr",
+    }
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.current_nav_section: str | None = None
+        self.nav_sections: list[str] = []
+        self.nav_routes: dict[str, list[str]] = {}
+        self.views: dict[str, dict[str, set[str]]] = {}
+        self.stack: list[dict[str, object]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        classes = set((attributes.get("class") or "").split())
+        parent = self.stack[-1] if self.stack else {}
+        in_nav = bool(parent.get("in_nav")) or (tag == "nav" and "sidebar-nav" in classes)
+        view = parent.get("view")
+        if tag == "section" and "app-view" in classes:
+            view = attributes.get("data-view")
+        frame: dict[str, object] = {
+            "tag": tag,
+            "in_nav": in_nav,
+            "view": view,
+            "section_text": [] if in_nav and "nav-section-label" in classes else None,
+        }
+        if in_nav and attributes.get("data-route") and self.current_nav_section:
+            self.nav_routes.setdefault(self.current_nav_section, []).append(
+                attributes["data-route"] or ""
+            )
+        if isinstance(view, str):
+            markers = self.views.setdefault(view, {"classes": set(), "ids": set()})
+            markers["classes"].update(classes)
+            if attributes.get("id"):
+                markers["ids"].add(attributes["id"] or "")
+        if tag not in self.void_tags:
+            self.stack.append(frame)
+
+    def handle_data(self, data: str) -> None:
+        if self.stack and isinstance(self.stack[-1].get("section_text"), list):
+            self.stack[-1]["section_text"].append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index]["tag"] != tag:
+                continue
+            closed = self.stack[index:]
+            del self.stack[index:]
+            for frame in closed:
+                section_text = frame.get("section_text")
+                if isinstance(section_text, list):
+                    label = "".join(section_text).strip()
+                    self.current_nav_section = label
+                    self.nav_sections.append(label)
+                    self.nav_routes.setdefault(label, [])
+            return
+
+
+def parse_admin_markup(html: str) -> AdminMarkupParser:
+    parser = AdminMarkupParser()
+    parser.feed(html)
+    return parser
+
+
 def test_landing_page_exposes_guest_and_authenticated_actions(client: TestClient) -> None:
     response = client.get("/")
     assert response.status_code == 200
@@ -193,6 +259,47 @@ def test_supplier_and_admin_workspaces_expose_operator_cooperation_views(client:
     operator = client.get("/operator").text
     assert 'id="operator-cooperation-pagination"' in operator
     assert 'id="operator-binding-pagination"' in operator
+
+
+def test_admin_management_views_share_structure_and_keep_cooperations_separate(
+    client: TestClient,
+) -> None:
+    response = client.get("/admin")
+    assert response.status_code == 200
+    markup = parse_admin_markup(response.text)
+
+    assert markup.nav_sections == [
+        "供应商管理",
+        "运营商管理",
+        "合作管理",
+        "平台管理",
+    ]
+    assert markup.nav_routes["合作管理"] == ["operator-cooperations"]
+    assert "operator-cooperations" not in markup.nav_routes["运营商管理"]
+    assert response.text.count("平台 API 凭证") >= 2
+
+    for view, count_id, search_id, pagination_id in (
+        ("applications", "applications-count", "applications-search", "application-pagination"),
+        (
+            "operator-applications",
+            "operator-applications-count",
+            "operator-applications-search",
+            "operator-application-pagination",
+        ),
+    ):
+        assert {"admin-metric-grid", "toolbar", "data-card", "unified-pagination"} <= (
+            markup.views[view]["classes"]
+        )
+        assert {count_id, search_id, pagination_id} <= markup.views[view]["ids"]
+
+    for view, count_id, search_id, pagination_id in (
+        ("suppliers", "suppliers-count", "suppliers-search", "supplier-pagination"),
+        ("operators", "operators-count", "operators-search", "operator-account-pagination"),
+    ):
+        assert {"toolbar", "data-card", "unified-pagination"} <= markup.views[view][
+            "classes"
+        ]
+        assert {count_id, search_id, pagination_id} <= markup.views[view]["ids"]
 
 
 def test_supplier_workspace_exposes_erp_access_and_operator_credentials_are_removed(

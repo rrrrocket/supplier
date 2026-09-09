@@ -447,12 +447,15 @@ img, svg { display: block; }
 .table-secondary { color: var(--muted); margin-top: 4px; font-size: 10px; }
 .table-empty { padding: 58px 20px !important; text-align: center; color: var(--muted); }
 .table-empty strong { display: block; color: var(--ink-soft); margin-bottom: 7px; }
+.table-error, .table-error strong { color: var(--danger); }
 .badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 5px 8px; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .badge-active, .badge-approved, .badge-completed { color: var(--success); background: var(--success-soft); }
 .badge-draft, .badge-pending { color: var(--warning); background: var(--warning-soft); }
 .badge-paused, .badge-partial { color: var(--purple); background: var(--purple-soft); }
 .badge-archived, .badge-expired, .badge-failed, .badge-rejected, .badge-suspended { color: var(--danger); background: var(--danger-soft); }
 .table-footer { padding: 11px 14px; display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 11px; border-top: 1px solid var(--line); }
+.table-result-count { flex: 0 0 auto; white-space: nowrap; }
+.table-result-count + .unified-pagination { width: auto; flex: 1 1 auto; }
 .table-pagination { display: flex; align-items: center; gap: 9px; }
 .unified-pagination { width: 100%; min-height: 54px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 18px; color: #66758f; font-size: 12px; }
 .pager-size { justify-self: start; display: flex; align-items: center; gap: 10px; white-space: nowrap; }

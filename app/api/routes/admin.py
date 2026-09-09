@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CurrentUser, DbSession
@@ -34,7 +34,7 @@ from app.schemas.admin import (
 from app.schemas.cooperation import CooperationPage, CooperationView
 from app.schemas.operator import (
     OperatorApplicationAdminPage, OperatorApplicationAdminView,
-    OperatorManagementPage, OperatorManagementView,
+    OperatorManagementPage, OperatorManagementSummary, OperatorManagementView,
 )
 from app.api.routes.operator_cooperations import view as cooperation_view
 from app.services.events import record_event
@@ -118,11 +118,47 @@ def operator_application_view(item: OperatorApplication) -> OperatorApplicationA
     )
 
 
+def normalized_keyword_pattern(keyword: str | None) -> str | None:
+    normalized = (keyword or "").strip().lower()
+    return f"%{normalized}%" if normalized else None
+
+
+@router.get("/operator-summary", response_model=OperatorManagementSummary)
+def operator_management_summary(
+    db: DbSession,
+    _: PlatformAdmin,
+) -> OperatorManagementSummary:
+    pending_applications = db.scalar(
+        select(func.count(OperatorApplication.id)).where(
+            OperatorApplication.status == SupplierStatus.PENDING.value
+        )
+    ) or 0
+    approved_applications = db.scalar(
+        select(func.count(OperatorApplication.id)).where(
+            OperatorApplication.status == SupplierStatus.APPROVED.value
+        )
+    ) or 0
+    active_operators = db.scalar(
+        select(func.count(Organization.id)).where(
+            Organization.organization_type == OrganizationType.OPERATOR.value,
+            Organization.is_active.is_(True),
+        )
+    ) or 0
+    return OperatorManagementSummary(
+        pending_applications=pending_applications,
+        approved_applications=approved_applications,
+        active_operators=active_operators,
+    )
+
+
 @router.get("/operator-applications", response_model=OperatorApplicationAdminPage)
 def list_operator_applications(
     db: DbSession,
     _: PlatformAdmin,
-    application_status: str | None = Query(default=None, alias="status"),
+    keyword: str | None = Query(default=None, max_length=200),
+    status_filter: Literal["PENDING", "APPROVED", "REJECTED"] | None = Query(
+        default=None
+    ),
     page: int = Query(1, ge=1), page_size: int = Query(50),
 ) -> OperatorApplicationAdminPage:
     if page_size not in {20, 50, 100, 200}:
@@ -130,8 +166,19 @@ def list_operator_applications(
     stmt = select(OperatorApplication).order_by(
         OperatorApplication.created_at.desc(), OperatorApplication.id.desc()
     )
-    if application_status:
-        stmt = stmt.where(OperatorApplication.status == application_status.upper())
+    keyword_pattern = normalized_keyword_pattern(keyword)
+    if keyword_pattern:
+        stmt = stmt.where(or_(
+            func.lower(OperatorApplication.contact_name).like(keyword_pattern),
+            func.lower(OperatorApplication.phone).like(keyword_pattern),
+            func.lower(OperatorApplication.email).like(keyword_pattern),
+            func.lower(OperatorApplication.company_name).like(keyword_pattern),
+            func.lower(OperatorApplication.application_no).like(keyword_pattern),
+            func.lower(OperatorApplication.operator_type).like(keyword_pattern),
+            func.lower(OperatorApplication.erp_name).like(keyword_pattern),
+        ))
+    if status_filter:
+        stmt = stmt.where(OperatorApplication.status == status_filter)
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     items = db.scalars(stmt.offset((page-1)*page_size).limit(page_size)).all()
     return OperatorApplicationAdminPage(
@@ -142,7 +189,9 @@ def list_operator_applications(
 
 @router.get("/operators", response_model=OperatorManagementPage)
 def list_operators(
-    db: DbSession, _: PlatformAdmin, page: int = Query(1, ge=1),
+    db: DbSession, _: PlatformAdmin,
+    keyword: str | None = Query(default=None, max_length=200),
+    page: int = Query(1, ge=1),
     page_size: int = Query(50),
 ) -> OperatorManagementPage:
     if page_size not in {20, 50, 100, 200}:
@@ -151,6 +200,17 @@ def list_operators(
         .join(OperatorProfile, OperatorProfile.organization_id == Organization.id)
         .where(Organization.organization_type == OrganizationType.OPERATOR.value)
         .order_by(Organization.created_at.desc(), Organization.id.desc()))
+    keyword_pattern = normalized_keyword_pattern(keyword)
+    if keyword_pattern:
+        stmt = stmt.where(or_(
+            func.lower(Organization.name).like(keyword_pattern),
+            func.lower(Organization.code).like(keyword_pattern),
+            func.lower(OperatorProfile.contact_name).like(keyword_pattern),
+            func.lower(OperatorProfile.contact_email).like(keyword_pattern),
+            func.lower(OperatorProfile.contact_phone).like(keyword_pattern),
+            func.lower(OperatorProfile.operator_type).like(keyword_pattern),
+            func.lower(OperatorProfile.erp_name).like(keyword_pattern),
+        ))
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     rows = db.execute(stmt.offset((page-1)*page_size).limit(page_size)).all()
     items = [OperatorManagementView(

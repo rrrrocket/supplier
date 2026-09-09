@@ -166,3 +166,9 @@ class OperatorManagementPage(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class OperatorManagementSummary(BaseModel):
+    pending_applications: int
+    approved_applications: int
+    active_operators: int

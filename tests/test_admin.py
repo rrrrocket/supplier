@@ -15,12 +15,16 @@ from app.models.entities import (
     EventLog,
     IntegrationClient,
     IntegrationClientType,
+    OperatorApplication,
+    OperatorProfile,
     Organization,
+    OrganizationType,
     Product,
     SupplierBrandCooperation,
     SupplierApplication,
     SupplierOffer,
     SupplierSku,
+    SupplierStatus,
     User,
 )
 from app.schemas.catalog import BrandCreate
@@ -612,4 +616,141 @@ def test_admin_cannot_rotate_but_can_revoke_supplier_owned_credential(
             db.execute(
                 delete(IntegrationClient).where(IntegrationClient.id == credential_id)
             )
+            db.commit()
+
+
+def test_operator_admin_summary_and_filters(client: TestClient) -> None:
+    suffix = uuid4().hex[:8]
+    target_application = OperatorApplication(
+        application_no=f"OPR-FILTER-{suffix}",
+        contact_name=f"筛选联系人-{suffix}",
+        phone=f"188-{suffix}",
+        email=f"filter-{suffix}@example.com",
+        company_name=f"筛选运营公司-{suffix}",
+        operator_type=f"代运营类型-{suffix}",
+        erp_name=f"筛选ERP-{suffix}",
+        status=SupplierStatus.PENDING.value,
+    )
+    approved_application = OperatorApplication(
+        application_no=f"OPR-APPROVED-{suffix}",
+        contact_name="已通过联系人",
+        phone="18800000000",
+        email=f"approved-filter-{suffix}@example.com",
+        status=SupplierStatus.APPROVED.value,
+    )
+    active_operator = Organization(
+        code=f"OPR-ACTIVE-{suffix}",
+        name=f"活跃运营组织-{suffix}",
+        organization_type=OrganizationType.OPERATOR.value,
+        is_active=True,
+    )
+    inactive_operator = Organization(
+        code=f"OPR-INACTIVE-{suffix}",
+        name=f"停用运营组织-{suffix}",
+        organization_type=OrganizationType.OPERATOR.value,
+        is_active=False,
+    )
+    with SessionLocal() as db:
+        db.add_all([
+            target_application,
+            approved_application,
+            active_operator,
+            inactive_operator,
+        ])
+        db.flush()
+        db.add_all([
+            OperatorProfile(
+                organization_id=active_operator.id,
+                company_name=f"运营主体-{suffix}",
+                operator_type=f"运营类型-{suffix}",
+                contact_name=f"账户联系人-{suffix}",
+                contact_phone=f"199-{suffix}",
+                contact_email=f"account-{suffix}@example.com",
+                erp_name=f"账户ERP-{suffix}",
+            ),
+            OperatorProfile(
+                organization_id=inactive_operator.id,
+                contact_name="停用联系人",
+                contact_phone="17700000000",
+                contact_email=f"inactive-{suffix}@example.com",
+            ),
+        ])
+        db.commit()
+        application_id = target_application.id
+        operator_id = active_operator.id
+        application_ids = [target_application.id, approved_application.id]
+        operator_ids = [active_operator.id, inactive_operator.id]
+        expected_summary = {
+            "pending_applications": db.scalar(
+                select(func.count(OperatorApplication.id)).where(
+                    OperatorApplication.status == SupplierStatus.PENDING.value
+                )
+            ),
+            "approved_applications": db.scalar(
+                select(func.count(OperatorApplication.id)).where(
+                    OperatorApplication.status == SupplierStatus.APPROVED.value
+                )
+            ),
+            "active_operators": db.scalar(
+                select(func.count(Organization.id)).where(
+                    Organization.organization_type == OrganizationType.OPERATOR.value,
+                    Organization.is_active.is_(True),
+                )
+            ),
+        }
+
+    try:
+        login_admin(client)
+        summary = client.get("/api/admin/operator-summary")
+        assert summary.status_code == 200
+        assert summary.json() == expected_summary
+
+        application_keywords = (
+            f"筛选联系人-{suffix}",
+            f"188-{suffix}",
+            f"FILTER-{suffix.upper()}@EXAMPLE.COM",
+            f"筛选运营公司-{suffix}",
+            f"OPR-FILTER-{suffix}",
+            f"代运营类型-{suffix}",
+            f"筛选ERP-{suffix}",
+        )
+        for keyword in application_keywords:
+            response = client.get(
+                "/api/admin/operator-applications",
+                params={"status_filter": "PENDING", "keyword": keyword},
+            )
+            assert response.status_code == 200
+            assert response.json()["total"] == 1
+            assert [item["id"] for item in response.json()["items"]] == [application_id]
+
+        assert client.get(
+            "/api/admin/operator-applications",
+            params={"status_filter": "pending"},
+        ).status_code == 422
+
+        account_keywords = (
+            f"活跃运营组织-{suffix}",
+            f"OPR-ACTIVE-{suffix}",
+            f"账户联系人-{suffix}",
+            f"199-{suffix}",
+            f"ACCOUNT-{suffix.upper()}@EXAMPLE.COM",
+            f"运营类型-{suffix}",
+            f"账户ERP-{suffix}",
+        )
+        for keyword in account_keywords:
+            response = client.get("/api/admin/operators", params={"keyword": keyword})
+            assert response.status_code == 200
+            assert response.json()["total"] == 1
+            assert [item["organization_id"] for item in response.json()["items"]] == [
+                operator_id
+            ]
+    finally:
+        with SessionLocal() as db:
+            db.execute(
+                delete(OperatorApplication).where(OperatorApplication.id.in_(application_ids))
+            )
+            db.execute(
+                delete(OperatorProfile).where(OperatorProfile.organization_id.in_(operator_ids))
+            )
+            db.execute(delete(Organization).where(Organization.id.in_(operator_ids)))
             db.commit()

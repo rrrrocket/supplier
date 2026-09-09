@@ -40,13 +40,13 @@ const cooperationModeLabels = {
 };
 
 const adminRoutes = {
-  applications: ["入驻申请", "中国供应网络 / 平台管理 / 入驻申请"],
-  suppliers: ["入驻供应商", "中国供应网络 / 平台管理 / 供应商"],
-  "operator-applications": ["运营商申请", "中国供应网络 / 平台管理 / 运营商申请"],
-  operators: ["运营商账户", "中国供应网络 / 平台管理 / 运营商账户"],
-  "operator-cooperations": ["合作审计", "中国供应网络 / 平台管理 / 运营商合作"],
-  integrations: ["集成凭证", "中国供应网络 / 平台管理 / 集成凭证"],
-  system: ["平台能力", "中国供应网络 / 平台管理 / 平台能力"],
+  applications: ["供应商入驻申请", "供应网络 / 供应商管理 / 入驻申请"],
+  suppliers: ["供应商列表", "供应网络 / 供应商管理 / 供应商列表"],
+  "operator-applications": ["运营商入驻申请", "供应网络 / 运营商管理 / 入驻申请"],
+  operators: ["运营商列表", "供应网络 / 运营商管理 / 运营商列表"],
+  "operator-cooperations": ["合作记录", "供应网络 / 合作管理 / 合作记录"],
+  integrations: ["平台 API 凭证", "供应网络 / 平台管理 / 平台 API 凭证"],
+  system: ["平台能力", "供应网络 / 平台管理 / 平台能力"],
 };
 
 function metricIcon(type) {
@@ -178,6 +178,11 @@ function renderIntegrationClients() {
   tbody.innerHTML = visibleRows.map((item) => {
     const expired = item.expires_at && new Date(item.expires_at).getTime() <= Date.now();
     const usable = item.is_active && !expired;
+    const canRotate = item.client_type === "SYSTEM" && usable;
+    const actions = [
+      canRotate ? `<button class="btn btn-secondary btn-sm" type="button" data-rotate-integration="${item.id}">轮换</button>` : "",
+      item.is_active ? `<button class="btn btn-danger btn-sm" type="button" data-revoke-integration="${item.id}">撤销</button>` : "",
+    ].join("");
     return `
     <tr>
       <td><div class="table-primary">${Matrix.escapeHtml(item.name)}</div><div class="table-secondary">${Matrix.escapeHtml(item.client_type)}${item.owner_organization_id ? ` · ${Matrix.escapeHtml(item.owner_organization_id)}` : " · 平台级"}</div></td>
@@ -186,10 +191,7 @@ function renderIntegrationClients() {
       <td>${item.expires_at ? Matrix.formatDate(item.expires_at, true) : "永不过期"}</td>
       <td>${item.last_used_at ? Matrix.formatDate(item.last_used_at, true) : "尚未使用"}</td>
       <td>${Matrix.statusBadge(expired ? "EXPIRED" : (item.is_active ? "ACTIVE" : "INACTIVE"))}</td>
-      <td class="text-right"><div class="row">
-        <button class="btn btn-secondary btn-sm" type="button" data-rotate-integration="${item.id}" ${usable ? "" : "disabled"}>轮换</button>
-        <button class="btn btn-danger btn-sm" type="button" data-revoke-integration="${item.id}" ${item.is_active ? "" : "disabled"}>撤销</button>
-      </div></td>
+      <td class="text-right"><div class="row">${actions || "—"}</div></td>
     </tr>
   `;
   }).join("");
@@ -206,7 +208,7 @@ async function loadIntegrationClients() {
     adminState.integrationClients = await Matrix.api("/api/admin/integration-clients");
     renderIntegrationClients();
   } catch (error) {
-    document.querySelector("#integration-clients-tbody").innerHTML = `<tr><td colspan="7" class="table-empty"><strong>集成凭证加载失败</strong>${Matrix.escapeHtml(error.message)}</td></tr>`;
+    document.querySelector("#integration-clients-tbody").innerHTML = `<tr><td colspan="7" class="table-empty"><strong>平台 API 凭证加载失败</strong>${Matrix.escapeHtml(error.message)}</td></tr>`;
   }
 }
 
