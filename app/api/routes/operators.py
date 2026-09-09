@@ -20,7 +20,7 @@ from app.models.entities import (
     IntegrationClient,
     IntegrationClientType,
 )
-from app.api.routes.admin_catalog import (
+from app.services.integration_clients import (
     create_client_with_unique_token,
     integration_client_credential,
     integration_client_view,

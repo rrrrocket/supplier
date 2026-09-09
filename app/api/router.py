@@ -16,6 +16,7 @@ from app.api.routes import (
     profile,
     public,
     supplier_catalog,
+    supplier_integrations,
     supplier_operator,
 )
 
@@ -35,6 +36,7 @@ api_router.include_router(operators.router)
 api_router.include_router(operator_cooperations.router)
 api_router.include_router(supplier_operator.router)
 api_router.include_router(supplier_catalog.router)
+api_router.include_router(supplier_integrations.router)
 api_router.include_router(imports.router)
 api_router.include_router(events.router)
 api_router.include_router(integrations.router)

@@ -7,11 +7,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
+from app.core.integration_security import create_integration_token
 from app.db.session import SessionLocal
 from app.models.entities import (
     Brand,
     CatalogStatus,
     EventLog,
+    IntegrationClient,
+    IntegrationClientType,
     Organization,
     Product,
     SupplierBrandCooperation,
@@ -558,3 +561,55 @@ def test_supplier_profile_labels_cooperation_intent_without_formal_mode_editor(
     assert 'name="commercial_mode"' not in page.text
     assert 'id="brand-cooperation-mode"' not in page.text
     assert "模式 A · 自营采购" not in page.text
+
+
+def test_admin_cannot_rotate_but_can_revoke_supplier_owned_credential(
+    client: TestClient,
+) -> None:
+    _, token_prefix, token_hash = create_integration_token()
+    with SessionLocal() as db:
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+        )
+        assert supplier is not None
+        credential = IntegrationClient(
+            name=f"供应商监管凭证-{uuid4().hex[:8]}",
+            client_type=IntegrationClientType.SUPPLIER.value,
+            owner_organization_id=supplier.id,
+            token_prefix=token_prefix,
+            token_hash=token_hash,
+            scopes=["supplier-skus:read"],
+        )
+        db.add(credential)
+        db.commit()
+        credential_id = credential.id
+
+    try:
+        login_admin(client)
+        listed = client.get("/api/admin/integration-clients")
+        assert listed.status_code == 200
+        assert credential_id in {item["id"] for item in listed.json()}
+
+        rotated = client.post(
+            f"/api/admin/integration-clients/{credential_id}/rotate"
+        )
+        assert rotated.status_code in {404, 409}
+
+        revoked = client.post(
+            f"/api/admin/integration-clients/{credential_id}/revoke"
+        )
+        assert revoked.status_code == 200
+        assert revoked.json()["is_active"] is False
+        assert "token" not in revoked.json()
+    finally:
+        with SessionLocal() as db:
+            db.execute(
+                delete(EventLog).where(
+                    EventLog.entity_type == "IntegrationClient",
+                    EventLog.entity_id == credential_id,
+                )
+            )
+            db.execute(
+                delete(IntegrationClient).where(IntegrationClient.id == credential_id)
+            )
+            db.commit()

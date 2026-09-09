@@ -17,12 +17,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.api import integration_deps
 from app.api.deps import DbSession
 from app.api.integration_deps import SupplierReader
-from app.api.routes import admin_catalog
 from app.core.integration_security import create_integration_token, verify_integration_token
 from app.db.session import SessionLocal, get_db
 from app.main import app
 from app.models.entities import EventLog, IntegrationClient, Organization
 from app.schemas.integration import INTEGRATION_SCOPES
+from app.services import integration_clients
 from tests.conftest import (
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
@@ -199,6 +199,8 @@ def test_create_and_list_never_persist_or_return_plaintext_token(client: TestCli
     client_id = str(created["id"])
 
     assert token.startswith("m1i_")
+    assert created["client_type"] == "SYSTEM"
+    assert created["owner_organization_id"] is None
     assert created["token_prefix"] == token[:12]
     assert "token_hash" not in created
 
@@ -463,7 +465,11 @@ def test_create_retries_a_token_prefix_collision(
     unique = create_integration_token()
     seed_integration_client(token=collision)
     candidates = iter([retry_collision, unique])
-    monkeypatch.setattr(admin_catalog, "create_integration_token", lambda: next(candidates))
+    monkeypatch.setattr(
+        integration_clients,
+        "create_integration_token",
+        lambda: next(candidates),
+    )
     login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
 
     response = client.post(
@@ -485,7 +491,11 @@ def test_rotate_retries_a_token_prefix_collision(
     unique = create_integration_token()
     seed_integration_client(token=collision)
     candidates = iter([retry_collision, unique])
-    monkeypatch.setattr(admin_catalog, "create_integration_token", lambda: next(candidates))
+    monkeypatch.setattr(
+        integration_clients,
+        "create_integration_token",
+        lambda: next(candidates),
+    )
 
     response = client.post(f"/api/admin/integration-clients/{created['id']}/rotate")
 
@@ -512,7 +522,7 @@ def test_rotate_collision_exhaustion_preserves_old_token(
         attempts += 1
         return candidate
 
-    monkeypatch.setattr(admin_catalog, "create_integration_token", colliding_token)
+    monkeypatch.setattr(integration_clients, "create_integration_token", colliding_token)
 
     response = client.post(f"/api/admin/integration-clients/{created['id']}/rotate")
 
@@ -535,7 +545,7 @@ def test_collision_retry_does_not_swallow_unrelated_integrity_errors(
         calls += 1
         return candidate
 
-    monkeypatch.setattr(admin_catalog, "create_integration_token", generated_token)
+    monkeypatch.setattr(integration_clients, "create_integration_token", generated_token)
     with SessionLocal() as db:
         db.execute(
             text(
