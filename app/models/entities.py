@@ -91,7 +91,7 @@ class BindingStatus(str, Enum):
 
 class IntegrationClientType(str, Enum):
     SYSTEM = "SYSTEM"
-    OPERATOR = "OPERATOR"
+    SUPPLIER = "SUPPLIER"
 
 
 class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -135,7 +135,7 @@ class IntegrationClient(UUIDPrimaryKeyMixin, Base):
     __table_args__ = (
         CheckConstraint(
             "(client_type = 'SYSTEM' AND owner_organization_id IS NULL) OR "
-            "(client_type = 'OPERATOR' AND owner_organization_id IS NOT NULL)",
+            "(client_type = 'SUPPLIER' AND owner_organization_id IS NOT NULL)",
             name="ck_integration_client_owner",
         ),
     )

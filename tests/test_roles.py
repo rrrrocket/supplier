@@ -7,12 +7,23 @@ from sqlalchemy import select
 
 from app.core.security import hash_password
 from app.db.session import SessionLocal
-from app.models.entities import Organization, OrganizationType, User, UserRole
+from app.models.entities import (
+    IntegrationClientType,
+    Organization,
+    OrganizationType,
+    User,
+    UserRole,
+)
 
 
 def test_operator_is_a_first_class_organization_and_user_identity() -> None:
     assert OrganizationType.OPERATOR.value == "OPERATOR"
     assert UserRole.OPERATOR.value == "OPERATOR"
+
+
+def test_integration_clients_belong_to_suppliers_not_operators() -> None:
+    assert IntegrationClientType.SUPPLIER.value == "SUPPLIER"
+    assert "OPERATOR" not in IntegrationClientType.__members__
 
 
 def test_new_supplier_user_defaults_to_supplier_role(client: TestClient) -> None:
