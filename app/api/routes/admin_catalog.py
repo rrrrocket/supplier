@@ -65,11 +65,15 @@ def create_client_with_unique_token(
     name: str,
     scopes: list[str],
     expires_at: datetime | None,
+    client_type: str = "SYSTEM",
+    owner_organization_id: str | None = None,
 ) -> tuple[IntegrationClient, str]:
     for _ in range(TOKEN_PREFIX_RETRY_LIMIT):
         plaintext, prefix, token_hash = create_integration_token()
         client = IntegrationClient(
             name=name,
+            client_type=client_type,
+            owner_organization_id=owner_organization_id,
             token_prefix=prefix,
             token_hash=token_hash,
             scopes=scopes,

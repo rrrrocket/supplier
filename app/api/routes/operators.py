@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from datetime import timezone
+
+from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import func, select
 
 from app.api.deps import DbSession, OperatorUser
@@ -14,12 +16,74 @@ from app.models.entities import (
     OrganizationType,
     SupplierProfile,
     SupplierStatus,
+    IntegrationClient,
+    IntegrationClientType,
 )
+from app.api.routes.admin_catalog import (
+    create_client_with_unique_token,
+    integration_client_credential,
+    integration_client_view,
+    rotate_client_with_unique_token,
+)
+from app.schemas.integration import IntegrationClientCreate, IntegrationClientCredential, IntegrationClientView
 from app.schemas.operator import OperatorDashboardView, OperatorProfileUpdate, OperatorProfileView
 from app.services.events import record_event
 
 
 router = APIRouter(prefix="/operator", tags=["运营商工作台"])
+
+
+def owned_client(db: DbSession, client_id: str, organization_id: str) -> IntegrationClient:
+    client = db.scalar(select(IntegrationClient).where(
+        IntegrationClient.id == client_id,
+        IntegrationClient.client_type == IntegrationClientType.OPERATOR.value,
+        IntegrationClient.owner_organization_id == organization_id,
+    ))
+    if client is None:
+        raise HTTPException(status_code=404, detail="集成调用方不存在")
+    return client
+
+
+@router.get("/integration-clients", response_model=list[IntegrationClientView])
+def list_operator_clients(db: DbSession, user: OperatorUser) -> list[IntegrationClientView]:
+    clients = db.scalars(select(IntegrationClient).where(
+        IntegrationClient.owner_organization_id == user.organization_id,
+        IntegrationClient.client_type == IntegrationClientType.OPERATOR.value,
+    ).order_by(IntegrationClient.name, IntegrationClient.id)).all()
+    return [integration_client_view(item) for item in clients]
+
+
+@router.post("/integration-clients", response_model=IntegrationClientCredential, status_code=status.HTTP_201_CREATED)
+def create_operator_client(
+    payload: IntegrationClientCreate, response: Response, db: DbSession, user: OperatorUser
+) -> IntegrationClientCredential:
+    expires_at = payload.expires_at.astimezone(timezone.utc) if payload.expires_at else None
+    client, plaintext = create_client_with_unique_token(
+        db, name=" ".join(payload.name.strip().split()),
+        scopes=[scope.value for scope in dict.fromkeys(payload.scopes)], expires_at=expires_at,
+        client_type=IntegrationClientType.OPERATOR.value,
+        owner_organization_id=user.organization_id,
+    )
+    record_event(db, event_type="OPERATOR_INTEGRATION_CLIENT_CREATED", entity_type="IntegrationClient", entity_id=client.id, organization_id=user.organization_id, actor_type="USER", actor_id=user.id, payload={"client_name": client.name, "scopes": client.scopes})
+    db.commit(); db.refresh(client)
+    response.headers["Cache-Control"] = "no-store"
+    return integration_client_credential(client, plaintext)
+
+
+@router.post("/integration-clients/{client_id}/rotate", response_model=IntegrationClientCredential)
+def rotate_operator_client(client_id: str, response: Response, db: DbSession, user: OperatorUser) -> IntegrationClientCredential:
+    client = owned_client(db, client_id, user.organization_id)
+    if not client.is_active: raise HTTPException(status_code=409, detail="已停用凭证不能轮换")
+    plaintext = rotate_client_with_unique_token(db, client)
+    db.commit(); db.refresh(client); response.headers["Cache-Control"] = "no-store"
+    return integration_client_credential(client, plaintext)
+
+
+@router.post("/integration-clients/{client_id}/revoke", response_model=IntegrationClientView)
+def revoke_operator_client(client_id: str, db: DbSession, user: OperatorUser) -> IntegrationClientView:
+    client = owned_client(db, client_id, user.organization_id); client.is_active = False
+    db.commit(); db.refresh(client)
+    return integration_client_view(client)
 
 
 def profile_view(profile: OperatorProfile) -> OperatorProfileView:

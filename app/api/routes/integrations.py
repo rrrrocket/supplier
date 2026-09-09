@@ -34,6 +34,11 @@ from app.db.session import SessionLocal
 from app.models.entities import (
     Brand,
     CatalogStatus,
+    BindingStatus,
+    CooperationStatus,
+    ErpBinding,
+    IntegrationClientType,
+    OperatorSupplierCooperation,
     Organization,
     OrganizationType,
     Product,
@@ -72,6 +77,26 @@ logger = logging.getLogger(__name__)
 
 ACTIVE = CatalogStatus.ACTIVE.value
 INACTIVE = CatalogStatus.INACTIVE.value
+
+
+def require_bound_supplier(
+    db: DbSession,
+    principal: AuthenticatedIntegrationClient,
+    supplier_id: str,
+) -> None:
+    if principal.client_type != IntegrationClientType.OPERATOR.value:
+        return
+    allowed = db.scalar(select(ErpBinding.id).join(
+        OperatorSupplierCooperation,
+        OperatorSupplierCooperation.id == ErpBinding.cooperation_id,
+    ).where(
+        ErpBinding.operator_id == principal.owner_organization_id,
+        ErpBinding.supplier_id == supplier_id,
+        ErpBinding.status == BindingStatus.ACTIVE.value,
+        OperatorSupplierCooperation.status == CooperationStatus.ACTIVE.value,
+    ))
+    if allowed is None:
+        raise HTTPException(status_code=404, detail={"code": "SUPPLIER_NOT_FOUND", "message": "供应商不存在"})
 MISSING_COST_CODES = {
     SkuCostErrorCode.SUPPLIER_NOT_FOUND,
     SkuCostErrorCode.SKU_NOT_FOUND,
@@ -557,12 +582,13 @@ def get_supplier(
 def list_supplier_brands(
     supplier_id: str,
     db: DbSession,
-    _: BrandReader,
+    principal: BrandReader,
     updated_since: AwareDatetime | None = Query(default=None),
     cursor: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     include_inactive: bool = Query(default=False),
 ) -> SupplierBrandIntegrationPage:
+    require_bound_supplier(db, principal, supplier_id)
     sync_watermark, decoded_cursor = page_snapshot(
         db,
         cursor=cursor,
@@ -648,12 +674,13 @@ def list_supplier_brands(
 def list_supplier_skus(
     supplier_id: str,
     db: DbSession,
-    _: SkuReader,
+    principal: SkuReader,
     updated_since: AwareDatetime | None = Query(default=None),
     cursor: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     include_inactive: bool = Query(default=False),
 ) -> SupplierSkuIntegrationPage:
+    require_bound_supplier(db, principal, supplier_id)
     sync_watermark, decoded_cursor = page_snapshot(
         db,
         cursor=cursor,
@@ -758,8 +785,9 @@ def get_supplier_sku_cost(
     supplier_sku_id: str,
     request: Request,
     db: DbSession,
-    _: CostReader,
+    principal: CostReader,
 ) -> CurrentSkuCostView | JSONResponse:
+    require_bound_supplier(db, principal, supplier_id)
     try:
         cost = resolve_current_sku_cost(
             db,
@@ -786,13 +814,14 @@ def query_supplier_sku_costs(
     payload: SkuCostBatchRequest,
     request: Request,
     db: DbSession,
-    _: CostReader,
+    principal: CostReader,
 ) -> SkuCostBatchResponse:
     results: list[SkuCostBatchSuccess | SkuCostBatchError] = []
     result_count = 0
     error_count = 0
     for item in payload.items:
         try:
+            require_bound_supplier(db, principal, item.supplier_id)
             cost = resolve_current_sku_cost(
                 db,
                 supplier_id=item.supplier_id,

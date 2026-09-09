@@ -12,7 +12,7 @@ from app.core.config import get_settings
 from app.core.integration_rate_limit import FixedWindowRateLimiter
 from app.core.integration_security import verify_integration_token
 from app.db.session import SessionLocal
-from app.models.entities import IntegrationClient
+from app.models.entities import IntegrationClient, IntegrationClientType, Organization, OrganizationType
 from app.schemas.integration import IntegrationScope
 
 
@@ -37,6 +37,8 @@ class AuthenticatedIntegrationClient:
     id: str
     name: str
     scopes: tuple[str, ...]
+    client_type: str
+    owner_organization_id: str | None
 
 
 def authenticate_integration_client(
@@ -69,12 +71,18 @@ def authenticate_integration_client(
             )
         ):
             raise unauthorized()
+        if client.client_type == IntegrationClientType.OPERATOR.value:
+            owner = auth_db.get(Organization, client.owner_organization_id)
+            if owner is None or not owner.is_active or owner.organization_type != OrganizationType.OPERATOR.value:
+                raise unauthorized()
 
         client.last_used_at = now
         principal = AuthenticatedIntegrationClient(
             id=client.id,
             name=client.name,
             scopes=tuple(client.scopes),
+            client_type=client.client_type,
+            owner_organization_id=client.owner_organization_id,
         )
 
     return principal

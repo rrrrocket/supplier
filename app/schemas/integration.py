@@ -50,6 +50,8 @@ class IntegrationClientView(BaseModel):
 
     id: str
     name: str
+    client_type: str
+    owner_organization_id: str | None
     token_prefix: str
     scopes: list[IntegrationScope]
     expires_at: datetime | None
