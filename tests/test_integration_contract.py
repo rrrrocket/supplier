@@ -6,8 +6,9 @@ from threading import Barrier, Event
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.openapi.utils import get_openapi as fastapi_get_openapi
+from fastapi.testclient import TestClient
 
 import app.main as main_module
 from app.api.router import api_router
@@ -119,6 +120,19 @@ PUBLIC_SCHEMA_NAMES = {
 HTTP_METHODS = {"delete", "get", "head", "options", "patch", "post", "put", "trace"}
 
 
+@app.get("/api/test/structured-not-found", include_in_schema=False)
+def structured_not_found() -> None:
+    raise HTTPException(
+        status_code=404,
+        detail={"code": "SUPPLIER_NOT_FOUND", "message": "供应商不存在"},
+    )
+
+
+@app.get("/api/test/string-not-found", include_in_schema=False)
+def string_not_found() -> None:
+    raise HTTPException(status_code=404, detail="内部资源不存在")
+
+
 def schema_ref_name(schema: dict[str, Any]) -> str:
     return schema["$ref"].rsplit("/", 1)[-1]
 
@@ -127,6 +141,23 @@ def response_schema(operation: dict[str, Any], status_code: int) -> dict[str, An
     return operation["responses"][str(status_code)]["content"]["application/json"][
         "schema"
     ]
+
+
+def test_global_404_handler_only_preserves_structured_error_details(
+    client: TestClient,
+) -> None:
+    structured = client.get("/api/test/structured-not-found")
+    string_error = client.get("/api/test/string-not-found")
+    missing_page = client.get("/definitely-missing-page")
+
+    assert structured.status_code == 404
+    assert structured.json() == {
+        "detail": {"code": "SUPPLIER_NOT_FOUND", "message": "供应商不存在"}
+    }
+    assert string_error.status_code == 404
+    assert string_error.json() == {"detail": "页面或资源不存在"}
+    assert missing_page.status_code == 404
+    assert missing_page.json() == {"detail": "页面或资源不存在"}
 
 
 def test_openapi_publishes_six_caller_neutral_integration_operations() -> None:

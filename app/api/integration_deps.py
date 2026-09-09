@@ -12,7 +12,12 @@ from app.core.config import get_settings
 from app.core.integration_rate_limit import FixedWindowRateLimiter
 from app.core.integration_security import verify_integration_token
 from app.db.session import SessionLocal
-from app.models.entities import IntegrationClient, IntegrationClientType, Organization, OrganizationType
+from app.models.entities import (
+    IntegrationClient,
+    IntegrationClientType,
+    Organization,
+    OrganizationType,
+)
 from app.schemas.integration import IntegrationScope
 
 
@@ -32,6 +37,13 @@ def unauthorized() -> HTTPException:
     )
 
 
+def supplier_not_found() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={"code": "SUPPLIER_NOT_FOUND", "message": "供应商不存在"},
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class AuthenticatedIntegrationClient:
     id: str
@@ -39,6 +51,23 @@ class AuthenticatedIntegrationClient:
     scopes: tuple[str, ...]
     client_type: str
     owner_organization_id: str | None
+
+
+def supplier_scope(principal: AuthenticatedIntegrationClient) -> str | None:
+    if principal.client_type == IntegrationClientType.SYSTEM.value:
+        return None
+    if principal.client_type == IntegrationClientType.SUPPLIER.value:
+        return principal.owner_organization_id
+    raise unauthorized()
+
+
+def require_permitted_supplier(
+    principal: AuthenticatedIntegrationClient,
+    supplier_id: str,
+) -> None:
+    scoped_id = supplier_scope(principal)
+    if scoped_id is not None and scoped_id != supplier_id:
+        raise supplier_not_found()
 
 
 def authenticate_integration_client(
@@ -71,10 +100,19 @@ def authenticate_integration_client(
             )
         ):
             raise unauthorized()
-        if client.client_type == IntegrationClientType.OPERATOR.value:
-            owner = auth_db.get(Organization, client.owner_organization_id)
-            if owner is None or not owner.is_active or owner.organization_type != OrganizationType.OPERATOR.value:
+        if client.client_type == IntegrationClientType.SYSTEM.value:
+            if client.owner_organization_id is not None:
                 raise unauthorized()
+        elif client.client_type == IntegrationClientType.SUPPLIER.value:
+            owner = auth_db.get(Organization, client.owner_organization_id)
+            if (
+                owner is None
+                or not owner.is_active
+                or owner.organization_type != OrganizationType.SUPPLIER.value
+            ):
+                raise unauthorized()
+        else:
+            raise unauthorized()
 
         client.last_used_at = now
         principal = AuthenticatedIntegrationClient(

@@ -5,7 +5,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -131,7 +131,13 @@ def health() -> dict[str, str]:
 
 
 @app.exception_handler(404)
-async def not_found(_: Request, __: Exception) -> JSONResponse:
+async def not_found(_: Request, error: Exception) -> JSONResponse:
+    if isinstance(error, HTTPException) and isinstance(error.detail, dict):
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"detail": error.detail},
+            headers=error.headers,
+        )
     return JSONResponse(status_code=404, content={"detail": "页面或资源不存在"})
 
 

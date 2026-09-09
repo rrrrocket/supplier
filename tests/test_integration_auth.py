@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import uuid4
@@ -11,7 +12,7 @@ import psycopg
 import pytest
 from fastapi import Depends, HTTPException, status
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, delete, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api import integration_deps
@@ -20,7 +21,13 @@ from app.api.integration_deps import SupplierReader
 from app.core.integration_security import create_integration_token, verify_integration_token
 from app.db.session import SessionLocal, get_db
 from app.main import app
-from app.models.entities import EventLog, IntegrationClient, Organization
+from app.models.entities import (
+    EventLog,
+    IntegrationClient,
+    IntegrationClientType,
+    Organization,
+    OrganizationType,
+)
 from app.schemas.integration import INTEGRATION_SCOPES
 from app.services import integration_clients
 from tests.conftest import (
@@ -134,6 +141,69 @@ def seed_integration_client(
             integration_client.scopes = scopes or ["suppliers:read"]
         db.commit()
         return integration_client.id
+
+
+@contextmanager
+def seeded_legacy_owned_credential(
+    *,
+    client_type: str,
+    owner_type: str,
+) -> Iterator[str]:
+    plaintext, prefix, token_hash = create_integration_token()
+    suffix = uuid4().hex[:8]
+    credential_id = f"legacy-owned-client-{suffix}"
+    with SessionLocal() as db:
+        owner = Organization(
+            code=f"LEGACY-OWNER-{suffix}",
+            name=f"旧凭证所有者-{suffix}",
+            organization_type=owner_type,
+        )
+        db.add(owner)
+        db.commit()
+        owner_id = owner.id
+
+    try:
+        with SessionLocal() as db:
+            db.execute(
+                text(
+                    "ALTER TABLE integration_clients "
+                    "DROP CONSTRAINT ck_integration_client_owner"
+                )
+            )
+            db.add(
+                IntegrationClient(
+                    id=credential_id,
+                    name=f"旧凭证-{suffix}",
+                    client_type=client_type,
+                    owner_organization_id=owner_id,
+                    token_prefix=prefix,
+                    token_hash=token_hash,
+                    scopes=["suppliers:read"],
+                )
+            )
+            db.commit()
+        yield plaintext
+    finally:
+        with SessionLocal() as db:
+            db.execute(
+                delete(EventLog).where(
+                    EventLog.entity_type == "IntegrationClient",
+                    EventLog.entity_id == credential_id,
+                )
+            )
+            db.execute(
+                delete(IntegrationClient).where(IntegrationClient.id == credential_id)
+            )
+            db.execute(
+                text(
+                    "ALTER TABLE integration_clients ADD CONSTRAINT "
+                    "ck_integration_client_owner CHECK ("
+                    "(client_type = 'SYSTEM' AND owner_organization_id IS NULL) OR "
+                    "(client_type = 'SUPPLIER' AND owner_organization_id IS NOT NULL))"
+                )
+            )
+            db.execute(delete(Organization).where(Organization.id == owner_id))
+            db.commit()
 
 
 def test_integration_token_roundtrip_uses_prefix_and_sha256_digest() -> None:
@@ -285,6 +355,92 @@ def test_expired_and_revoked_tokens_are_unauthorized(client: TestClient) -> None
             headers=bearer(token),
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.parametrize(
+    ("owner_is_active", "owner_type"),
+    [
+        (False, OrganizationType.SUPPLIER.value),
+        (True, OrganizationType.PLATFORM.value),
+    ],
+    ids=["inactive-owner", "non-supplier-owner"],
+)
+def test_supplier_token_requires_an_active_supplier_owner(
+    client: TestClient,
+    owner_is_active: bool,
+    owner_type: str,
+) -> None:
+    plaintext, prefix, token_hash = create_integration_token()
+    suffix = uuid4().hex[:8]
+    with SessionLocal() as db:
+        owner = Organization(
+            code=f"INVALID-SUPPLIER-OWNER-{suffix}",
+            name=f"无效凭证所有者-{suffix}",
+            organization_type=owner_type,
+            is_active=owner_is_active,
+        )
+        db.add(owner)
+        db.flush()
+        credential = IntegrationClient(
+            name=f"无效供应商凭证-{suffix}",
+            client_type=IntegrationClientType.SUPPLIER.value,
+            owner_organization_id=owner.id,
+            token_prefix=prefix,
+            token_hash=token_hash,
+            scopes=["suppliers:read"],
+        )
+        db.add(credential)
+        db.commit()
+        credential_id = credential.id
+        owner_id = owner.id
+
+    try:
+        response = client.get(
+            "/api/test/integration-supplier-reader",
+            headers=bearer(plaintext),
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.headers["www-authenticate"] == "Bearer"
+    finally:
+        with SessionLocal() as db:
+            db.execute(
+                delete(IntegrationClient).where(IntegrationClient.id == credential_id)
+            )
+            db.execute(delete(Organization).where(Organization.id == owner_id))
+            db.commit()
+
+
+def test_legacy_operator_integration_client_cannot_authenticate(
+    client: TestClient,
+) -> None:
+    with seeded_legacy_owned_credential(
+        client_type="OPERATOR",
+        owner_type=OrganizationType.OPERATOR.value,
+    ) as plaintext:
+        response = client.get(
+            "/api/test/integration-supplier-reader",
+            headers=bearer(plaintext),
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_system_integration_client_with_owner_cannot_authenticate(
+    client: TestClient,
+) -> None:
+    with seeded_legacy_owned_credential(
+        client_type=IntegrationClientType.SYSTEM.value,
+        owner_type=OrganizationType.SUPPLIER.value,
+    ) as plaintext:
+        response = client.get(
+            "/api/test/integration-supplier-reader",
+            headers=bearer(plaintext),
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.headers["www-authenticate"] == "Bearer"
 
 
 def test_valid_token_without_required_scope_is_forbidden(client: TestClient) -> None:

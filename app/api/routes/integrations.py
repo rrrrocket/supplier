@@ -29,16 +29,14 @@ from app.api.integration_deps import (
     SupplierReader,
     authenticate_integration_client,
     enforce_integration_rate_limit,
+    require_permitted_supplier,
+    supplier_not_found,
+    supplier_scope,
 )
 from app.db.session import SessionLocal
 from app.models.entities import (
     Brand,
     CatalogStatus,
-    BindingStatus,
-    CooperationStatus,
-    ErpBinding,
-    IntegrationClientType,
-    OperatorSupplierCooperation,
     Organization,
     OrganizationType,
     Product,
@@ -77,26 +75,6 @@ logger = logging.getLogger(__name__)
 
 ACTIVE = CatalogStatus.ACTIVE.value
 INACTIVE = CatalogStatus.INACTIVE.value
-
-
-def require_bound_supplier(
-    db: DbSession,
-    principal: AuthenticatedIntegrationClient,
-    supplier_id: str,
-) -> None:
-    if principal.client_type != IntegrationClientType.OPERATOR.value:
-        return
-    allowed = db.scalar(select(ErpBinding.id).join(
-        OperatorSupplierCooperation,
-        OperatorSupplierCooperation.id == ErpBinding.cooperation_id,
-    ).where(
-        ErpBinding.operator_id == principal.owner_organization_id,
-        ErpBinding.supplier_id == supplier_id,
-        ErpBinding.status == BindingStatus.ACTIVE.value,
-        OperatorSupplierCooperation.status == CooperationStatus.ACTIVE.value,
-    ))
-    if allowed is None:
-        raise HTTPException(status_code=404, detail={"code": "SUPPLIER_NOT_FOUND", "message": "供应商不存在"})
 MISSING_COST_CODES = {
     SkuCostErrorCode.SUPPLIER_NOT_FOUND,
     SkuCostErrorCode.SKU_NOT_FOUND,
@@ -342,13 +320,7 @@ def supplier_context(
         )
     ).first()
     if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "code": SkuCostErrorCode.SUPPLIER_NOT_FOUND.value,
-                "message": "供应商不存在",
-            },
-        )
+        raise supplier_not_found()
     return row[0], row[1]
 
 
@@ -468,17 +440,18 @@ def ranked_cooperations(supplier_id: str):
 )
 def list_suppliers(
     db: DbSession,
-    _: SupplierReader,
+    principal: SupplierReader,
     updated_since: AwareDatetime | None = Query(default=None),
     cursor: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     include_inactive: bool = Query(default=False),
 ) -> SupplierIntegrationPage:
+    scoped_supplier_id = supplier_scope(principal)
     sync_watermark, decoded_cursor = page_snapshot(
         db,
         cursor=cursor,
         resource="suppliers",
-        supplier_id=None,
+        supplier_id=scoped_supplier_id,
         updated_since=updated_since,
         include_inactive=include_inactive,
     )
@@ -500,6 +473,8 @@ def list_suppliers(
         )
         .where(Organization.organization_type == OrganizationType.SUPPLIER.value)
     )
+    if scoped_supplier_id is not None:
+        statement = statement.where(Organization.id == scoped_supplier_id)
     if not include_inactive:
         statement = statement.where(supplier_active_condition())
     if updated_since is not None:
@@ -519,7 +494,7 @@ def list_suppliers(
         id_index=3,
         sync_watermark=sync_watermark,
         resource="suppliers",
-        supplier_id=None,
+        supplier_id=scoped_supplier_id,
         updated_since=updated_since,
         include_inactive=include_inactive,
     )
@@ -541,8 +516,9 @@ def list_suppliers(
 def get_supplier(
     supplier_id: str,
     db: DbSession,
-    _: SupplierReader,
+    principal: SupplierReader,
 ) -> SupplierIntegrationView:
+    require_permitted_supplier(principal, supplier_id)
     effective_updated_at = supplier_updated_at().label("effective_updated_at")
     resource_status = case(
         (supplier_active_condition(), ACTIVE),
@@ -560,13 +536,7 @@ def get_supplier(
         )
     ).first()
     if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "code": SkuCostErrorCode.SUPPLIER_NOT_FOUND.value,
-                "message": "供应商不存在",
-            },
-        )
+        raise supplier_not_found()
     return supplier_view(row[0], row[1], row[2])
 
 
@@ -588,7 +558,7 @@ def list_supplier_brands(
     limit: int = Query(default=100, ge=1, le=500),
     include_inactive: bool = Query(default=False),
 ) -> SupplierBrandIntegrationPage:
-    require_bound_supplier(db, principal, supplier_id)
+    require_permitted_supplier(principal, supplier_id)
     sync_watermark, decoded_cursor = page_snapshot(
         db,
         cursor=cursor,
@@ -680,7 +650,7 @@ def list_supplier_skus(
     limit: int = Query(default=100, ge=1, le=500),
     include_inactive: bool = Query(default=False),
 ) -> SupplierSkuIntegrationPage:
-    require_bound_supplier(db, principal, supplier_id)
+    require_permitted_supplier(principal, supplier_id)
     sync_watermark, decoded_cursor = page_snapshot(
         db,
         cursor=cursor,
@@ -787,7 +757,7 @@ def get_supplier_sku_cost(
     db: DbSession,
     principal: CostReader,
 ) -> CurrentSkuCostView | JSONResponse:
-    require_bound_supplier(db, principal, supplier_id)
+    require_permitted_supplier(principal, supplier_id)
     try:
         cost = resolve_current_sku_cost(
             db,
@@ -821,12 +791,28 @@ def query_supplier_sku_costs(
     error_count = 0
     for item in payload.items:
         try:
-            require_bound_supplier(db, principal, item.supplier_id)
+            require_permitted_supplier(principal, item.supplier_id)
             cost = resolve_current_sku_cost(
                 db,
                 supplier_id=item.supplier_id,
                 supplier_sku_id=item.supplier_sku_id,
             )
+        except HTTPException as exc:
+            if exc.status_code != status.HTTP_404_NOT_FOUND:
+                raise
+            if not isinstance(exc.detail, dict):
+                raise
+            error_count += 1
+            results.append(
+                SkuCostBatchError(
+                    client_sku_id=item.client_sku_id,
+                    supplier_id=item.supplier_id,
+                    supplier_sku_id=item.supplier_sku_id,
+                    error_code=SkuCostErrorCode(str(exc.detail["code"])),
+                    message=str(exc.detail["message"]),
+                )
+            )
+            continue
         except SkuCostError as exc:
             error_count += 1
             results.append(
