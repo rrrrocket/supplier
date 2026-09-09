@@ -754,3 +754,74 @@ def test_operator_admin_summary_and_filters(client: TestClient) -> None:
             )
             db.execute(delete(Organization).where(Organization.id.in_(operator_ids)))
             db.commit()
+
+
+def test_operator_application_status_parameters_preserve_legacy_contract(
+    client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    keyword = f"状态兼容-{suffix}"
+    pending_application = OperatorApplication(
+        application_no=f"OPR-STATUS-PENDING-{suffix}",
+        contact_name=keyword,
+        phone="18800000001",
+        email=f"status-pending-{suffix}@example.com",
+        status=SupplierStatus.PENDING.value,
+    )
+    rejected_application = OperatorApplication(
+        application_no=f"OPR-STATUS-REJECTED-{suffix}",
+        contact_name=keyword,
+        phone="18800000002",
+        email=f"status-rejected-{suffix}@example.com",
+        status=SupplierStatus.REJECTED.value,
+    )
+    with SessionLocal() as db:
+        db.add_all([pending_application, rejected_application])
+        db.commit()
+        pending_id = pending_application.id
+        application_ids = [pending_application.id, rejected_application.id]
+
+    try:
+        login_admin(client)
+
+        legacy = client.get(
+            "/api/admin/operator-applications",
+            params={"keyword": keyword, "status": "PENDING"},
+        )
+        assert legacy.status_code == 200
+        assert legacy.json()["total"] == 1
+        assert [item["id"] for item in legacy.json()["items"]] == [pending_id]
+
+        matching_parameters = client.get(
+            "/api/admin/operator-applications",
+            params={
+                "keyword": keyword,
+                "status": "PENDING",
+                "status_filter": "PENDING",
+            },
+        )
+        assert matching_parameters.status_code == 200
+        assert matching_parameters.json()["total"] == 1
+        assert [item["id"] for item in matching_parameters.json()["items"]] == [
+            pending_id
+        ]
+
+        conflicting_parameters = client.get(
+            "/api/admin/operator-applications",
+            params={"status": "PENDING", "status_filter": "REJECTED"},
+        )
+        assert conflicting_parameters.status_code == 422
+
+        invalid_legacy_status = client.get(
+            "/api/admin/operator-applications",
+            params={"status": "pending"},
+        )
+        assert invalid_legacy_status.status_code == 422
+    finally:
+        with SessionLocal() as db:
+            db.execute(
+                delete(OperatorApplication).where(
+                    OperatorApplication.id.in_(application_ids)
+                )
+            )
+            db.commit()

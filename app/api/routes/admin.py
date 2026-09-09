@@ -156,6 +156,10 @@ def list_operator_applications(
     db: DbSession,
     _: PlatformAdmin,
     keyword: str | None = Query(default=None, max_length=200),
+    application_status: Literal["PENDING", "APPROVED", "REJECTED"] | None = Query(
+        default=None,
+        alias="status",
+    ),
     status_filter: Literal["PENDING", "APPROVED", "REJECTED"] | None = Query(
         default=None
     ),
@@ -177,8 +181,11 @@ def list_operator_applications(
             func.lower(OperatorApplication.operator_type).like(keyword_pattern),
             func.lower(OperatorApplication.erp_name).like(keyword_pattern),
         ))
-    if status_filter:
-        stmt = stmt.where(OperatorApplication.status == status_filter)
+    if application_status and status_filter and application_status != status_filter:
+        raise HTTPException(status_code=422, detail="status 与 status_filter 不能冲突")
+    effective_status = status_filter or application_status
+    if effective_status:
+        stmt = stmt.where(OperatorApplication.status == effective_status)
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     items = db.scalars(stmt.offset((page-1)*page_size).limit(page_size)).all()
     return OperatorApplicationAdminPage(
