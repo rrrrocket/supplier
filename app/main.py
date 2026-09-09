@@ -3,9 +3,11 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -24,18 +26,42 @@ PAGES = WEB_ROOT / "pages"
 ASSETS = WEB_ROOT / "assets"
 
 
+def build_public_openapi_schema(application: FastAPI) -> dict[str, Any]:
+    return get_openapi(
+        title=application.title,
+        version=application.version,
+        openapi_version=application.openapi_version,
+        summary=application.summary,
+        description=application.description,
+        routes=application.routes,
+        webhooks=application.webhooks.routes,
+        tags=application.openapi_tags,
+        servers=application.servers,
+        terms_of_service=application.terms_of_service,
+        contact=application.contact,
+        license_info=application.license_info,
+        separate_input_output_schemas=application.separate_input_output_schemas,
+        external_docs=application.openapi_external_docs,
+    )
+
+
+def normalize_public_openapi_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    for path, method in OPERATIONS_WITHOUT_422.items():
+        schema["paths"][path][method]["responses"].pop("422", None)
+    return schema
+
+
 def normalize_public_openapi(application: FastAPI) -> None:
-    default_openapi = application.openapi
     openapi_lock = Lock()
 
-    def openapi() -> dict:
+    def openapi() -> dict[str, Any]:
         with openapi_lock:
             if application.openapi_schema is not None:
                 return application.openapi_schema
 
-            schema = default_openapi()
-            for path, method in OPERATIONS_WITHOUT_422.items():
-                schema["paths"][path][method]["responses"].pop("422", None)
+            schema = normalize_public_openapi_schema(
+                build_public_openapi_schema(application)
+            )
             application.openapi_schema = schema
             return schema
 

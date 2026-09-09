@@ -5,8 +5,11 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
+from fastapi.openapi.utils import get_openapi as fastapi_get_openapi
 
+import app.main as main_module
 from app.api.router import api_router
 from app.main import app, normalize_public_openapi
 from app.schemas import integration as integration_contract
@@ -274,7 +277,7 @@ def test_each_operation_publishes_only_its_reachable_response_statuses() -> None
         assert set(openapi["paths"][path][method]["responses"]) == expected_statuses
 
 
-def test_openapi_schema_cache_keeps_the_normalized_cost_contract() -> None:
+def test_openapi_schema_cache_keeps_the_normalized_public_contract() -> None:
     """Catch custom schema normalization rebuilding or mutating on every request."""
     app.openapi_schema = None
 
@@ -285,25 +288,26 @@ def test_openapi_schema_cache_keeps_the_normalized_cost_contract() -> None:
     assert app.openapi_schema is first
 
 
-def test_concurrent_openapi_callers_only_observe_the_normalized_schema() -> None:
-    """Catch publishing FastAPI's generated cache before normalization completes."""
+def test_concurrent_openapi_callers_only_observe_the_normalized_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catch publishing locally generated OpenAPI before normalization completes."""
     application = FastAPI()
     application.include_router(api_router, prefix="/api")
-    native_openapi = application.openapi
-    default_published = Event()
-    release_default = Event()
+    local_schema_ready = Event()
+    release_schema_builder = Event()
     competing_call_gate = Barrier(2)
     competing_call_started = Event()
     competing_call_returned = Event()
 
-    def delayed_default_openapi() -> dict[str, Any]:
-        schema = native_openapi()
-        default_published.set()
-        if not release_default.wait(timeout=5):
-            raise TimeoutError("test did not release OpenAPI generation")
+    def delayed_get_openapi(**kwargs: Any) -> dict[str, Any]:
+        schema = fastapi_get_openapi(**kwargs)
+        local_schema_ready.set()
+        if not release_schema_builder.wait(timeout=5):
+            raise TimeoutError("test did not release local OpenAPI generation")
         return schema
 
-    application.openapi = delayed_default_openapi
+    monkeypatch.setattr(main_module, "get_openapi", delayed_get_openapi, raising=False)
     normalize_public_openapi(application)
 
     def competing_read() -> dict[str, Any]:
@@ -315,12 +319,14 @@ def test_concurrent_openapi_callers_only_observe_the_normalized_schema() -> None
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         generating = executor.submit(application.openapi)
-        assert default_published.wait(timeout=5)
+        assert local_schema_ready.wait(timeout=5)
+        assert application.openapi_schema is None
         competing = executor.submit(competing_read)
         competing_call_gate.wait(timeout=5)
         assert competing_call_started.wait(timeout=5)
         returned_before_normalization = competing_call_returned.wait(timeout=1)
-        release_default.set()
+        assert application.openapi_schema is None
+        release_schema_builder.set()
         generated_schema = generating.result(timeout=5)
         competing_schema = competing.result(timeout=5)
 
@@ -337,3 +343,39 @@ def test_concurrent_openapi_callers_only_observe_the_normalized_schema() -> None
     ):
         method = PUBLIC_OPERATIONS[path][0]
         assert "422" not in generated_schema["paths"][path][method]["responses"]
+
+
+def test_openapi_normalization_failure_leaves_cache_empty_and_can_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catch a failed normalization permanently caching the raw schema."""
+    application = FastAPI()
+    application.include_router(api_router, prefix="/api")
+    normalize_public_openapi(application)
+
+    def fail_normalization(_: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("injected normalization failure")
+
+    with monkeypatch.context() as failure_context:
+        failure_context.setattr(
+            main_module,
+            "normalize_public_openapi_schema",
+            fail_normalization,
+            raising=False,
+        )
+        with pytest.raises(RuntimeError, match="injected normalization failure"):
+            application.openapi()
+
+    assert application.openapi_schema is None
+    recovered_schema = application.openapi()
+    assert application.openapi_schema is recovered_schema
+    for path in (
+        "/api/integrations/v1/suppliers/{supplier_id}",
+        (
+            "/api/integrations/v1/suppliers/{supplier_id}/skus/"
+            "{supplier_sku_id}/cost"
+        ),
+        "/api/integrations/v1/sku-costs/query",
+    ):
+        method = PUBLIC_OPERATIONS[path][0]
+        assert "422" not in recovered_schema["paths"][path][method]["responses"]
