@@ -117,6 +117,7 @@ function adminHarness(api) {
     Matrix: {
       api,
       escapeHtml(value) { return String(value ?? ""); },
+      formatDate(value) { return String(value ?? ""); },
       statusBadge(status) { return `<span>${status}</span>`; },
       toast() {},
     },
@@ -165,6 +166,27 @@ const brandB = {
   status: "ACTIVE",
   updated_at: "2026-09-09T00:00:00Z",
 };
+
+
+test("expired integration clients are labeled expired and cannot rotate", () => {
+  const { context, elements } = adminHarness(async () => []);
+  vm.runInContext(
+    `adminState.integrationClients = ${JSON.stringify([{
+      expires_at: "2000-01-01T00:00:00Z",
+      id: "expired-client",
+      is_active: true,
+      last_used_at: null,
+      name: "已过期调用方",
+      scopes: ["suppliers:read"],
+      token_prefix: "m1i_expired",
+    }])}; renderIntegrationClients();`,
+    context,
+  );
+
+  const html = elements.get("#integration-clients-tbody").innerHTML;
+  assert.match(html, />EXPIRED</);
+  assert.match(html, /data-rotate-integration="expired-client" disabled/);
+});
 
 
 test("opening a supplier clears stale brand choices and disables save while loading", () => {

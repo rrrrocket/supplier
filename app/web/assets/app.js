@@ -27,7 +27,7 @@ const tablePageSize = 50;
 
 const importFields = [
   ["product_name", "商品名称", true],
-  ["brand", "品牌", false],
+  ["brand", "品牌", true],
   ["model", "型号", false],
   ["category", "类目", true],
   ["supplier_sku", "供应商 SKU", true],
@@ -185,32 +185,33 @@ function renderEvent(event) {
 
 async function fetchAllListRows(path, params, isCurrent) {
   const rowsById = new Map();
-  const pageSignatures = new Set();
-  let offset = 0;
+  const seenCursors = new Set();
+  let cursor = null;
   while (true) {
     const chunkParams = new URLSearchParams(params);
     chunkParams.set("limit", String(listChunkSize));
-    chunkParams.set("offset", String(offset));
-    let chunk;
+    if (cursor) chunkParams.set("cursor", cursor);
+    let response;
     try {
-      chunk = await Matrix.api(`${path}?${chunkParams.toString()}`);
+      response = await Matrix.api(`${path}?${chunkParams.toString()}`);
     } catch (error) {
       if (!isCurrent()) return null;
       throw error;
     }
     if (!isCurrent()) return null;
-    const signature = chunk.map((row) => row.id).join("\n");
-    if (pageSignatures.has(signature)) break;
-    pageSignatures.add(signature);
-    let added = 0;
+    const chunk = Array.isArray(response) ? response : (response.items || []);
     chunk.forEach((row) => {
-      if (!rowsById.has(row.id)) added += 1;
       rowsById.set(row.id, row);
     });
-    if (chunk.length < listChunkSize || added === 0) break;
-    offset += listChunkSize;
+    const nextCursor = Array.isArray(response) ? null : response.next_cursor;
+    if (!nextCursor || seenCursors.has(nextCursor)) break;
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
   }
-  return [...rowsById.values()];
+  return [...rowsById.values()].sort((left, right) => (
+    String(right.updated_at || "").localeCompare(String(left.updated_at || ""))
+    || String(right.id).localeCompare(String(left.id))
+  ));
 }
 
 async function loadProducts(query = null) {
@@ -220,7 +221,7 @@ async function loadProducts(query = null) {
   const params = new URLSearchParams();
   if (searchValue) params.set("q", searchValue);
   const products = await fetchAllListRows(
-    "/api/products",
+    "/api/products/page",
     params,
     () => state.productRequestRevision === revision,
   );
@@ -228,6 +229,14 @@ async function loadProducts(query = null) {
   state.products = products;
   renderProducts();
   refreshOfferProductOptions();
+}
+
+async function loadProductsWithToast(query = null) {
+  try {
+    await loadProducts(query);
+  } catch (error) {
+    Matrix.toast("商品加载失败", error.message, "error");
+  }
 }
 
 function renderProducts() {
@@ -295,7 +304,7 @@ async function loadOffers(query = null, brand = null) {
   if (searchValue) params.set("q", searchValue);
   if (brandValue) params.set("brand", brandValue);
   const offers = await fetchAllListRows(
-    "/api/offers",
+    "/api/offers/page",
     params,
     () => state.offerRequestRevision === revision,
   );
@@ -1127,7 +1136,7 @@ function bindEvents() {
     button.addEventListener("click", () => button.closest("dialog").close());
   });
 
-  document.querySelector("#products-search").addEventListener("input", debounce((event) => loadProducts(event.target.value)));
+  document.querySelector("#products-search").addEventListener("input", debounce((event) => loadProductsWithToast(event.target.value)));
   document.querySelector("#offers-search").addEventListener("input", debounce((event) => loadOffersWithToast(event.target.value)));
   document.querySelector("#offers-brand").addEventListener("change", (event) => loadOffersWithToast(null, event.target.value));
   document.querySelector("#products-prev-page").addEventListener("click", () => {
@@ -1211,13 +1220,14 @@ function bindEvents() {
   document.querySelector("#add-import-row").addEventListener("click", () => {
     if (!state.importWorkbook || state.importWorkbook.inspection) return;
     const nextSourceRow = state.importWorkbook.rows.reduce((maximum, row) => Math.max(maximum, Number(row.source_row) || 0), 0) + 1;
+    const values = blankImportValues();
     state.importWorkbook.rows.push({
       source_sheet: null,
       source_row: nextSourceRow,
       included: true,
       conflict_group: null,
-      values: blankImportValues(),
-      errors: [],
+      values,
+      errors: ImportWorkbook.validateRow(values),
     });
     state.importWorkbook.page = Math.max(1, Math.ceil(state.importWorkbook.rows.length / state.importWorkbook.pageSize));
     renderImportRows();
@@ -1244,7 +1254,6 @@ function bindEvents() {
     const rowIndex = Number(event.target.dataset.rowIndex);
     const row = state.importWorkbook.rows[rowIndex];
     if (!row) return;
-    row.errors = [];
     ImportWorkbook.updateRow(state.importWorkbook, rowIndex, event.target.dataset.rowField, event.target.value.trim());
     if (
       state.importWorkbook.correctionOnly

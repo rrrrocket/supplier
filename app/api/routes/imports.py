@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 
@@ -111,6 +112,7 @@ def _validate_row(row: dict[str, str]) -> list[str]:
     errors = []
     required = {
         "product_name": "商品名称不能为空",
+        "brand": "品牌不能为空",
         "category": "类目不能为空",
         "supplier_sku": "供应商SKU不能为空",
         "price": "价格不能为空",
@@ -522,7 +524,7 @@ async def preview_product_offers(
             "preview_rows": preview_rows,
             "warnings": warnings,
             "conflict_count": len(duplicate_skus),
-            "can_import": not duplicate_skus,
+            "can_import": bool(sourced_rows) and invalid_rows == 0 and not duplicate_skus,
         }
 
     try:
@@ -736,13 +738,18 @@ async def import_product_offers(
             )
             row_transaction.commit()
             success += 1
-        except ValueError as exc:
+        except (ValueError, IntegrityError) as exc:
             row_transaction.rollback()
+            message = (
+                str(exc)
+                if isinstance(exc, ValueError)
+                else "该行与并发写入的数据冲突"
+            )
             errors.append(
                 {
                     "sheet": submitted.source_sheet,
                     "row": submitted.source_row,
-                    "message": str(exc),
+                    "message": message,
                 }
             )
 

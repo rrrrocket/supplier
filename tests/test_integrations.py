@@ -121,7 +121,7 @@ def test_cursor_is_compact_urlsafe_utc_json_and_requires_aware_time() -> None:
 def integration_catalog(client: TestClient) -> dict[str, Any]:
     del client
     suffix = uuid4().hex[:8]
-    old_time = datetime(2031, 1, 1, 8, 0, tzinfo=timezone.utc)
+    old_time = datetime.now(timezone.utc) - timedelta(days=3)
     page_time = old_time + timedelta(hours=1)
     profile_time = page_time + timedelta(hours=1)
 
@@ -361,7 +361,7 @@ def integration_catalog(client: TestClient) -> dict[str, Any]:
 def cost_catalog(client: TestClient) -> dict[str, Any]:
     del client
     suffix = uuid4().hex[:8]
-    base_time = datetime(2032, 1, 1, 8, 0, tzinfo=timezone.utc)
+    base_time = datetime.now(timezone.utc) - timedelta(days=2)
     cost_updated_at = base_time + timedelta(hours=1)
 
     with SessionLocal() as db:
@@ -711,7 +711,8 @@ def test_supplier_list_maps_status_uses_latest_source_update_and_hides_inactive(
 
     assert response.status_code == 200
     payload = response.json()
-    assert set(payload) == {"items", "next_cursor"}
+    assert set(payload) == {"items", "next_cursor", "sync_watermark"}
+    assert datetime.fromisoformat(payload["sync_watermark"]).tzinfo is not None
     items = {item["supplier_id"]: item for item in payload["items"]}
     assert integration_catalog["first_supplier_id"] in items
     assert integration_catalog["second_supplier_id"] in items
@@ -788,6 +789,141 @@ def test_supplier_updated_since_and_cursor_are_strict_and_duplicate_free(
     assert len(seen) == len(set(seen))
 
 
+def test_supplier_cursor_uses_fixed_watermark_and_binds_query_semantics(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    integration_catalog: dict[str, Any],
+) -> None:
+    headers = auth_headers(integration_client)
+    params: dict[str, Any] = {
+        "include_inactive": "true",
+        "updated_since": integration_catalog["old_time"].isoformat(),
+        "limit": 1,
+    }
+    first = client.get(f"{BASE_PATH}/suppliers", headers=headers, params=params)
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["next_cursor"] is not None
+    watermark = datetime.fromisoformat(first_payload["sync_watermark"])
+    returned_id = first_payload["items"][0]["supplier_id"]
+    unreturned_id = next(
+        value for value in (
+            integration_catalog["first_supplier_id"],
+            integration_catalog["second_supplier_id"],
+        ) if value != returned_id
+    )
+    new_supplier_id = f"it-snapshot-new-{uuid4().hex[:8]}"
+
+    with SessionLocal() as db:
+        returned = db.get(Organization, returned_id)
+        unreturned = db.get(Organization, unreturned_id)
+        assert returned is not None and unreturned is not None
+        original_updated_at = returned.updated_at
+        original_unreturned_updated_at = unreturned.updated_at
+        changed_at = db.scalar(select(func.clock_timestamp()))
+        assert changed_at is not None and changed_at > watermark
+        returned.updated_at = changed_at
+        unreturned.updated_at = changed_at
+        new_supplier = Organization(
+            id=new_supplier_id,
+            code=f"IT-SNAPSHOT-{uuid4().hex[:8]}",
+            name="快照后新增供应商",
+            organization_type=OrganizationType.SUPPLIER.value,
+            is_active=True,
+            created_at=changed_at,
+            updated_at=changed_at,
+        )
+        db.add(new_supplier)
+        db.flush()
+        db.add(SupplierProfile(
+            organization_id=new_supplier.id,
+            legal_name=new_supplier.name,
+            status=SupplierStatus.APPROVED.value,
+            created_at=changed_at,
+            updated_at=changed_at,
+        ))
+        db.commit()
+
+    try:
+        continuation = client.get(
+            f"{BASE_PATH}/suppliers",
+            headers=headers,
+            params={**params, "cursor": first_payload["next_cursor"]},
+        )
+        assert continuation.status_code == 200
+        assert continuation.json()["sync_watermark"] == first_payload["sync_watermark"]
+        assert returned_id not in {
+            item["supplier_id"] for item in continuation.json()["items"]
+        }
+        assert unreturned_id not in {
+            item["supplier_id"] for item in continuation.json()["items"]
+        }
+        assert new_supplier_id not in {
+            item["supplier_id"] for item in continuation.json()["items"]
+        }
+
+        changed_filters = client.get(
+            f"{BASE_PATH}/suppliers",
+            headers=headers,
+            params={
+                **params,
+                "include_inactive": "false",
+                "cursor": first_payload["next_cursor"],
+            },
+        )
+        assert changed_filters.status_code == 400
+        assert changed_filters.json()["detail"]["code"] == "INVALID_CURSOR"
+
+        wrong_resource = client.get(
+            f"{BASE_PATH}/suppliers/{integration_catalog['first_supplier_id']}/brands",
+            headers=headers,
+            params={**params, "cursor": first_payload["next_cursor"]},
+        )
+        assert wrong_resource.status_code == 400
+        assert wrong_resource.json()["detail"]["code"] == "INVALID_CURSOR"
+
+        next_round = client.get(
+            f"{BASE_PATH}/suppliers",
+            headers=headers,
+            params={
+                "include_inactive": "true",
+                "updated_since": first_payload["sync_watermark"],
+            },
+        )
+        assert next_round.status_code == 200
+        next_ids = {item["supplier_id"] for item in next_round.json()["items"]}
+        assert {returned_id, unreturned_id, new_supplier_id} <= next_ids
+    finally:
+        with SessionLocal() as db:
+            returned = db.get(Organization, returned_id)
+            unreturned = db.get(Organization, unreturned_id)
+            assert returned is not None and unreturned is not None
+            returned.updated_at = original_updated_at
+            unreturned.updated_at = original_unreturned_updated_at
+            db.execute(
+                delete(SupplierProfile).where(
+                    SupplierProfile.organization_id == new_supplier_id
+                )
+            )
+            db.execute(delete(Organization).where(Organization.id == new_supplier_id))
+            db.commit()
+
+
+def test_empty_incremental_page_returns_server_sync_watermark(
+    client: TestClient,
+    integration_client: dict[str, Any],
+) -> None:
+    response = client.get(
+        f"{BASE_PATH}/suppliers",
+        headers=auth_headers(integration_client),
+        params={"updated_since": "2099-01-01T00:00:00+00:00"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["items"] == []
+    assert payload["next_cursor"] is None
+    assert datetime.fromisoformat(payload["sync_watermark"]).tzinfo is not None
+
 def test_supplier_list_can_explicitly_include_inactive_snapshots(
     client: TestClient,
     integration_client: dict[str, Any],
@@ -822,7 +958,7 @@ def test_brand_list_is_paginated_active_and_tenant_safe(
 
     assert response.status_code == 200
     payload = response.json()
-    assert set(payload) == {"items", "next_cursor"}
+    assert set(payload) == {"items", "next_cursor", "sync_watermark"}
     assert payload["next_cursor"] is None
     assert [item["brand_id"] for item in payload["items"]] == [
         integration_catalog["active_brand_id"]
@@ -942,7 +1078,7 @@ def test_sku_list_derives_active_cooperation_and_include_inactive_snapshot(
 
     assert active_response.status_code == 200
     active_payload = active_response.json()
-    assert set(active_payload) == {"items", "next_cursor"}
+    assert set(active_payload) == {"items", "next_cursor", "sync_watermark"}
     assert [item["supplier_sku_id"] for item in active_payload["items"]] == [
         integration_catalog["active_sku_id"]
     ]
@@ -1032,11 +1168,16 @@ def test_sku_updated_since_cursor_uses_id_tiebreak_for_identical_timestamps(
             updated_since=changed_at,
         )
 
-        assert [item["supplier_sku_id"] for item in items] == sorted(sku_ids)
-        assert {datetime.fromisoformat(item["updated_at"]) for item in items} == {
+        target_items = [
+            item for item in items if item["supplier_sku_id"] in sku_ids
+        ]
+        assert [item["supplier_sku_id"] for item in target_items] == sorted(sku_ids)
+        assert {datetime.fromisoformat(item["updated_at"]) for item in target_items} == {
             changed_at
         }
-        assert strict_items == []
+        assert not {
+            item["supplier_sku_id"] for item in strict_items
+        }.intersection(sku_ids)
     finally:
         with SessionLocal() as db:
             db.execute(delete(SupplierSku).where(SupplierSku.id.in_(sku_ids)))

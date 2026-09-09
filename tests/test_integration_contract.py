@@ -172,6 +172,7 @@ def test_list_openapi_exposes_incremental_pagination_contract() -> None:
     )
 
     for path in list_paths:
+        response_model = PUBLIC_OPERATIONS[path][1]
         parameters = {
             parameter["name"]: parameter
             for parameter in openapi["paths"][path]["get"]["parameters"]
@@ -189,6 +190,13 @@ def test_list_openapi_exposes_incremental_pagination_contract() -> None:
         assert limit_schema["minimum"] == 1
         assert limit_schema["default"] == 100
         assert parameters["include_inactive"]["schema"]["default"] is False
+        page_schema = openapi["components"]["schemas"][response_model]
+        assert "sync_watermark" in page_schema["required"]
+        assert page_schema["properties"]["sync_watermark"] == {
+            "type": "string",
+            "format": "date-time",
+            "title": "Sync Watermark",
+        }
 
 
 def test_batch_cost_schema_uses_generic_client_identifier() -> None:

@@ -1,7 +1,36 @@
 (function initMatrixImportWorkbook(global) {
   "use strict";
 
-  const REQUIRED_FIELDS = ["product_name", "category", "supplier_sku", "price"];
+  const REQUIRED_FIELDS = ["product_name", "brand", "category", "supplier_sku", "price"];
+  const REQUIRED_MESSAGES = {
+    product_name: "商品名称不能为空",
+    brand: "品牌不能为空",
+    category: "类目不能为空",
+    supplier_sku: "供应商SKU不能为空",
+    price: "价格不能为空",
+  };
+
+  function validateRow(values) {
+    const errors = [];
+    REQUIRED_FIELDS.forEach((field) => {
+      if (!String(values?.[field] || "").trim()) errors.push(REQUIRED_MESSAGES[field]);
+    });
+    const rawPrice = String(values?.price || "").trim();
+    if (rawPrice) {
+      const cleaned = rawPrice.replaceAll(",", "").replace(/[^0-9.\-]/g, "");
+      const parsed = Number(cleaned);
+      if (!cleaned || !Number.isFinite(parsed)) errors.push("价格格式不正确");
+      else if (parsed <= 0) errors.push("价格必须大于0");
+    }
+    [["moq", "起订量"], ["stock_qty", "库存"], ["lead_time_days", "交期"]].forEach(([field, label]) => {
+      const raw = String(values?.[field] || "").trim();
+      if (!raw) return;
+      const parsed = Number(raw);
+      if (!Number.isInteger(parsed)) errors.push(`${label}必须是整数`);
+      else if (parsed < 0) errors.push(`${label}不能小于0`);
+    });
+    return errors;
+  }
 
   function normalizedSku(row) {
     return String(row?.values?.supplier_sku || "").trim();
@@ -103,6 +132,7 @@
     const row = state.rows?.[rowIndex];
     if (!row || !row.values) return state;
     row.values[field] = value;
+    row.errors = validateRow(row.values);
     resolveRows(state.rows);
     return state;
   }
@@ -132,8 +162,8 @@
       if (sku && skus.has(sku)) return false;
       if (sku) skus.add(sku);
     }
-    return includedRows.some((row) => REQUIRED_FIELDS.every(
-      (field) => String(row.values?.[field] || "").trim(),
+    return includedRows.every((row) => (
+      validateRow(row.values).length === 0 && !row.conflict_group
     ));
   }
 
@@ -148,5 +178,6 @@
     restoreExcludedCorrections,
     pageRows,
     canImport,
+    validateRow,
   };
 })(window);

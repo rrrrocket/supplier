@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from uuid import uuid4
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
@@ -210,3 +212,115 @@ def test_replace_active_cooperation_is_idempotent_and_keeps_sku_identity(
         assert event.actor_id == admin.id
         assert event.payload["previous_mode"] == CommercialMode.SELF_PURCHASE.value
         assert event.payload["commercial_mode"] == CommercialMode.B2B.value
+
+
+def test_ensure_supplier_sku_concurrently_returns_one_stable_identity(
+    client: TestClient,
+) -> None:
+    del client
+    from app.services.catalog import ensure_supplier_sku
+
+    suffix = uuid4().hex[:8]
+    with SessionLocal() as db:
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+        )
+        brand = db.scalar(select(Brand).where(Brand.code == "TEST-BRAND"))
+        assert supplier is not None and brand is not None
+        product = Product(
+            created_by_organization_id=supplier.id,
+            brand_id=brand.id,
+            name=f"并发 SKU 商品-{suffix}",
+            category="测试类目",
+        )
+        db.add(product)
+        db.commit()
+        supplier_id, brand_id, product_id = supplier.id, brand.id, product.id
+
+    barrier = Barrier(2)
+
+    def create() -> str:
+        with SessionLocal() as db:
+            barrier.wait(timeout=5)
+            sku = ensure_supplier_sku(
+                db,
+                supplier_id=supplier_id,
+                brand_id=brand_id,
+                product_id=product_id,
+                variant_id=None,
+                supplier_sku_code=f"RACE-{suffix}",
+            )
+            db.commit()
+            return sku.id
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        sku_ids = list(executor.map(lambda _: create(), range(2)))
+
+    assert sku_ids[0] == sku_ids[1]
+    with SessionLocal() as db:
+        matching_skus = db.scalars(
+            select(SupplierSku).where(
+                SupplierSku.supplier_id == supplier_id,
+                SupplierSku.supplier_sku_code == f"RACE-{suffix}",
+            )
+        ).all()
+        assert len(matching_skus) == 1
+
+
+def test_first_cooperation_writes_are_serialized_for_supplier_and_brand(
+    client: TestClient,
+) -> None:
+    del client
+    from app.services.catalog import replace_active_cooperation
+
+    suffix = uuid4().hex[:8]
+    with SessionLocal() as db:
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+        )
+        admin = db.scalar(select(User).where(User.email == "admin-test@example.com"))
+        assert supplier is not None and admin is not None
+        brand = Brand(
+            code=f"RACE-BRAND-{suffix}",
+            name=f"并发合作品牌-{suffix}",
+            normalized_name=f"race brand {suffix}",
+            aliases=[],
+            status=CatalogStatus.ACTIVE.value,
+        )
+        db.add(brand)
+        db.commit()
+        supplier_id, brand_id, actor_id = supplier.id, brand.id, admin.id
+
+    barrier = Barrier(2)
+
+    def replace(mode: str) -> str:
+        with SessionLocal() as db:
+            barrier.wait(timeout=5)
+            cooperation = replace_active_cooperation(
+                db,
+                supplier_id=supplier_id,
+                brand_id=brand_id,
+                commercial_mode=mode,
+                actor_id=actor_id,
+            )
+            db.commit()
+            return cooperation.id
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        ids = list(
+            executor.map(
+                replace,
+                [CommercialMode.B2B.value, CommercialMode.JOINT_OPERATION.value],
+            )
+        )
+
+    assert len(ids) == 2
+    with SessionLocal() as db:
+        active = db.scalars(
+            select(SupplierBrandCooperation).where(
+                SupplierBrandCooperation.supplier_id == supplier_id,
+                SupplierBrandCooperation.brand_id == brand_id,
+                SupplierBrandCooperation.status == CatalogStatus.ACTIVE.value,
+            )
+        ).all()
+        assert len(active) == 1

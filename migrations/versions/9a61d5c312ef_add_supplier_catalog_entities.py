@@ -19,6 +19,52 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     connection = op.get_bind()
+    invalid_owner_count = connection.execute(
+        sa.text(
+            """
+            SELECT count(*)
+            FROM supplier_offers AS offers
+            JOIN products ON products.id = offers.product_id
+            WHERE offers.organization_id <> products.created_by_organization_id
+            """
+        )
+    ).scalar_one()
+    if invalid_owner_count:
+        raise RuntimeError(
+            f"{invalid_owner_count} offer(s) do not belong to the product supplier"
+        )
+
+    invalid_supplier_type_count = connection.execute(
+        sa.text(
+            """
+            SELECT count(DISTINCT products.created_by_organization_id)
+            FROM products
+            JOIN supplier_offers ON supplier_offers.product_id = products.id
+            JOIN organizations ON organizations.id = products.created_by_organization_id
+            WHERE organizations.organization_type <> 'SUPPLIER'
+            """
+        )
+    ).scalar_one()
+    if invalid_supplier_type_count:
+        raise RuntimeError(
+            f"{invalid_supplier_type_count} offered product owner(s) are not suppliers"
+        )
+
+    invalid_variant_count = connection.execute(
+        sa.text(
+            """
+            SELECT count(*)
+            FROM supplier_offers AS offers
+            JOIN product_variants AS variants ON variants.id = offers.variant_id
+            WHERE variants.product_id <> offers.product_id
+            """
+        )
+    ).scalar_one()
+    if invalid_variant_count:
+        raise RuntimeError(
+            f"{invalid_variant_count} offer variant(s) do not belong to the product"
+        )
+
     invalid_product_count = connection.execute(
         sa.text(
             """

@@ -191,7 +191,7 @@ function previewResult(fileName, sku = "SKU-1") {
       source_row: 2,
       included: true,
       conflict_group: null,
-      values: { product_name: "商品", category: "模型", supplier_sku: sku, price: "10" },
+      values: { product_name: "商品", brand: "TEST", category: "模型", supplier_sku: sku, price: "10" },
       errors: [],
     }],
   };
@@ -252,8 +252,8 @@ test("sheet selection changes independently and invalidates merged rows", () => 
 test("duplicate included SKUs block import until one record is excluded", () => {
   const ImportWorkbook = loadImportWorkbook();
   const rows = [
-    { source_sheet: "Sheet1", source_row: 2, included: true, values: { supplier_sku: "A-1", product_name: "甲", category: "模型", price: "10" } },
-    { source_sheet: "Sheet2", source_row: 3, included: true, values: { supplier_sku: "A-1", product_name: "乙", category: "模型", price: "12" } },
+    { source_sheet: "Sheet1", source_row: 2, included: true, values: { supplier_sku: "A-1", product_name: "甲", brand: "TEST", category: "模型", price: "10" } },
+    { source_sheet: "Sheet2", source_row: 3, included: true, values: { supplier_sku: "A-1", product_name: "乙", brand: "TEST", category: "模型", price: "12" } },
   ];
 
   ImportWorkbook.resolveRows(rows);
@@ -271,12 +271,37 @@ test("duplicate included SKUs block import until one record is excluded", () => 
 
 test("canImport requires an included row with all required values", () => {
   const ImportWorkbook = loadImportWorkbook();
-  const blank = { included: true, values: { supplier_sku: "", product_name: "", category: "", price: "" } };
-  const valid = { included: true, values: { supplier_sku: "SKU-1", product_name: "商品", category: "模型", price: "10" } };
+  const blank = { included: true, values: { supplier_sku: "", product_name: "", brand: "", category: "", price: "" } };
+  const valid = { included: true, values: { supplier_sku: "SKU-1", product_name: "商品", brand: "TEST", category: "模型", price: "10" } };
 
   assert.equal(ImportWorkbook.canImport([]), false);
   assert.equal(ImportWorkbook.canImport([blank]), false);
+  assert.equal(ImportWorkbook.canImport([blank, valid]), false);
+  blank.included = false;
   assert.equal(ImportWorkbook.canImport([blank, valid]), true);
+});
+
+
+test("editing one field keeps the other deterministic row errors", () => {
+  const ImportWorkbook = loadImportWorkbook();
+  const row = {
+    included: true,
+    errors: ["品牌不能为空", "价格不能为空"],
+    values: {
+      product_name: "商品",
+      brand: "",
+      category: "模型",
+      supplier_sku: "SKU-1",
+      price: "",
+    },
+  };
+  const state = { rows: [row] };
+
+  ImportWorkbook.updateRow(state, 0, "brand", "TEST");
+
+  assert.deepEqual(JSON.parse(JSON.stringify(row.errors)), ["价格不能为空"]);
+  assert.equal(ImportWorkbook.correctionCount(state.rows), 1);
+  assert.equal(ImportWorkbook.canImport(state.rows), false);
 });
 
 
@@ -442,7 +467,7 @@ test("completion of an old import cannot reset a newly selected file", async () 
   const app = loadImportApp((url) => {
     if (url === "/api/imports/product-offers") return oldImport.promise;
     if (url.endsWith("/inspect")) return inspectB.promise;
-    if (["/api/imports", "/api/products", "/api/offers/brands", "/api/offers"].includes(url)) return Promise.resolve([]);
+    if (["/api/imports", "/api/products/page?limit=500", "/api/offers/brands", "/api/offers/page?limit=500"].includes(url)) return Promise.resolve([]);
     throw new Error(`Unexpected API request: ${url}`);
   });
   app.context.fileA = { name: "A.xlsx", size: 100 };
@@ -594,7 +619,7 @@ test("bulk correction exclusion can be restored without deleting rows", () => {
     preview_rows: [
       { source_sheet: "Sheet1", source_row: 2, included: true, conflict_group: null, values: { supplier_sku: "FIX-1" }, errors: ["价格不能为空"] },
       { source_sheet: "Sheet1", source_row: 3, included: true, conflict_group: null, values: { supplier_sku: "FIX-2" }, errors: ["类目不能为空"] },
-      { source_sheet: "Sheet1", source_row: 4, included: true, conflict_group: null, values: { product_name: "商品", category: "模型", supplier_sku: "OK-1", price: "10" }, errors: [] },
+      { source_sheet: "Sheet1", source_row: 4, included: true, conflict_group: null, values: { product_name: "商品", brand: "TEST", category: "模型", supplier_sku: "OK-1", price: "10" }, errors: [] },
     ],
   };
   app.evaluate(`
@@ -636,7 +661,7 @@ test("final import posts all 120 state rows including an off-page edit and sheet
       submittedBody = options.body;
       return Promise.resolve({ success_rows: 120, error_rows: 0 });
     }
-    if (["/api/imports", "/api/products", "/api/offers/brands", "/api/offers"].includes(url)) {
+    if (["/api/imports", "/api/products/page?limit=500", "/api/offers/brands", "/api/offers/page?limit=500"].includes(url)) {
       return Promise.resolve([]);
     }
     throw new Error(`Unexpected API request: ${url}`);
@@ -650,6 +675,7 @@ test("final import posts all 120 state rows including an off-page edit and sheet
     conflict_group: null,
     values: {
       product_name: `商品-${index}`,
+      brand: "TEST",
       category: "模型",
       supplier_sku: `SKU-${index}`,
       price: "10",

@@ -583,6 +583,38 @@ def test_create_rejects_naive_expiration_datetime(client: TestClient) -> None:
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
+def test_create_rejects_expiration_that_is_not_in_the_future(client: TestClient) -> None:
+    login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+    response = client.post(
+        "/api/admin/integration-clients",
+        json={
+            "name": "过去到期时间",
+            "scopes": ["suppliers:read"],
+            "expires_at": (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+        },
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+@pytest.mark.parametrize("inactive_kind", ["revoked", "expired"])
+def test_rotate_rejects_inactive_credentials(
+    client: TestClient,
+    inactive_kind: str,
+) -> None:
+    created = create_client(client, scopes=["suppliers:read"])
+    with SessionLocal() as db:
+        stored = db.get(IntegrationClient, created["id"])
+        assert stored is not None
+        if inactive_kind == "revoked":
+            stored.is_active = False
+        else:
+            stored.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        db.commit()
+
+    response = client.post(f"/api/admin/integration-clients/{created['id']}/rotate")
+    assert response.status_code == status.HTTP_409_CONFLICT
+
+
 def test_create_normalizes_aware_expiration_to_utc(client: TestClient) -> None:
     login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
 

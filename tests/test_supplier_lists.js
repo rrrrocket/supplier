@@ -118,10 +118,15 @@ function chunkApi(collections, requests) {
   return async (requestPath) => {
     requests.push(requestPath);
     const url = new URL(requestPath, "https://supplier.test");
-    const collection = url.pathname === "/api/products" ? collections.products : collections.offers;
-    const offset = Number(url.searchParams.get("offset"));
+    const collection = url.pathname === "/api/products/page" ? collections.products : collections.offers;
+    const cursor = url.searchParams.get("cursor");
     const limit = Number(url.searchParams.get("limit"));
-    return collection.slice(offset, offset + limit);
+    const start = cursor ? collection.findIndex((row) => row.id === cursor) + 1 : 0;
+    const items = collection.slice(start, start + limit);
+    return {
+      items,
+      next_cursor: start + limit < collection.length ? items.at(-1).id : null,
+    };
   };
 }
 
@@ -134,8 +139,8 @@ test("products load all 1,792 rows in chunks and render 50-row UI pages", async 
   await harness.evaluate("loadProducts() ");
 
   assert.deepEqual(
-    requests.map((requestPath) => Number(new URL(requestPath, "https://supplier.test").searchParams.get("offset"))),
-    [0, 500, 1000, 1500],
+    requests.map((requestPath) => new URL(requestPath, "https://supplier.test").searchParams.get("cursor")),
+    [null, "Product-0500", "Product-1000", "Product-1500"],
   );
   assert.equal(harness.evaluate("state.products.length"), 1792);
   assert.equal(new Set(harness.evaluate("state.products.map((item) => item.id)")).size, 1792);
@@ -146,8 +151,8 @@ test("products load all 1,792 rows in chunks and render 50-row UI pages", async 
 
   harness.evaluate("state.productPage = 36; renderProducts()");
   assert.equal((harness.elements.get("#products-tbody").innerHTML.match(/<tr>/g) || []).length, 42);
-  assert.match(harness.elements.get("#products-tbody").innerHTML, /Product 1751/);
-  assert.match(harness.elements.get("#products-tbody").innerHTML, /Product 1792/);
+  assert.match(harness.elements.get("#products-tbody").innerHTML, /Product 1</);
+  assert.match(harness.elements.get("#products-tbody").innerHTML, /Product 42</);
 });
 
 
@@ -194,15 +199,15 @@ test("offers load all rows, paginate, and search or brand changes reset page one
 
   await harness.evaluate("loadOffers() ");
   assert.deepEqual(
-    requests.map((requestPath) => Number(new URL(requestPath, "https://supplier.test").searchParams.get("offset"))),
-    [0, 500, 1000, 1500],
+    requests.map((requestPath) => new URL(requestPath, "https://supplier.test").searchParams.get("cursor")),
+    [null, "Offer-0500", "Offer-1000", "Offer-1500"],
   );
   assert.equal(harness.evaluate("state.offers.length"), 1792);
   assert.equal((harness.elements.get("#offers-tbody").innerHTML.match(/<tr>/g) || []).length, 50);
   harness.evaluate("state.offerPage = 36; renderOffers()");
   assert.equal((harness.elements.get("#offers-tbody").innerHTML.match(/<tr>/g) || []).length, 42);
-  assert.match(harness.elements.get("#offers-tbody").innerHTML, /Offer 1751/);
-  assert.match(harness.elements.get("#offers-tbody").innerHTML, /Offer 1792/);
+  assert.match(harness.elements.get("#offers-tbody").innerHTML, /Offer 1</);
+  assert.match(harness.elements.get("#offers-tbody").innerHTML, /Offer 42</);
 
   await harness.evaluate('loadOffers("needle", null)');
   assert.equal(harness.evaluate("state.offerPage"), 1);
@@ -211,6 +216,30 @@ test("offers load all rows, paginate, and search or brand changes reset page one
   await harness.evaluate('loadOffers(null, "TEST")');
   assert.equal(harness.evaluate("state.offerPage"), 1);
   assert.equal(new URL(requests.at(-4), "https://supplier.test").searchParams.get("brand"), "TEST");
+});
+
+
+test("immutable ID cursors keep all 1,792 products when a prior row is updated", async () => {
+  const products = rows("Mutable product", 1792);
+  let calls = 0;
+  const requests = [];
+  const api = async (requestPath) => {
+    requests.push(requestPath);
+    const url = new URL(requestPath, "https://supplier.test");
+    const cursor = url.searchParams.get("cursor");
+    const start = cursor ? products.findIndex((row) => row.id === cursor) + 1 : 0;
+    const items = products.slice(start, start + 500);
+    calls += 1;
+    if (calls === 1) products[0].updated_at = "2099-01-01T00:00:00Z";
+    return { items, next_cursor: start + 500 < products.length ? items.at(-1).id : null };
+  };
+  const harness = supplierListsHarness(api);
+
+  await harness.evaluate("loadProducts()");
+
+  assert.equal(harness.evaluate("state.products.length"), 1792);
+  assert.equal(new Set(harness.evaluate("state.products.map((item) => item.id)")).size, 1792);
+  assert.equal(requests.length, 4);
 });
 
 
@@ -233,7 +262,7 @@ test("a slow old product request cannot overwrite a newer search result", async 
 
   assert.deepEqual(
     JSON.parse(JSON.stringify(harness.evaluate("state.products.map((item) => item.name)"))),
-    ["New result 1", "New result 2"],
+    ["New result 2", "New result 1"],
   );
   assert.match(harness.elements.get("#products-tbody").innerHTML, /New result 1/);
   assert.doesNotMatch(harness.elements.get("#products-tbody").innerHTML, /Old result/);
@@ -278,7 +307,7 @@ test("current product and offer request failures still reject", async () => {
 
 test("offer brand changes catch the current load failure and show a toast", async () => {
   const harness = supplierListsHarness(async (requestPath) => {
-    if (requestPath.startsWith("/api/offers?")) throw new Error("current brand filter failure");
+    if (requestPath.startsWith("/api/offers/page?")) throw new Error("current brand filter failure");
     return [];
   });
   harness.evaluate("bindEvents()");
@@ -295,7 +324,7 @@ test("offer brand changes catch the current load failure and show a toast", asyn
 
 test("offer search catches the current debounced load failure without an unhandled rejection", async () => {
   const harness = supplierListsHarness(async (requestPath) => {
-    if (requestPath.startsWith("/api/offers?")) throw new Error("current offer search failure");
+    if (requestPath.startsWith("/api/offers/page?")) throw new Error("current offer search failure");
     return [];
   });
   harness.evaluate("bindEvents()");
@@ -308,6 +337,24 @@ test("offer search catches the current debounced load failure without an unhandl
   assert.equal(harness.toasts.length, 1);
   assert.match(harness.toasts[0].join(" "), /报价加载失败/);
   assert.match(harness.toasts[0].join(" "), /current offer search failure/);
+});
+
+
+test("product search catches the current debounced load failure without an unhandled rejection", async () => {
+  const harness = supplierListsHarness(async (requestPath) => {
+    if (requestPath.startsWith("/api/products/page?")) throw new Error("current product search failure");
+    return [];
+  });
+  harness.evaluate("bindEvents()");
+  const search = harness.evaluate('document.querySelector("#products-search")');
+  search.value = "needle";
+
+  search.dispatch("input");
+  await new Promise((resolve) => setTimeout(resolve, 320));
+
+  assert.equal(harness.toasts.length, 1);
+  assert.match(harness.toasts[0].join(" "), /商品加载失败/);
+  assert.match(harness.toasts[0].join(" "), /current product search failure/);
 });
 
 
@@ -356,7 +403,7 @@ test("an old offer-brand route load cannot restore an obsolete filter", async ()
   assert.equal(brandSelect.value, "B");
   assert.equal(harness.evaluate("state.offers[0].name"), "Offer brand B 1");
   assert.equal(
-    requests.filter((requestPath) => requestPath.startsWith("/api/offers?")).length,
+    requests.filter((requestPath) => requestPath.startsWith("/api/offers/page?")).length,
     1,
   );
 });
@@ -384,7 +431,7 @@ test("a rejected old offer-brand route load is silent after brand B loads", asyn
   assert.equal(brandSelect.value, "B");
   assert.equal(harness.evaluate("state.offers[0].name"), "Offer brand B 1");
   assert.equal(
-    requests.filter((requestPath) => requestPath.startsWith("/api/offers?")).length,
+    requests.filter((requestPath) => requestPath.startsWith("/api/offers/page?")).length,
     1,
   );
   assert.deepEqual(harness.toasts, []);
@@ -423,7 +470,7 @@ test("chunk loading deduplicates IDs and stops if a full page makes no progress"
   let calls = 0;
   const harness = supplierListsHarness(async () => {
     calls += 1;
-    return repeated;
+    return { items: repeated, next_cursor: "same" };
   });
 
   await harness.evaluate("loadProducts()");

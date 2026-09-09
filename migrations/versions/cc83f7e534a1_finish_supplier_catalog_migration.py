@@ -31,6 +31,41 @@ def upgrade() -> None:
             f"{missing_offer_sku_count} supplier offer(s) lack supplier_sku_id"
         )
 
+    invalid_domain_count = connection.execute(
+        sa.text(
+            """
+            SELECT count(*)
+            FROM supplier_skus AS sku
+            JOIN products AS product ON product.id = sku.product_id
+            JOIN organizations AS supplier ON supplier.id = sku.supplier_id
+            LEFT JOIN product_variants AS variant ON variant.id = sku.variant_id
+            WHERE supplier.organization_type <> 'SUPPLIER'
+               OR product.created_by_organization_id <> sku.supplier_id
+               OR product.brand_id <> sku.brand_id
+               OR (sku.variant_id IS NOT NULL AND variant.product_id <> sku.product_id)
+            """
+        )
+    ).scalar_one()
+    invalid_offer_domain_count = connection.execute(
+        sa.text(
+            """
+            SELECT count(*)
+            FROM supplier_offers AS offer
+            JOIN supplier_skus AS sku ON sku.id = offer.supplier_sku_id
+            LEFT JOIN product_variants AS variant ON variant.id = offer.variant_id
+            WHERE offer.organization_id <> sku.supplier_id
+               OR offer.product_id <> sku.product_id
+               OR offer.variant_id IS DISTINCT FROM sku.variant_id
+               OR (offer.variant_id IS NOT NULL AND variant.product_id <> offer.product_id)
+            """
+        )
+    ).scalar_one()
+    if invalid_domain_count or invalid_offer_domain_count:
+        raise RuntimeError(
+            f"{invalid_domain_count} supplier SKU domain mismatch row(s); "
+            f"{invalid_offer_domain_count} supplier offer domain mismatch row(s)"
+        )
+
     op.drop_constraint(
         "uq_product_supplier_brand_model_name",
         "products",
@@ -86,6 +121,149 @@ def upgrade() -> None:
     op.drop_index("ix_supplier_offers_supplier_sku", table_name="supplier_offers")
     op.drop_column("supplier_offers", "supplier_sku")
 
+    op.execute(
+        sa.text(
+            """
+            CREATE FUNCTION enforce_supplier_sku_domain() RETURNS trigger AS $$
+            BEGIN
+                PERFORM 1
+                FROM products AS product
+                JOIN organizations AS supplier
+                  ON supplier.id = NEW.supplier_id
+                 AND supplier.organization_type = 'SUPPLIER'
+                WHERE product.id = NEW.product_id
+                  AND product.created_by_organization_id = NEW.supplier_id
+                  AND product.brand_id = NEW.brand_id
+                FOR KEY SHARE OF product, supplier;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'supplier SKU domain mismatch';
+                END IF;
+                IF NEW.variant_id IS NOT NULL THEN
+                    PERFORM 1
+                    FROM product_variants AS variant
+                    WHERE variant.id = NEW.variant_id
+                      AND variant.product_id = NEW.product_id
+                    FOR KEY SHARE OF variant;
+                    IF NOT FOUND THEN
+                        RAISE EXCEPTION 'supplier SKU domain mismatch';
+                    END IF;
+                END IF;
+                IF EXISTS (
+                    SELECT 1
+                    FROM supplier_offers AS offer
+                    WHERE offer.supplier_sku_id = NEW.id
+                      AND (
+                          offer.organization_id <> NEW.supplier_id
+                          OR offer.product_id <> NEW.product_id
+                          OR offer.variant_id IS DISTINCT FROM NEW.variant_id
+                      )
+                ) THEN
+                    RAISE EXCEPTION 'supplier offer domain mismatch';
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            CREATE TRIGGER trg_supplier_sku_domain
+            BEFORE INSERT OR UPDATE OF supplier_id, brand_id, product_id, variant_id
+            ON supplier_skus FOR EACH ROW EXECUTE FUNCTION enforce_supplier_sku_domain();
+
+            CREATE FUNCTION enforce_supplier_offer_domain() RETURNS trigger AS $$
+            BEGIN
+                PERFORM 1
+                FROM supplier_skus AS sku
+                WHERE sku.id = NEW.supplier_sku_id
+                  AND sku.supplier_id = NEW.organization_id
+                  AND sku.product_id = NEW.product_id
+                  AND sku.variant_id IS NOT DISTINCT FROM NEW.variant_id
+                FOR KEY SHARE OF sku;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'supplier offer domain mismatch';
+                END IF;
+                IF NEW.variant_id IS NOT NULL THEN
+                    PERFORM 1
+                    FROM product_variants AS variant
+                    WHERE variant.id = NEW.variant_id
+                      AND variant.product_id = NEW.product_id
+                    FOR KEY SHARE OF variant;
+                    IF NOT FOUND THEN
+                        RAISE EXCEPTION 'supplier offer domain mismatch';
+                    END IF;
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            CREATE TRIGGER trg_supplier_offer_domain
+            BEFORE INSERT OR UPDATE OF organization_id, product_id, variant_id, supplier_sku_id
+            ON supplier_offers FOR EACH ROW EXECUTE FUNCTION enforce_supplier_offer_domain();
+
+            CREATE FUNCTION enforce_product_catalog_domain() RETURNS trigger AS $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM supplier_skus AS sku
+                    WHERE sku.product_id = NEW.id
+                      AND (
+                          sku.supplier_id <> NEW.created_by_organization_id
+                          OR sku.brand_id <> NEW.brand_id
+                      )
+                ) THEN
+                    RAISE EXCEPTION 'product catalog domain mismatch';
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            CREATE TRIGGER trg_product_catalog_domain
+            BEFORE UPDATE OF created_by_organization_id, brand_id
+            ON products FOR EACH ROW EXECUTE FUNCTION enforce_product_catalog_domain();
+
+            CREATE FUNCTION enforce_product_variant_catalog_domain() RETURNS trigger AS $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM supplier_skus AS sku
+                    WHERE sku.variant_id = NEW.id
+                      AND sku.product_id <> NEW.product_id
+                ) OR EXISTS (
+                    SELECT 1
+                    FROM supplier_offers AS offer
+                    WHERE offer.variant_id = NEW.id
+                      AND offer.product_id <> NEW.product_id
+                ) THEN
+                    RAISE EXCEPTION 'product variant catalog domain mismatch';
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            CREATE TRIGGER trg_product_variant_catalog_domain
+            BEFORE UPDATE OF product_id
+            ON product_variants FOR EACH ROW
+            EXECUTE FUNCTION enforce_product_variant_catalog_domain();
+
+            CREATE FUNCTION enforce_supplier_organization_domain() RETURNS trigger AS $$
+            BEGIN
+                IF NEW.organization_type <> 'SUPPLIER' AND EXISTS (
+                    SELECT 1
+                    FROM supplier_skus AS sku
+                    WHERE sku.supplier_id = NEW.id
+                ) THEN
+                    RAISE EXCEPTION 'supplier organization domain mismatch';
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            CREATE TRIGGER trg_supplier_organization_domain
+            BEFORE UPDATE OF organization_type
+            ON organizations FOR EACH ROW
+            EXECUTE FUNCTION enforce_supplier_organization_domain();
+            """
+        )
+    )
+
 
 def downgrade() -> None:
     connection = op.get_bind()
@@ -104,6 +282,17 @@ def downgrade() -> None:
             f"{oversized_brand_count} product(s) reference brand names longer than "
             "120 characters; shorten those brand names before downgrade"
         )
+
+    op.execute("DROP TRIGGER trg_supplier_organization_domain ON organizations")
+    op.execute("DROP FUNCTION enforce_supplier_organization_domain()")
+    op.execute("DROP TRIGGER trg_product_variant_catalog_domain ON product_variants")
+    op.execute("DROP FUNCTION enforce_product_variant_catalog_domain()")
+    op.execute("DROP TRIGGER trg_product_catalog_domain ON products")
+    op.execute("DROP FUNCTION enforce_product_catalog_domain()")
+    op.execute("DROP TRIGGER trg_supplier_offer_domain ON supplier_offers")
+    op.execute("DROP FUNCTION enforce_supplier_offer_domain()")
+    op.execute("DROP TRIGGER trg_supplier_sku_domain ON supplier_skus")
+    op.execute("DROP FUNCTION enforce_supplier_sku_domain()")
 
     op.add_column(
         "products",

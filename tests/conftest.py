@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import and_, delete, or_, select, text
 from sqlalchemy.engine import make_url
 
 
@@ -22,11 +22,14 @@ os.environ["APP_ENV"] = "testing"
 
 from app.core.security import hash_password  # noqa: E402
 from app.db.session import SessionLocal  # noqa: E402
+from app.db.base import Base  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.entities import (  # noqa: E402
     Brand,
     CatalogStatus,
     CommercialMode,
+    EventLog,
+    IntegrationClient,
     Organization,
     OrganizationType,
     SupplierBrandCooperation,
@@ -42,6 +45,23 @@ SUPPLIER_EMAIL = "supplier-test@example.com"
 SUPPLIER_PASSWORD = "SupplierTest123!"
 ADMIN_EMAIL = "admin-test@example.com"
 ADMIN_PASSWORD = "AdminTest123!"
+
+
+def truncate_test_data() -> None:
+    database_name = make_url(TEST_DATABASE_URL).database or ""
+    if not database_name.endswith("_test"):
+        raise RuntimeError("拒绝清理非 _test 数据库")
+    table_names = ", ".join(f'"{table.name}"' for table in Base.metadata.sorted_tables)
+    with SessionLocal() as db:
+        db.execute(text(f"TRUNCATE TABLE {table_names} CASCADE"))
+        db.commit()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def clean_test_database() -> Iterator[None]:
+    truncate_test_data()
+    yield
+    truncate_test_data()
 
 
 def create_test_accounts() -> None:
@@ -166,7 +186,8 @@ def create_test_accounts() -> None:
 
 
 @pytest.fixture(scope="session")
-def client() -> TestClient:
+def client(clean_test_database: Any) -> TestClient:
+    del clean_test_database
     with TestClient(app) as test_client:
         create_test_accounts()
         yield test_client
@@ -188,7 +209,9 @@ def authenticated_client(client: TestClient) -> TestClient:
 @pytest.fixture()
 def integration_client_factory(
     client: TestClient,
-) -> Callable[[list[str]], dict[str, Any]]:
+) -> Iterator[Callable[[list[str]], dict[str, Any]]]:
+    created_ids: list[str] = []
+
     def create(scopes: list[str]) -> dict[str, Any]:
         login_response = client.post(
             "/api/auth/login",
@@ -203,9 +226,31 @@ def integration_client_factory(
             },
         )
         assert response.status_code == 201
-        return response.json()
+        result = response.json()
+        created_ids.append(result["id"])
+        return result
 
-    return create
+    yield create
+    if created_ids:
+        with SessionLocal() as db:
+            db.execute(
+                delete(EventLog).where(
+                    or_(
+                        and_(
+                            EventLog.actor_type == "INTEGRATION_CLIENT",
+                            EventLog.actor_id.in_(created_ids),
+                        ),
+                        and_(
+                            EventLog.entity_type == "IntegrationClient",
+                            EventLog.entity_id.in_(created_ids),
+                        ),
+                    )
+                )
+            )
+            db.execute(
+                delete(IntegrationClient).where(IntegrationClient.id.in_(created_ids))
+            )
+            db.commit()
 
 
 @pytest.fixture()

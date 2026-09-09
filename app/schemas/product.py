@@ -100,3 +100,13 @@ class OfferView(BaseModel):
     status: str
     notes: str | None
     updated_at: datetime
+
+
+class ProductPage(BaseModel):
+    items: list[ProductView]
+    next_cursor: str | None
+
+
+class OfferPage(BaseModel):
+    items: list[OfferView]
+    next_cursor: str | None

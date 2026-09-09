@@ -58,7 +58,11 @@ from app.schemas.integration import (
 )
 from app.services.catalog import CurrentSkuCost, SkuCostError, resolve_current_sku_cost
 from app.services.events import record_event
-from app.services.integration_pagination import decode_cursor, encode_cursor
+from app.services.integration_pagination import (
+    BoundCursor,
+    decode_bound_cursor,
+    encode_bound_cursor,
+)
 
 
 router = APIRouter(prefix="/integrations/v1", tags=["通用系统集成"])
@@ -198,13 +202,36 @@ def utc_value(value: datetime) -> datetime:
 def after_cursor(
     updated_at: ColumnElement[datetime],
     entity_id: ColumnElement[str],
-    cursor: str,
+    cursor: BoundCursor,
 ) -> ColumnElement[bool]:
-    cursor_updated_at, cursor_id = decode_cursor(cursor)
     return or_(
-        updated_at > cursor_updated_at,
-        and_(updated_at == cursor_updated_at, entity_id > cursor_id),
+        updated_at > cursor.updated_at,
+        and_(updated_at == cursor.updated_at, entity_id > cursor.entity_id),
     )
+
+
+def page_snapshot(
+    db: Session,
+    *,
+    cursor: str | None,
+    resource: str,
+    supplier_id: str | None,
+    updated_since: datetime | None,
+    include_inactive: bool,
+) -> tuple[datetime, BoundCursor | None]:
+    normalized_since = utc_value(updated_since) if updated_since is not None else None
+    if cursor is not None:
+        decoded = decode_bound_cursor(
+            cursor,
+            resource=resource,
+            supplier_id=supplier_id,
+            updated_since=normalized_since,
+            include_inactive=include_inactive,
+        )
+        return decoded.sync_watermark, decoded
+    watermark = db.scalar(select(func.clock_timestamp()))
+    assert watermark is not None
+    return utc_value(watermark), None
 
 
 def page_cursor(
@@ -213,12 +240,25 @@ def page_cursor(
     limit: int,
     updated_at_index: int,
     id_index: int,
+    sync_watermark: datetime,
+    resource: str,
+    supplier_id: str | None,
+    updated_since: datetime | None,
+    include_inactive: bool,
 ) -> tuple[list[Any], str | None]:
     page = rows[:limit]
     if len(rows) <= limit:
         return page, None
     last = page[-1]
-    return page, encode_cursor(last[updated_at_index], last[id_index])
+    return page, encode_bound_cursor(
+        last[updated_at_index],
+        last[id_index],
+        sync_watermark=sync_watermark,
+        resource=resource,
+        supplier_id=supplier_id,
+        updated_since=utc_value(updated_since) if updated_since is not None else None,
+        include_inactive=include_inactive,
+    )
 
 
 def supplier_active_condition() -> ColumnElement[bool]:
@@ -397,6 +437,14 @@ def list_suppliers(
     limit: int = Query(default=100, ge=1, le=500),
     include_inactive: bool = Query(default=False),
 ) -> SupplierIntegrationPage:
+    sync_watermark, decoded_cursor = page_snapshot(
+        db,
+        cursor=cursor,
+        resource="suppliers",
+        supplier_id=None,
+        updated_since=updated_since,
+        include_inactive=include_inactive,
+    )
     effective_updated_at = supplier_updated_at().label("effective_updated_at")
     resource_status = case(
         (supplier_active_condition(), ACTIVE),
@@ -419,8 +467,11 @@ def list_suppliers(
         statement = statement.where(supplier_active_condition())
     if updated_since is not None:
         statement = statement.where(effective_updated_at > utc_value(updated_since))
-    if cursor is not None:
-        statement = statement.where(after_cursor(effective_updated_at, Organization.id, cursor))
+    statement = statement.where(effective_updated_at <= sync_watermark)
+    if decoded_cursor is not None:
+        statement = statement.where(
+            after_cursor(effective_updated_at, Organization.id, decoded_cursor)
+        )
     rows = db.execute(
         statement.order_by(effective_updated_at, Organization.id).limit(limit + 1)
     ).all()
@@ -429,10 +480,16 @@ def list_suppliers(
         limit=limit,
         updated_at_index=1,
         id_index=3,
+        sync_watermark=sync_watermark,
+        resource="suppliers",
+        supplier_id=None,
+        updated_since=updated_since,
+        include_inactive=include_inactive,
     )
     return SupplierIntegrationPage(
         items=[supplier_view(row[0], row[1], row[2]) for row in page],
         next_cursor=next_cursor,
+        sync_watermark=sync_watermark,
     )
 
 
@@ -495,6 +552,14 @@ def list_supplier_brands(
     include_inactive: bool = Query(default=False),
 ) -> SupplierBrandIntegrationPage:
     supplier, profile = supplier_context(db, supplier_id)
+    sync_watermark, decoded_cursor = page_snapshot(
+        db,
+        cursor=cursor,
+        resource="supplier-brands",
+        supplier_id=supplier_id,
+        updated_since=updated_since,
+        include_inactive=include_inactive,
+    )
     current = ranked_cooperations(supplier_id)
     effective_updated_at = func.greatest(
         supplier_context_updated_at(supplier, profile),
@@ -525,8 +590,9 @@ def list_supplier_brands(
         statement = statement.where(active_condition)
     if updated_since is not None:
         statement = statement.where(effective_updated_at > utc_value(updated_since))
-    if cursor is not None:
-        statement = statement.where(after_cursor(effective_updated_at, Brand.id, cursor))
+    statement = statement.where(effective_updated_at <= sync_watermark)
+    if decoded_cursor is not None:
+        statement = statement.where(after_cursor(effective_updated_at, Brand.id, decoded_cursor))
     rows = db.execute(
         statement.order_by(effective_updated_at, Brand.id).limit(limit + 1)
     ).all()
@@ -535,6 +601,11 @@ def list_supplier_brands(
         limit=limit,
         updated_at_index=2,
         id_index=4,
+        sync_watermark=sync_watermark,
+        resource="supplier-brands",
+        supplier_id=supplier_id,
+        updated_since=updated_since,
+        include_inactive=include_inactive,
     )
     return SupplierBrandIntegrationPage(
         items=[
@@ -549,6 +620,7 @@ def list_supplier_brands(
             for row in page
         ],
         next_cursor=next_cursor,
+        sync_watermark=sync_watermark,
     )
 
 
@@ -571,6 +643,14 @@ def list_supplier_skus(
     include_inactive: bool = Query(default=False),
 ) -> SupplierSkuIntegrationPage:
     supplier, profile = supplier_context(db, supplier_id)
+    sync_watermark, decoded_cursor = page_snapshot(
+        db,
+        cursor=cursor,
+        resource="supplier-skus",
+        supplier_id=supplier_id,
+        updated_since=updated_since,
+        include_inactive=include_inactive,
+    )
     current = ranked_cooperations(supplier_id)
     effective_updated_at = func.greatest(
         supplier_context_updated_at(supplier, profile),
@@ -620,9 +700,10 @@ def list_supplier_skus(
         statement = statement.where(active_condition)
     if updated_since is not None:
         statement = statement.where(effective_updated_at > utc_value(updated_since))
-    if cursor is not None:
+    statement = statement.where(effective_updated_at <= sync_watermark)
+    if decoded_cursor is not None:
         statement = statement.where(
-            after_cursor(effective_updated_at, SupplierSku.id, cursor)
+            after_cursor(effective_updated_at, SupplierSku.id, decoded_cursor)
         )
     rows = db.execute(
         statement.order_by(effective_updated_at, SupplierSku.id).limit(limit + 1)
@@ -632,6 +713,11 @@ def list_supplier_skus(
         limit=limit,
         updated_at_index=4,
         id_index=6,
+        sync_watermark=sync_watermark,
+        resource="supplier-skus",
+        supplier_id=supplier_id,
+        updated_since=updated_since,
+        include_inactive=include_inactive,
     )
     return SupplierSkuIntegrationPage(
         items=[
@@ -651,6 +737,7 @@ def list_supplier_skus(
             for row in page
         ],
         next_cursor=next_cursor,
+        sync_watermark=sync_watermark,
     )
 
 

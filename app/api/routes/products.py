@@ -12,9 +12,10 @@ from app.models.entities import (
     SupplierBrandCooperation,
     SupplierOffer,
 )
-from app.schemas.product import ProductCreate, ProductView
+from app.schemas.product import ProductCreate, ProductPage, ProductView
 from app.services.catalog import resolve_brand
 from app.services.events import record_event
+from app.services.list_pagination import decode_list_cursor, encode_list_cursor
 
 
 router = APIRouter(prefix="/products", tags=["商品主数据"])
@@ -45,7 +46,7 @@ def product_view(
 def list_products(
     db: DbSession,
     user: SupplierUser,
-    q: str | None = Query(default=None, max_length=120),
+    q: str | None = Query(default=None, max_length=240),
     product_status: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
@@ -85,6 +86,55 @@ def list_products(
         product_view(product, brand, int(count))
         for product, brand, count in rows
     ]
+
+
+@router.get("/page", response_model=ProductPage)
+def list_products_page(
+    db: DbSession,
+    user: SupplierUser,
+    q: str | None = Query(default=None, max_length=240),
+    product_status: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=500, ge=1, le=500),
+    cursor: str | None = Query(default=None),
+) -> ProductPage:
+    filters = {"q": q.strip() if q else None, "status": product_status}
+    after_id = decode_list_cursor(cursor, "products", filters) if cursor else None
+    offer_count = (
+        select(SupplierOffer.product_id, func.count(SupplierOffer.id).label("offer_count"))
+        .where(SupplierOffer.organization_id == user.organization_id)
+        .group_by(SupplierOffer.product_id)
+        .subquery()
+    )
+    stmt = (
+        select(Product, Brand, func.coalesce(offer_count.c.offer_count, 0))
+        .join(Brand, Brand.id == Product.brand_id)
+        .outerjoin(offer_count, offer_count.c.product_id == Product.id)
+        .where(Product.created_by_organization_id == user.organization_id)
+    )
+    if filters["q"]:
+        pattern = f"%{filters['q']}%"
+        stmt = stmt.where(
+            or_(
+                Product.name.ilike(pattern),
+                Brand.name.ilike(pattern),
+                Product.model.ilike(pattern),
+                Product.category.ilike(pattern),
+            )
+        )
+    if product_status:
+        stmt = stmt.where(Product.status == product_status)
+    if after_id:
+        stmt = stmt.where(Product.id > after_id)
+    rows = db.execute(stmt.order_by(Product.id).limit(limit + 1)).all()
+    page = rows[:limit]
+    next_cursor = (
+        encode_list_cursor("products", page[-1][0].id, filters)
+        if len(rows) > limit else None
+    )
+    return ProductPage(
+        items=[product_view(product, brand, int(count)) for product, brand, count in page],
+        next_cursor=next_cursor,
+    )
 
 
 @router.post("", response_model=ProductView, status_code=status.HTTP_201_CREATED)

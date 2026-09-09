@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
 
 class IntegrationScope(str, Enum):
@@ -36,6 +36,13 @@ class IntegrationClientCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     scopes: list[IntegrationScope] = Field(min_length=1)
     expires_at: AwareDatetime | None = None
+
+    @field_validator("expires_at")
+    @classmethod
+    def expiration_must_be_future(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+            raise ValueError("expires_at must be in the future")
+        return value
 
 
 class IntegrationClientView(BaseModel):
@@ -88,16 +95,19 @@ class SupplierSkuIntegrationView(BaseModel):
 class SupplierIntegrationPage(BaseModel):
     items: list[SupplierIntegrationView]
     next_cursor: str | None
+    sync_watermark: datetime
 
 
 class SupplierBrandIntegrationPage(BaseModel):
     items: list[SupplierBrandIntegrationView]
     next_cursor: str | None
+    sync_watermark: datetime
 
 
 class SupplierSkuIntegrationPage(BaseModel):
     items: list[SupplierSkuIntegrationView]
     next_cursor: str | None
+    sync_watermark: datetime
 
 
 class CurrentSkuCostView(BaseModel):

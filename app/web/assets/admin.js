@@ -147,20 +147,24 @@ function renderIntegrationClients() {
     tbody.innerHTML = '<tr><td colspan="7" class="table-empty"><strong>还没有集成调用方</strong>创建后，明文令牌只会显示一次。</td></tr>';
     return;
   }
-  tbody.innerHTML = adminState.integrationClients.map((item) => `
+  tbody.innerHTML = adminState.integrationClients.map((item) => {
+    const expired = item.expires_at && new Date(item.expires_at).getTime() <= Date.now();
+    const usable = item.is_active && !expired;
+    return `
     <tr>
       <td><div class="table-primary">${Matrix.escapeHtml(item.name)}</div><div class="table-secondary">${Matrix.escapeHtml(item.id)}</div></td>
       <td><code>${Matrix.escapeHtml(item.token_prefix)}</code></td>
       <td><div class="tag-list">${(item.scopes || []).map((scope) => `<span class="tag">${Matrix.escapeHtml(scope)}</span>`).join("")}</div></td>
       <td>${item.expires_at ? Matrix.formatDate(item.expires_at, true) : "永不过期"}</td>
       <td>${item.last_used_at ? Matrix.formatDate(item.last_used_at, true) : "尚未使用"}</td>
-      <td>${Matrix.statusBadge(item.is_active ? "ACTIVE" : "INACTIVE")}</td>
+      <td>${Matrix.statusBadge(expired ? "EXPIRED" : (item.is_active ? "ACTIVE" : "INACTIVE"))}</td>
       <td class="text-right"><div class="row">
-        <button class="btn btn-secondary btn-sm" type="button" data-rotate-integration="${item.id}" ${item.is_active ? "" : "disabled"}>轮换</button>
+        <button class="btn btn-secondary btn-sm" type="button" data-rotate-integration="${item.id}" ${usable ? "" : "disabled"}>轮换</button>
         <button class="btn btn-danger btn-sm" type="button" data-revoke-integration="${item.id}" ${item.is_active ? "" : "disabled"}>撤销</button>
       </div></td>
     </tr>
-  `).join("");
+  `;
+  }).join("");
   tbody.querySelectorAll("[data-rotate-integration]").forEach((button) => {
     button.addEventListener("click", () => rotateIntegrationClient(button.dataset.rotateIntegration));
   });

@@ -64,6 +64,77 @@ def test_catalog_migration_rejects_offered_products_with_empty_brands() -> None:
         assert "1 offered product(s) have an empty brand" in exc_info.value.stderr
 
 
+@pytest.mark.parametrize(
+    ("owner_type", "offer_supplier", "variant_product", "expected"),
+    [
+        ("SUPPLIER", "supplier-b", None, "offer(s) do not belong to the product supplier"),
+        ("PLATFORM", "supplier-a", None, "offered product owner(s) are not suppliers"),
+        ("SUPPLIER", "supplier-a", "product-b", "offer variant(s) do not belong to the product"),
+    ],
+)
+def test_catalog_migration_rejects_invalid_catalog_domains_before_backfill(
+    owner_type: str,
+    offer_supplier: str,
+    variant_product: str | None,
+    expected: str,
+) -> None:
+    with temporary_postgresql_database("supplier_catalog_domain") as migration_url:
+        database_name = migration_url.database
+        assert database_name is not None
+        run_migrations(migration_url, PREVIOUS_REVISION)
+        with connect(migration_url, database_name) as connection:
+            connection.execute(
+                """
+                INSERT INTO organizations
+                    (id, code, name, organization_type, is_active, created_at, updated_at)
+                VALUES
+                    ('supplier-a', 'DOMAIN-A', 'A', %s, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    ('supplier-b', 'DOMAIN-B', 'B', 'SUPPLIER', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (owner_type,),
+            )
+            connection.execute(
+                """
+                INSERT INTO products
+                    (id, created_by_organization_id, name, brand, category, attributes,
+                     status, created_at, updated_at)
+                VALUES
+                    ('product-a', 'supplier-a', 'A', 'Brand A', 'Test', '{}', 'ACTIVE',
+                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    ('product-b', 'supplier-b', 'B', 'Brand B', 'Test', '{}', 'ACTIVE',
+                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+            variant_id = None
+            if variant_product is not None:
+                variant_id = "variant-b"
+                connection.execute(
+                    """
+                    INSERT INTO product_variants
+                        (id, product_id, name, attributes, created_at, updated_at)
+                    VALUES
+                        ('variant-b', %s, 'Variant', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """,
+                    (variant_product,),
+                )
+            connection.execute(
+                """
+                INSERT INTO supplier_offers
+                    (id, organization_id, product_id, variant_id, supplier_sku, price,
+                     currency, moq, stock_qty, lead_time_days, fulfillment_mode, status,
+                     created_at, updated_at)
+                VALUES
+                    ('domain-offer', %s, 'product-a', %s, 'DOMAIN-SKU', 10, 'CNY', 1,
+                     0, 3, 'PURCHASE', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (offer_supplier, variant_id),
+            )
+
+        with pytest.raises(subprocess.CalledProcessError) as exc_info:
+            run_migrations(migration_url, CATALOG_REVISION)
+        assert expected in exc_info.value.stderr
+
+
 def test_catalog_migration_creates_one_active_cooperation_for_multiple_brand_offers() -> None:
     with temporary_postgresql_database("supplier_catalog_duplicate_cooperation") as migration_url:
         database_name = migration_url.database
@@ -403,6 +474,62 @@ def test_contract_migration_reports_unresolved_foreign_key_row_counts(
         assert expected in exc_info.value.stderr
 
 
+def test_late_legacy_writer_after_reconciliation_blocks_contract_migration() -> None:
+    with temporary_postgresql_database("supplier_catalog_late_writer") as migration_url:
+        database_name = migration_url.database
+        assert database_name is not None
+        run_migrations(migration_url, PRE_CONTRACT_REVISION)
+        with connect(migration_url, database_name) as connection:
+            _insert_contract_fixture(connection)
+            connection.execute(
+                """
+                INSERT INTO products
+                    (id, created_by_organization_id, name, brand, brand_id, category,
+                     attributes, status, created_at, updated_at)
+                VALUES ('late-product', 'contract-supplier', 'Late Product', 'Contract Brand',
+                        'contract-brand', 'Test', '{}', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO supplier_offers
+                    (id, organization_id, product_id, supplier_sku, supplier_sku_id, price,
+                     currency, moq, stock_qty, lead_time_days, fulfillment_mode, status,
+                     created_at, updated_at)
+                VALUES ('late-offer', 'contract-supplier', 'late-product', 'LATE-SKU', NULL,
+                        10, 'CNY', 1, 0, 3, 'PURCHASE', 'ACTIVE',
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+
+        with pytest.raises(subprocess.CalledProcessError) as exc_info:
+            run_migrations(migration_url, CONTRACT_REVISION)
+        assert "1 supplier offer(s) lack supplier_sku_id" in exc_info.value.stderr
+
+
+def test_final_offer_shape_is_not_compatible_with_pre_contract_schema() -> None:
+    with temporary_postgresql_database("supplier_catalog_final_shape") as migration_url:
+        database_name = migration_url.database
+        assert database_name is not None
+        run_migrations(migration_url, PRE_CONTRACT_REVISION)
+        with connect(migration_url, database_name) as connection:
+            _insert_contract_fixture(connection)
+            with pytest.raises(Exception) as exc_info:
+                connection.execute(
+                    """
+                    INSERT INTO supplier_offers
+                        (id, organization_id, product_id, supplier_sku_id, price, currency,
+                         moq, stock_qty, lead_time_days, fulfillment_mode, status,
+                         created_at, updated_at)
+                    VALUES ('final-shape-offer', 'contract-supplier', 'contract-product',
+                            'contract-sku', 10, 'CNY', 1, 0, 3, 'PURCHASE', 'ACTIVE',
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """
+                )
+            assert "supplier_sku" in str(exc_info.value)
+            assert "not-null constraint" in str(exc_info.value)
+
+
 def test_contract_migration_downgrade_backfills_legacy_display_strings() -> None:
     with temporary_postgresql_database("supplier_catalog_contract_downgrade") as migration_url:
         database_name = migration_url.database
@@ -506,3 +633,116 @@ def test_complete_upgrade_chain_reaches_contract_revision() -> None:
             assert connection.execute(
                 "SELECT version_num FROM alembic_version"
             ).fetchone()[0] == CONTRACT_REVISION
+
+
+@pytest.mark.parametrize(
+    ("statement", "expected_constraint"),
+    [
+        (
+            "UPDATE supplier_skus SET supplier_id = 'contract-other' WHERE id = 'contract-sku'",
+            "supplier SKU domain mismatch",
+        ),
+        (
+            "UPDATE supplier_offers SET product_id = 'contract-other-product' WHERE id = 'contract-offer'",
+            "supplier offer domain mismatch",
+        ),
+        (
+            "UPDATE supplier_skus SET product_id = 'contract-same-owner-product' "
+            "WHERE id = 'contract-sku'",
+            "supplier offer domain mismatch",
+        ),
+        (
+            "UPDATE products SET brand_id = 'contract-other-brand' WHERE id = 'contract-product'",
+            "product catalog domain mismatch",
+        ),
+        (
+            "UPDATE organizations SET organization_type = 'PLATFORM' WHERE id = 'contract-supplier'",
+            "supplier organization domain mismatch",
+        ),
+    ],
+)
+def test_contract_schema_rejects_catalog_domain_mismatches(
+    statement: str,
+    expected_constraint: str,
+) -> None:
+    with temporary_postgresql_database("supplier_catalog_domain_constraint") as migration_url:
+        database_name = migration_url.database
+        assert database_name is not None
+        run_migrations(migration_url, PRE_CONTRACT_REVISION)
+        with connect(migration_url, database_name) as connection:
+            _insert_contract_fixture(connection)
+            connection.execute(
+                """
+                INSERT INTO organizations
+                    (id, code, name, organization_type, is_active, created_at, updated_at)
+                VALUES ('contract-other', 'CONTRACT-OTHER', 'Other', 'SUPPLIER', true,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO brands
+                    (id, code, name, normalized_name, aliases, status, created_at, updated_at)
+                VALUES ('contract-other-brand', 'OTHER-BRAND', 'Other Brand', 'other brand',
+                        '{}', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO products
+                    (id, created_by_organization_id, name, brand, brand_id, category,
+                     attributes, status, created_at, updated_at)
+                VALUES ('contract-other-product', 'contract-other', 'Other', 'Contract Brand',
+                        'contract-brand', 'Test', '{}', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                       ('contract-same-owner-product', 'contract-supplier', 'Same Owner',
+                        'Contract Brand', 'contract-brand', 'Test', '{}', 'ACTIVE',
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+        run_migrations(migration_url, CONTRACT_REVISION)
+        with connect(migration_url, database_name) as connection:
+            with pytest.raises(Exception) as exc_info:
+                connection.execute(statement)
+            assert expected_constraint in str(exc_info.value)
+
+
+def test_contract_schema_rejects_reparenting_a_referenced_variant() -> None:
+    with temporary_postgresql_database("supplier_catalog_variant_constraint") as migration_url:
+        database_name = migration_url.database
+        assert database_name is not None
+        run_migrations(migration_url, PRE_CONTRACT_REVISION)
+        with connect(migration_url, database_name) as connection:
+            _insert_contract_fixture(connection)
+            connection.execute(
+                """
+                INSERT INTO products
+                    (id, created_by_organization_id, name, brand, brand_id, category,
+                     attributes, status, created_at, updated_at)
+                VALUES ('variant-other-product', 'contract-supplier', 'Other', 'Contract Brand',
+                        'contract-brand', 'Test', '{}', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO product_variants
+                    (id, product_id, name, attributes, created_at, updated_at)
+                VALUES ('contract-variant', 'contract-product', 'Variant', '{}',
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+            connection.execute(
+                "UPDATE supplier_skus SET variant_id = 'contract-variant' "
+                "WHERE id = 'contract-sku'"
+            )
+            connection.execute(
+                "UPDATE supplier_offers SET variant_id = 'contract-variant' "
+                "WHERE id = 'contract-offer'"
+            )
+        run_migrations(migration_url, CONTRACT_REVISION)
+        with connect(migration_url, database_name) as connection:
+            with pytest.raises(Exception) as exc_info:
+                connection.execute(
+                    "UPDATE product_variants SET product_id = 'variant-other-product' "
+                    "WHERE id = 'contract-variant'"
+                )
+            assert "product variant catalog domain mismatch" in str(exc_info.value)

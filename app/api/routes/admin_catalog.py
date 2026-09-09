@@ -180,6 +180,15 @@ def rotate_integration_client(
     admin: PlatformAdmin,
 ) -> IntegrationClientCredential:
     client = require_integration_client(db, client_id)
+    now = datetime.now(timezone.utc)
+    if not client.is_active or (
+        client.expires_at is not None
+        and client.expires_at.astimezone(timezone.utc) <= now
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="已撤销或已过期的凭证不能轮换，请新建调用方",
+        )
     plaintext = rotate_client_with_unique_token(db, client)
     record_event(
         db,

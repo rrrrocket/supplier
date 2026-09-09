@@ -6,7 +6,10 @@ from decimal import Decimal
 from hashlib import md5
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
+
+from app.db.base import new_id, utcnow
 
 from app.models.entities import (
     Brand,
@@ -81,6 +84,13 @@ def replace_active_cooperation(
     commercial_mode: str,
     actor_id: str,
 ) -> SupplierBrandCooperation:
+    supplier = db.execute(
+        select(Organization.id, Organization.organization_type)
+        .where(Organization.id == supplier_id)
+        .with_for_update()
+    ).one_or_none()
+    if supplier is None or supplier.organization_type != OrganizationType.SUPPLIER.value:
+        raise ValueError("supplier does not exist")
     current = db.scalar(
         select(SupplierBrandCooperation)
         .where(
@@ -158,43 +168,45 @@ def ensure_supplier_sku(
         if variant is None or variant.product_id != product_id:
             raise ValueError("variant does not belong to product")
 
-    supplier_sku = db.scalar(
+    identifier = new_id()
+    timestamp = utcnow()
+    inserted_id = db.scalar(
+        insert(SupplierSku)
+        .values(
+            id=identifier,
+            supplier_id=supplier_id,
+            brand_id=brand_id,
+            product_id=product_id,
+            variant_id=variant_id,
+            supplier_sku_code=code,
+            manufacturer_part_number=manufacturer_part_number,
+            barcode=barcode,
+            status=CatalogStatus.ACTIVE.value,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        .on_conflict_do_nothing(constraint="uq_supplier_sku_code")
+        .returning(SupplierSku.id)
+    )
+    supplier_sku = db.get(SupplierSku, inserted_id) if inserted_id else db.scalar(
         select(SupplierSku).where(
             SupplierSku.supplier_id == supplier_id,
             SupplierSku.supplier_sku_code == code,
         )
     )
-    if supplier_sku is not None:
-        identity = (
-            supplier_sku.brand_id,
-            supplier_sku.product_id,
-            supplier_sku.variant_id,
-        )
-        if identity != (brand_id, product_id, variant_id):
-            raise ValueError("supplier SKU code is already bound")
-        for field, value in (
-            ("manufacturer_part_number", manufacturer_part_number),
-            ("barcode", barcode),
-        ):
-            current = getattr(supplier_sku, field)
-            if value is not None and current not in (None, value):
-                raise ValueError(f"supplier SKU {field} conflicts")
-            if current is None and value is not None:
-                setattr(supplier_sku, field, value)
-        return supplier_sku
-
-    supplier_sku = SupplierSku(
-        supplier_id=supplier_id,
-        brand_id=brand_id,
-        product_id=product_id,
-        variant_id=variant_id,
-        supplier_sku_code=code,
-        manufacturer_part_number=manufacturer_part_number,
-        barcode=barcode,
-        status=CatalogStatus.ACTIVE.value,
-    )
-    db.add(supplier_sku)
-    db.flush()
+    assert supplier_sku is not None
+    identity = (supplier_sku.brand_id, supplier_sku.product_id, supplier_sku.variant_id)
+    if identity != (brand_id, product_id, variant_id):
+        raise ValueError("supplier SKU code is already bound")
+    for field, value in (
+        ("manufacturer_part_number", manufacturer_part_number),
+        ("barcode", barcode),
+    ):
+        current = getattr(supplier_sku, field)
+        if value is not None and current not in (None, value):
+            raise ValueError(f"supplier SKU {field} conflicts")
+        if current is None and value is not None:
+            setattr(supplier_sku, field, value)
     return supplier_sku
 
 
@@ -230,6 +242,23 @@ def resolve_current_sku_cost(
         )
     if supplier_sku.status != CatalogStatus.ACTIVE.value:
         raise SkuCostError(SkuCostErrorCode.SKU_INACTIVE, "Supplier SKU 已停用")
+    product = db.get(Product, supplier_sku.product_id)
+    if (
+        product is None
+        or product.created_by_organization_id != supplier_id
+        or product.brand_id != supplier_sku.brand_id
+    ):
+        raise SkuCostError(
+            SkuCostErrorCode.SKU_SUPPLIER_MISMATCH,
+            "Supplier SKU 商品归属不一致",
+        )
+    if supplier_sku.variant_id is not None:
+        variant = db.get(ProductVariant, supplier_sku.variant_id)
+        if variant is None or variant.product_id != product.id:
+            raise SkuCostError(
+                SkuCostErrorCode.SKU_SUPPLIER_MISMATCH,
+                "Supplier SKU 规格归属不一致",
+            )
 
     cooperation = db.scalar(
         select(SupplierBrandCooperation).where(
@@ -252,6 +281,9 @@ def resolve_current_sku_cost(
     offer = db.scalar(
         select(SupplierOffer).where(
             SupplierOffer.supplier_sku_id == supplier_sku_id,
+            SupplierOffer.organization_id == supplier_id,
+            SupplierOffer.product_id == supplier_sku.product_id,
+            SupplierOffer.variant_id.is_not_distinct_from(supplier_sku.variant_id),
             SupplierOffer.status == OfferStatus.ACTIVE.value,
         )
     )

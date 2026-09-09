@@ -14,9 +14,10 @@ from app.models.entities import (
     SupplierOffer,
     SupplierSku,
 )
-from app.schemas.product import OfferCreate, OfferUpdate, OfferView
+from app.schemas.product import OfferCreate, OfferPage, OfferUpdate, OfferView
 from app.services.catalog import ensure_supplier_sku
 from app.services.events import record_event
+from app.services.list_pagination import decode_list_cursor, encode_list_cursor
 
 
 router = APIRouter(prefix="/offers", tags=["供应报价"])
@@ -57,7 +58,7 @@ def offer_view(
 def list_offers(
     db: DbSession,
     user: SupplierUser,
-    q: str | None = Query(default=None, max_length=120),
+    q: str | None = Query(default=None, max_length=240),
     brand: str | None = Query(default=None, max_length=160),
     offer_status: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=200, ge=1, le=1000),
@@ -106,6 +107,72 @@ def list_offers(
         offer_view(offer, product, brand, supplier_sku, commercial_mode)
         for offer, product, brand, supplier_sku, commercial_mode in db.execute(stmt).all()
     ]
+
+
+@router.get("/page", response_model=OfferPage)
+def list_offers_page(
+    db: DbSession,
+    user: SupplierUser,
+    q: str | None = Query(default=None, max_length=240),
+    brand: str | None = Query(default=None, max_length=160),
+    offer_status: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=500, ge=1, le=500),
+    cursor: str | None = Query(default=None),
+) -> OfferPage:
+    filters = {
+        "q": q.strip() if q else None,
+        "brand": brand.strip() if brand else None,
+        "status": offer_status,
+    }
+    after_id = decode_list_cursor(cursor, "offers", filters) if cursor else None
+    stmt = (
+        select(
+            SupplierOffer,
+            Product,
+            Brand,
+            SupplierSku,
+            SupplierBrandCooperation.commercial_mode,
+        )
+        .join(Product, Product.id == SupplierOffer.product_id)
+        .join(Brand, Brand.id == Product.brand_id)
+        .join(SupplierSku, SupplierSku.id == SupplierOffer.supplier_sku_id)
+        .outerjoin(
+            SupplierBrandCooperation,
+            (SupplierBrandCooperation.supplier_id == SupplierOffer.organization_id)
+            & (SupplierBrandCooperation.brand_id == Product.brand_id)
+            & (SupplierBrandCooperation.status == CatalogStatus.ACTIVE.value),
+        )
+        .where(SupplierOffer.organization_id == user.organization_id)
+    )
+    if filters["q"]:
+        pattern = f"%{filters['q']}%"
+        stmt = stmt.where(
+            or_(
+                SupplierSku.supplier_sku_code.ilike(pattern),
+                Product.name.ilike(pattern),
+                Brand.name.ilike(pattern),
+                Product.model.ilike(pattern),
+            )
+        )
+    if offer_status:
+        stmt = stmt.where(SupplierOffer.status == offer_status)
+    if filters["brand"]:
+        stmt = stmt.where(Brand.name == filters["brand"])
+    if after_id:
+        stmt = stmt.where(SupplierOffer.id > after_id)
+    rows = db.execute(stmt.order_by(SupplierOffer.id).limit(limit + 1)).all()
+    page = rows[:limit]
+    next_cursor = (
+        encode_list_cursor("offers", page[-1][0].id, filters)
+        if len(rows) > limit else None
+    )
+    return OfferPage(
+        items=[
+            offer_view(offer, product, item_brand, sku, mode)
+            for offer, product, item_brand, sku, mode in page
+        ],
+        next_cursor=next_cursor,
+    )
 
 
 @router.get("/brands", response_model=list[str])

@@ -55,7 +55,7 @@ FIELD_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "brand": {
         "label": "品牌",
-        "required": False,
+        "required": True,
         "aliases": ["brand", "品牌", "牌子", "品牌名称"],
     },
     "model": {

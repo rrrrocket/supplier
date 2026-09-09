@@ -108,7 +108,7 @@ def highly_expanded_zip_content() -> bytes:
 
 
 def multi_sheet_configs() -> list[dict[str, object]]:
-    defaults = {"category": "测试类目", "currency": "CNY"}
+    defaults = {"brand": "TEST", "category": "测试类目", "currency": "CNY"}
     mapping = {"supplier_sku": "A", "product_name": "B", "price": "C"}
     return [
         {
@@ -160,6 +160,148 @@ def test_health(client: TestClient) -> None:
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_product_page_cursor_does_not_shift_when_an_earlier_row_is_updated(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    with SessionLocal() as db:
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+        )
+        brand = db.scalar(select(Brand).where(Brand.code == "TEST-BRAND"))
+        assert supplier is not None and brand is not None
+        products = [
+            Product(
+                id=f"page-{suffix}-{index}",
+                created_by_organization_id=supplier.id,
+                brand_id=brand.id,
+                name=f"分页商品-{suffix}-{index}",
+                category="测试",
+            )
+            for index in range(3)
+        ]
+        db.add_all(products)
+        db.commit()
+
+    first = authenticated_client.get(
+        "/api/products/page",
+        params={"q": f"分页商品-{suffix}", "limit": 2},
+    )
+    assert first.status_code == 200
+    assert len(first.json()["items"]) == 2
+    with SessionLocal() as db:
+        changed = db.get(Product, first.json()["items"][0]["id"])
+        assert changed is not None
+        changed.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+    second = authenticated_client.get(
+        "/api/products/page",
+        params={
+            "q": f"分页商品-{suffix}",
+            "limit": 2,
+            "cursor": first.json()["next_cursor"],
+        },
+    )
+    assert second.status_code == 200
+    ids = [item["id"] for item in first.json()["items"] + second.json()["items"]]
+    assert ids == [f"page-{suffix}-{index}" for index in range(3)]
+
+    rebound = authenticated_client.get(
+        "/api/products/page",
+        params={
+            "q": f"不同筛选-{suffix}",
+            "limit": 2,
+            "cursor": first.json()["next_cursor"],
+        },
+    )
+    assert rebound.status_code == 400
+    assert rebound.json()["detail"] == "分页游标无效"
+
+
+def test_offer_page_cursor_does_not_shift_when_an_earlier_row_is_updated(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    with SessionLocal() as db:
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+        )
+        brand = db.scalar(select(Brand).where(Brand.code == "TEST-BRAND"))
+        assert supplier is not None and brand is not None
+        products = [
+            Product(
+                id=f"offer-product-{suffix}-{index}",
+                created_by_organization_id=supplier.id,
+                brand_id=brand.id,
+                name=f"报价分页商品-{suffix}-{index}",
+                category="测试",
+            )
+            for index in range(3)
+        ]
+        skus = [
+            SupplierSku(
+                id=f"offer-sku-{suffix}-{index}",
+                supplier_id=supplier.id,
+                brand_id=brand.id,
+                product_id=products[index].id,
+                supplier_sku_code=f"报价分页货号-{suffix}-{index}",
+                status=CatalogStatus.ACTIVE.value,
+            )
+            for index in range(3)
+        ]
+        offers = [
+            SupplierOffer(
+                id=f"offer-page-{suffix}-{index}",
+                organization_id=supplier.id,
+                product_id=products[index].id,
+                supplier_sku_id=skus[index].id,
+                price="10.0000",
+                currency="CNY",
+                status="ACTIVE",
+            )
+            for index in range(3)
+        ]
+        db.add_all([*products, *skus, *offers])
+        db.commit()
+
+    first = authenticated_client.get(
+        "/api/offers/page",
+        params={"q": suffix, "limit": 2},
+    )
+    assert first.status_code == 200
+    assert len(first.json()["items"]) == 2
+    with SessionLocal() as db:
+        changed = db.get(SupplierOffer, first.json()["items"][0]["id"])
+        assert changed is not None
+        changed.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+    second = authenticated_client.get(
+        "/api/offers/page",
+        params={
+            "q": suffix,
+            "limit": 2,
+            "cursor": first.json()["next_cursor"],
+        },
+    )
+    assert second.status_code == 200
+    ids = [item["id"] for item in first.json()["items"] + second.json()["items"]]
+    assert ids == [f"offer-page-{suffix}-{index}" for index in range(3)]
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/api/products", "/api/products/page", "/api/offers", "/api/offers/page"],
+)
+def test_catalog_search_accepts_full_product_name_length(
+    authenticated_client: TestClient,
+    path: str,
+) -> None:
+    response = authenticated_client.get(path, params={"q": "界" * 240})
+    assert response.status_code == 200
 
 
 def test_excel_inspection_returns_all_sheets_and_active_sheet(
@@ -258,6 +400,29 @@ def test_multi_sheet_preview_allows_distinct_skus(
     assert response.status_code == 200
     assert response.json()["can_import"] is True
     assert response.json()["conflict_count"] == 0
+
+
+def test_multi_sheet_preview_marks_empty_brand_as_needing_correction(
+    authenticated_client: TestClient,
+) -> None:
+    configs = multi_sheet_configs()
+    for config in configs:
+        config["defaults"] = {"category": "测试类目", "currency": "CNY"}
+    response = authenticated_client.post(
+        "/api/imports/product-offers/preview",
+        data={"sheet_configs_json": json.dumps(configs, ensure_ascii=False)},
+        files={
+            "file": (
+                "supplier.xlsx",
+                BytesIO(multi_sheet_offer_workbook_content("UNIQUE-002")),
+                XLSX_MIME,
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["can_import"] is False
+    assert all("品牌不能为空" in row["errors"] for row in response.json()["preview_rows"])
 
 
 @pytest.mark.parametrize(
@@ -1348,7 +1513,7 @@ def test_smart_import_preview_uses_description_and_detects_columns(
     )
     response = authenticated_client.post(
         "/api/imports/product-offers/preview",
-        data={"description": description},
+        data={"description": description, "defaults_json": json.dumps({"brand": "TEST"})},
         files={"file": ("supplier.csv", BytesIO(csv_text.encode()), "text/csv")},
     )
 
@@ -1439,7 +1604,7 @@ def test_smart_pdf_preview_extracts_cost_table(authenticated_client: TestClient)
 
     response = authenticated_client.post(
         "/api/imports/product-offers/preview",
-        data={"description": description},
+        data={"description": description, "defaults_json": json.dumps({"brand": "TEST"})},
         files={"file": ("supplier.pdf", content, "application/pdf")},
     )
 
