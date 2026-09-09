@@ -5,9 +5,17 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const source = fs.readFileSync(path.join(__dirname, "..", "app", "web", "assets", "pagination.js"), "utf8");
+const stylesheet = fs.readFileSync(path.join(__dirname, "..", "app", "web", "assets", "styles.css"), "utf8");
 const context = vm.createContext({ window: {} });
 vm.runInContext(source, context);
 const Pagination = context.window.MatrixPagination;
+
+function cssRule(selector) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = stylesheet.match(new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]+)\\}`));
+  assert.ok(match, `missing CSS rule: ${selector}`);
+  return match[1];
+}
 
 test("page model exposes the requested range and compact page labels", () => {
   const model = Pagination.model(2439, 200, 7);
@@ -31,4 +39,12 @@ test("markup matches the unified page-size, page-number, and range layout", () =
   assert.match(html, /data-page="7"[^>]*aria-current="page"/);
   assert.match(html, />…<\/span>/);
   assert.match(html, /1201–1400 \/ 2439/);
+});
+
+test("pagination text matches the twelve-pixel product-name size", () => {
+  assert.match(cssRule(".unified-pagination"), /font-size:\s*12px/);
+  assert.match(cssRule(".pager-size select"), /font-size:\s*12px/);
+  assert.match(cssRule(".pager-page, .pager-arrow"), /font-size:\s*12px/);
+  assert.match(cssRule(".pager-range"), /font-size:\s*12px/);
+  assert.match(cssRule(".pager-arrow"), /font-size:\s*20px/);
 });
