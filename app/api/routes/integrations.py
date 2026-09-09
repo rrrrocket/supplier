@@ -74,7 +74,9 @@ COST_BATCH_PATH = "/api/integrations/v1/sku-costs/query"
 COST_SINGLE_OPENAPI_PATH = (
     "/api/integrations/v1/suppliers/{supplier_id}/skus/{supplier_sku_id}/cost"
 )
-COST_OPENAPI_OPERATIONS = {
+SUPPLIER_DETAIL_OPENAPI_PATH = "/api/integrations/v1/suppliers/{supplier_id}"
+OPERATIONS_WITHOUT_422 = {
+    SUPPLIER_DETAIL_OPENAPI_PATH: "get",
     COST_SINGLE_OPENAPI_PATH: "get",
     COST_BATCH_PATH: "post",
 }

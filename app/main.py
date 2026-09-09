@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from threading import Lock
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
@@ -11,7 +12,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.router import api_router
-from app.api.routes.integrations import COST_OPENAPI_OPERATIONS, CostAuditMiddleware
+from app.api.routes.integrations import OPERATIONS_WITHOUT_422, CostAuditMiddleware
 from app.core.config import get_settings
 from app.db.bootstrap import sync_platform_admin
 from app.db.session import SessionLocal
@@ -23,18 +24,20 @@ PAGES = WEB_ROOT / "pages"
 ASSETS = WEB_ROOT / "assets"
 
 
-def normalize_cost_openapi(application: FastAPI) -> None:
+def normalize_public_openapi(application: FastAPI) -> None:
     default_openapi = application.openapi
+    openapi_lock = Lock()
 
     def openapi() -> dict:
-        if application.openapi_schema is not None:
-            return application.openapi_schema
+        with openapi_lock:
+            if application.openapi_schema is not None:
+                return application.openapi_schema
 
-        schema = default_openapi()
-        for path, method in COST_OPENAPI_OPERATIONS.items():
-            schema["paths"][path][method]["responses"].pop("422", None)
-        application.openapi_schema = schema
-        return schema
+            schema = default_openapi()
+            for path, method in OPERATIONS_WITHOUT_422.items():
+                schema["paths"][path][method]["responses"].pop("422", None)
+            application.openapi_schema = schema
+            return schema
 
     application.openapi = openapi
 
@@ -89,7 +92,7 @@ async def security_headers(request: Request, call_next):
 
 app.mount("/assets", StaticFiles(directory=ASSETS), name="assets")
 app.include_router(api_router, prefix="/api")
-normalize_cost_openapi(app)
+normalize_public_openapi(app)
 
 
 @app.get("/api/health", tags=["系统"])

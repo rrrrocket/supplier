@@ -2239,6 +2239,52 @@ def test_production_trusted_host_rejects_cost_request_before_direct_rate_limit(
     assert restored_main_module.settings.app_env == "testing"
 
 
+def test_production_reload_serves_normalized_openapi_and_docs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_operations = {
+        f"{BASE_PATH}/suppliers/{{supplier_id}}": (
+            "get",
+            {"200", "401", "403", "404", "429"},
+        ),
+        f"{BASE_PATH}/suppliers/{{supplier_id}}/skus/{{supplier_sku_id}}/cost": (
+            "get",
+            {"200", "401", "403", "404", "409", "429"},
+        ),
+        f"{BASE_PATH}/sku-costs/query": (
+            "post",
+            {"200", "400", "401", "403", "429"},
+        ),
+    }
+    main_module = importlib.import_module("app.main")
+    try:
+        with monkeypatch.context() as production_context:
+            production_context.setenv("APP_ENV", "production")
+            production_context.setenv("ALLOWED_HOSTS", "trusted.example")
+            get_settings.cache_clear()
+            production_app = importlib.reload(main_module).app
+            production_client = TestClient(
+                production_app,
+                base_url="http://trusted.example",
+                raise_server_exceptions=False,
+            )
+            try:
+                openapi_response = production_client.get("/api/openapi.json")
+                docs_response = production_client.get("/api/docs")
+            finally:
+                production_client.close()
+    finally:
+        get_settings.cache_clear()
+        restored_main_module = importlib.reload(main_module)
+
+    assert openapi_response.status_code == 200
+    assert docs_response.status_code == 200
+    openapi = openapi_response.json()
+    for path, (method, statuses) in expected_operations.items():
+        assert set(openapi["paths"][path][method]["responses"]) == statuses
+    assert restored_main_module.settings.app_env == "testing"
+
+
 def test_clients_have_independent_budgets_and_windows_reopen_without_limiting_web(
     client: TestClient,
     integration_client: dict[str, Any],

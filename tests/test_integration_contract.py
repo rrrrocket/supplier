@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Event
 from typing import Any
 
-from app.main import app
+from fastapi import FastAPI
+
+from app.api.router import api_router
+from app.main import app, normalize_public_openapi
 from app.schemas import integration as integration_contract
 
 
@@ -41,7 +46,6 @@ EXPECTED_RESPONSE_STATUSES = {
         "401",
         "403",
         "404",
-        "422",
         "429",
     },
     "/api/integrations/v1/suppliers/{supplier_id}/brands": {
@@ -279,3 +283,57 @@ def test_openapi_schema_cache_keeps_the_normalized_cost_contract() -> None:
 
     assert first is second
     assert app.openapi_schema is first
+
+
+def test_concurrent_openapi_callers_only_observe_the_normalized_schema() -> None:
+    """Catch publishing FastAPI's generated cache before normalization completes."""
+    application = FastAPI()
+    application.include_router(api_router, prefix="/api")
+    native_openapi = application.openapi
+    default_published = Event()
+    release_default = Event()
+    competing_call_gate = Barrier(2)
+    competing_call_started = Event()
+    competing_call_returned = Event()
+
+    def delayed_default_openapi() -> dict[str, Any]:
+        schema = native_openapi()
+        default_published.set()
+        if not release_default.wait(timeout=5):
+            raise TimeoutError("test did not release OpenAPI generation")
+        return schema
+
+    application.openapi = delayed_default_openapi
+    normalize_public_openapi(application)
+
+    def competing_read() -> dict[str, Any]:
+        competing_call_gate.wait(timeout=5)
+        competing_call_started.set()
+        schema = application.openapi()
+        competing_call_returned.set()
+        return schema
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        generating = executor.submit(application.openapi)
+        assert default_published.wait(timeout=5)
+        competing = executor.submit(competing_read)
+        competing_call_gate.wait(timeout=5)
+        assert competing_call_started.wait(timeout=5)
+        returned_before_normalization = competing_call_returned.wait(timeout=1)
+        release_default.set()
+        generated_schema = generating.result(timeout=5)
+        competing_schema = competing.result(timeout=5)
+
+    assert returned_before_normalization is False
+    assert generated_schema is competing_schema
+    assert application.openapi_schema is generated_schema
+    for path in (
+        "/api/integrations/v1/suppliers/{supplier_id}",
+        (
+            "/api/integrations/v1/suppliers/{supplier_id}/skus/"
+            "{supplier_sku_id}/cost"
+        ),
+        "/api/integrations/v1/sku-costs/query",
+    ):
+        method = PUBLIC_OPERATIONS[path][0]
+        assert "422" not in generated_schema["paths"][path][method]["responses"]

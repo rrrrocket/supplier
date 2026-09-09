@@ -249,7 +249,7 @@ POST /api/integrations/v1/sku-costs/query
 }
 ```
 
-批量请求接受 1..500 行，通过 HTTP 200 按输入顺序返回逐行结果。批量 JSON 或请求结构整体无效时返回 HTTP 400；三个列表的无效不透明游标也返回 HTTP 400 和 `INVALID_CURSOR`。普通列表/路径/查询参数的 FastAPI 框架校验失败返回 HTTP 422。认证、权限、限流和服务异常使用对应 HTTP 状态码；HTTP 401 声明并返回 `WWW-Authenticate: Bearer`。
+批量请求接受 1..500 行，通过 HTTP 200 按输入顺序返回逐行结果。批量 JSON 或请求结构整体无效时返回 HTTP 400；三个列表的无效不透明游标也返回 HTTP 400 和 `INVALID_CURSOR`。只有供应商、品牌合作和 Supplier SKU 三个列表的受约束查询参数由 FastAPI 框架校验并在失败时返回 HTTP 422；供应商详情和两条成本 operation 不发布不可达的 422。认证、权限、限流和服务异常使用对应 HTTP 状态码；HTTP 401 声明并返回 `WWW-Authenticate: Bearer`。
 
 业务错误码：
 
@@ -276,7 +276,7 @@ POST /api/integrations/v1/sku-costs/query
 6. 合作模式为 `SELF_PURCHASE`；
 7. 当前 Supplier Offer 处于有效状态且有价格。
 
-成功时只返回：调用方关联标识、供应商 ID、Supplier SKU ID、供应商货号、成本价、币种和成本更新时间。
+单个成本查询成功时只返回供应商 ID、Supplier SKU ID、供应商货号、成本价、币种和成本更新时间；批量成功行在这些字段之外额外原样回传调用方提供的 `client_sku_id`。
 
 ## 10. 认证、审计与安全
 
