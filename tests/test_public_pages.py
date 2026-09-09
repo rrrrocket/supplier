@@ -114,3 +114,22 @@ def test_hidden_auth_actions_cannot_be_overridden_by_button_layout() -> None:
         r"\[hidden\]\s*\{[^}]*display\s*:\s*none\s*!important",
         stylesheet,
     )
+
+
+def test_supplier_workspace_uses_only_unified_pagination_controls(client: TestClient) -> None:
+    response = client.get("/app")
+    assert response.status_code == 200
+
+    html = response.text
+    assert 'id="products-pagination"' in html
+    assert 'id="offers-pagination"' in html
+    assert 'id="import-pagination"' in html
+    for obsolete_id in (
+        "products-prev-page",
+        "products-next-page",
+        "offers-prev-page",
+        "offers-next-page",
+        "import-prev-page",
+        "import-next-page",
+    ):
+        assert f'id="{obsolete_id}"' not in html

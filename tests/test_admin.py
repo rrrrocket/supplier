@@ -15,6 +15,7 @@ from app.models.entities import (
     Organization,
     Product,
     SupplierBrandCooperation,
+    SupplierApplication,
     SupplierOffer,
     SupplierSku,
     User,
@@ -66,6 +67,41 @@ def test_supplier_cannot_access_admin_api(client: TestClient) -> None:
     login_supplier(client)
     response = client.get("/api/admin/applications")
     assert response.status_code == 403
+
+
+def test_admin_application_list_returns_more_than_two_hundred_rows(client: TestClient) -> None:
+    marker = uuid4().hex[:8]
+    applications = [
+        SupplierApplication(
+            application_no=f"BULK-{marker}-{index:03d}",
+            company_name=f"批量申请 {index}",
+            company_type="工贸一体",
+            province="广东省",
+            city="东莞市",
+            contact_name="审核测试人",
+            phone="13800138001",
+            email=f"bulk-{marker}-{index}@example.com",
+            categories=["工业自动化"],
+            cooperation_modes=["B2B外贸"],
+        )
+        for index in range(205)
+    ]
+    with SessionLocal() as db:
+        db.add_all(applications)
+        db.commit()
+        created_ids = [item.id for item in applications]
+
+    try:
+        login_admin(client)
+        response = client.get("/api/admin/applications")
+
+        assert response.status_code == 200
+        returned_ids = {item["id"] for item in response.json()}
+        assert set(created_ids) <= returned_ids
+    finally:
+        with SessionLocal() as db:
+            db.execute(delete(SupplierApplication).where(SupplierApplication.id.in_(created_ids)))
+            db.commit()
 
 
 def test_admin_cannot_use_supplier_business_api(client: TestClient) -> None:

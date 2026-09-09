@@ -451,17 +451,75 @@ test("a rejected current offer-brand request still rejects", async () => {
 });
 
 
-test("empty supplier lists keep both pagination boundaries disabled", () => {
+test("empty supplier lists keep page one and display zero ranges", () => {
   const harness = supplierListsHarness(async () => []);
 
   harness.evaluate("renderProducts(); renderOffers()");
 
   assert.equal(harness.elements.get("#products-count").textContent, "显示 0–0 / 共 0 条");
-  assert.equal(harness.elements.get("#products-prev-page").disabled, true);
-  assert.equal(harness.elements.get("#products-next-page").disabled, true);
+  assert.equal(harness.evaluate("state.productPage"), 1);
   assert.equal(harness.elements.get("#offers-count").textContent, "显示 0–0 / 共 0 条");
-  assert.equal(harness.elements.get("#offers-prev-page").disabled, true);
-  assert.equal(harness.elements.get("#offers-next-page").disabled, true);
+  assert.equal(harness.evaluate("state.offerPage"), 1);
+});
+
+test("dashboard metrics link products, active, low-stock, and pending offers without the onboarding panel", () => {
+  const harness = supplierListsHarness(async () => []);
+  harness.evaluate(`state.dashboard = { metrics: [
+    { key: "products", label: "商品主数据", value: "10", hint: "" , tone: "purple"},
+    { key: "active_offers", label: "有效报价", value: "9", hint: "" , tone: "green"},
+    { key: "low_stock", label: "低库存提醒", value: "2", hint: "" , tone: "orange"},
+    { key: "pending", label: "待处理数据", value: "1", hint: "" , tone: "orange"},
+  ], checklist: [], recent_events: [], supplier_status: "ACTIVE", profile_completion: 100 }; renderDashboard()`);
+  const html = harness.elements.get("#dashboard-root").innerHTML;
+  assert.match(html, /data-dashboard-route="products"/);
+  assert.match(html, /data-dashboard-route="offers"/);
+  assert.match(html, /data-dashboard-route="offers" data-dashboard-filter="low-stock"/);
+  assert.match(html, /data-dashboard-route="offers" data-dashboard-filter="pending"/);
+  assert.doesNotMatch(html, /供应网络接入进度/);
+});
+
+test("low-stock dashboard filter shows only offers at or below ten units", () => {
+  const harness = supplierListsHarness(async () => []);
+  harness.evaluate(`state.offers = [
+    { id: "low", product_name: "低库存", supplier_sku_code: "LOW", supplier_sku_id: "sku-low", stock_qty: 10, moq: 1, lead_time_days: 1, price: "1", currency: "CNY", status: "ACTIVE" },
+    { id: "ok", product_name: "正常库存", supplier_sku_code: "OK", supplier_sku_id: "sku-ok", stock_qty: 11, moq: 1, lead_time_days: 1, price: "1", currency: "CNY", status: "ACTIVE" },
+    { id: "draft-low", product_name: "草稿低库存", supplier_sku_code: "DRAFT-LOW", supplier_sku_id: "sku-draft-low", stock_qty: 3, moq: 1, lead_time_days: 1, price: "1", currency: "CNY", status: "DRAFT" }
+  ]; state.offerViewFilter = "low-stock"; renderOffers()`);
+  const html = harness.elements.get("#offers-tbody").innerHTML;
+  assert.match(html, /低库存/);
+  assert.doesNotMatch(html, /正常库存/);
+  assert.doesNotMatch(html, /草稿低库存/);
+});
+
+test("dashboard offer drilldown clears old search, brand, and page state", () => {
+  const harness = supplierListsHarness(async () => []);
+  harness.evaluate('["#dashboard-root", "#offers-search", "#offers-brand"].forEach((selector) => document.querySelector(selector))');
+  const dashboardRoot = harness.elements.get("#dashboard-root");
+  const card = element();
+  card.dataset = { dashboardRoute: "offers", dashboardFilter: "low-stock" };
+  dashboardRoot.querySelectorAll = () => [card];
+  harness.elements.get("#offers-search").value = "旧搜索";
+  harness.elements.get("#offers-brand").value = "旧品牌";
+  harness.evaluate(`state.offerPage = 7; state.dashboard = { metrics: [], checklist: [], recent_events: [], supplier_status: "ACTIVE", profile_completion: 100 }; renderDashboard()`);
+
+  card.dispatch("click");
+
+  assert.equal(harness.elements.get("#offers-search").value, "");
+  assert.equal(harness.elements.get("#offers-brand").value, "");
+  assert.equal(harness.evaluate("state.offerPage"), 1);
+  assert.equal(harness.evaluate("state.offerViewFilter"), "low-stock");
+  assert.equal(harness.evaluate("window.location.hash"), "offers");
+});
+
+test("pending dashboard filter shows only non-active offers", () => {
+  const harness = supplierListsHarness(async () => []);
+  harness.evaluate(`state.offers = [
+    { id: "draft", product_name: "草稿报价", supplier_sku_code: "DRAFT", supplier_sku_id: "sku-draft", stock_qty: 20, moq: 1, lead_time_days: 1, price: "1", currency: "CNY", status: "DRAFT" },
+    { id: "active", product_name: "有效报价", supplier_sku_code: "ACTIVE", supplier_sku_id: "sku-active", stock_qty: 20, moq: 1, lead_time_days: 1, price: "1", currency: "CNY", status: "ACTIVE" }
+  ]; state.offerViewFilter = "pending"; renderOffers()`);
+  const html = harness.elements.get("#offers-tbody").innerHTML;
+  assert.match(html, /草稿报价/);
+  assert.doesNotMatch(html, /有效报价/);
 });
 
 

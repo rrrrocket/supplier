@@ -5,6 +5,9 @@ const state = {
   offers: [],
   productPage: 1,
   offerPage: 1,
+  productPageSize: 50,
+  offerPageSize: 50,
+  offerViewFilter: "",
   productRequestRevision: 0,
   offerRequestRevision: 0,
   offerBrandRequestRevision: 0,
@@ -23,7 +26,15 @@ const state = {
 
 const ImportWorkbook = window.MatrixImportWorkbook;
 const listChunkSize = 500;
-const tablePageSize = 50;
+function renderPagination(id, total, page, pageSize, onChange) {
+  const fallback = { total, pageSize, pages: Math.max(1, Math.ceil(total / pageSize)), page: Math.max(1, page), start: total ? (page - 1) * pageSize + 1 : 0, end: Math.min(page * pageSize, total) };
+  fallback.page = Math.min(fallback.page, fallback.pages);
+  fallback.start = total ? (fallback.page - 1) * pageSize + 1 : 0;
+  fallback.end = total ? Math.min(fallback.page * pageSize, total) : 0;
+  const container = document.querySelector(`#${id}-pagination`);
+  if (!window.MatrixPagination || typeof container?.querySelector !== "function") return fallback;
+  return window.MatrixPagination.render(container, { total, page, pageSize, onChange });
+}
 
 const importFields = [
   ["product_name", "商品名称", true],
@@ -119,8 +130,10 @@ async function loadDashboard() {
 
 function renderDashboard() {
   const data = state.dashboard;
+  const metricRoutes = { products: "products", active_offers: "offers", low_stock: "offers", pending: "offers" };
+  const metricFilters = { low_stock: "low-stock", pending: "pending" };
   const metrics = data.metrics.map((metric) => `
-    <article class="metric-card" data-tone="${Matrix.escapeHtml(metric.tone)}">
+    <article class="metric-card metric-card-link" data-tone="${Matrix.escapeHtml(metric.tone)}" data-dashboard-route="${metricRoutes[metric.key] || "dashboard"}"${metricFilters[metric.key] ? ` data-dashboard-filter="${metricFilters[metric.key]}"` : ""} role="button" tabindex="0">
       <div class="metric-card-top">
         <span class="metric-label">${Matrix.escapeHtml(metric.label)}</span>
         <span class="metric-icon">${icons[metric.key] || icons.products}</span>
@@ -130,41 +143,33 @@ function renderDashboard() {
     </article>
   `).join("");
 
-  const checklist = data.checklist.map((item) => `
-    <a class="check-item ${item.completed ? "done" : ""}" href="${Matrix.escapeHtml(item.action_hash)}">
-      <span class="check-mark">${item.completed ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><path d="m5 12 4 4 10-10"/></svg>' : ""}</span>
-      <span class="check-copy"><strong>${Matrix.escapeHtml(item.label)}</strong><span>${Matrix.escapeHtml(item.description)}</span></span>
-      <span class="check-action">${item.completed ? "已完成" : "去完成"}</span>
-    </a>
-  `).join("");
-
   const events = data.recent_events.length
     ? data.recent_events.map(renderEvent).join("")
     : '<div class="table-empty"><strong>暂无事件</strong>完成一次商品或报价操作后会显示在这里。</div>';
 
   document.querySelector("#dashboard-root").innerHTML = `
     <div class="metric-grid">${metrics}</div>
-    <div class="dashboard-grid">
-      <section class="panel">
-        <header class="panel-head">
-          <div><h2>供应网络接入进度</h2><p>把企业资料和真实供货能力整理为可调用数据。</p></div>
-          ${Matrix.statusBadge(data.supplier_status)}
-        </header>
-        <div class="panel-body">
-          <div class="onboarding-overview">
-            <div class="progress-ring" style="--progress:${Number(data.profile_completion)}%">
-              <div class="progress-ring-copy"><strong>${Number(data.profile_completion)}%</strong><span>资料完整度</span></div>
-            </div>
-            <div class="checklist">${checklist}</div>
-          </div>
-        </div>
-      </section>
+    <div class="dashboard-grid dashboard-grid-single">
       <section class="panel">
         <header class="panel-head"><div><h2>最近动态</h2><p>关键数据操作均进入事件审计。</p></div><a href="/api/docs" target="_blank" class="btn btn-ghost btn-sm">API</a></header>
         <div class="panel-body"><div class="event-list">${events}</div></div>
       </section>
     </div>
   `;
+  const root = document.querySelector("#dashboard-root");
+  root.querySelectorAll?.("[data-dashboard-route]").forEach((card) => {
+    const open = () => {
+      if (card.dataset.dashboardRoute === "offers") {
+        document.querySelector("#offers-search").value = "";
+        document.querySelector("#offers-brand").value = "";
+        state.offerPage = 1;
+      }
+      state.offerViewFilter = card.dataset.dashboardFilter || "";
+      setRoute(card.dataset.dashboardRoute);
+    };
+    card.addEventListener("click", open);
+    card.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } });
+  });
 }
 
 function renderEvent(event) {
@@ -241,10 +246,10 @@ async function loadProductsWithToast(query = null) {
 
 function renderProducts() {
   const tbody = document.querySelector("#products-tbody");
-  const totalPages = Math.max(1, Math.ceil(state.products.length / tablePageSize));
-  state.productPage = Math.min(Math.max(1, state.productPage), totalPages);
-  const start = (state.productPage - 1) * tablePageSize;
-  const visibleProducts = state.products.slice(start, start + tablePageSize);
+  const model = renderPagination("products", state.products.length, state.productPage, state.productPageSize, (page, pageSize) => { state.productPage = page; state.productPageSize = pageSize; renderProducts(); });
+  state.productPage = model.page;
+  const start = model.start ? model.start - 1 : 0;
+  const visibleProducts = state.products.slice(start, start + model.pageSize);
   if (!state.products.length) {
     tbody.innerHTML = '<tr><td colspan="7" class="table-empty"><strong>尚未建立商品主数据</strong>新增单个商品，或通过模板批量导入。</td></tr>';
   } else {
@@ -260,12 +265,7 @@ function renderProducts() {
       </tr>
     `).join("");
   }
-  const visibleStart = state.products.length ? start + 1 : 0;
-  const visibleEnd = state.products.length ? start + visibleProducts.length : 0;
-  document.querySelector("#products-count").textContent = `显示 ${visibleStart}–${visibleEnd} / 共 ${state.products.length} 条`;
-  document.querySelector("#products-page").textContent = `第 ${state.productPage} / ${totalPages} 页`;
-  document.querySelector("#products-prev-page").disabled = state.productPage === 1;
-  document.querySelector("#products-next-page").disabled = state.productPage === totalPages;
+  document.querySelector("#products-count").textContent = `显示 ${model.start}–${model.end} / 共 ${state.products.length} 条`;
 }
 
 async function loadOfferBrands(expectedRouteRevision = state.offerRouteRevision) {
@@ -323,11 +323,18 @@ async function loadOffersWithToast(query = null, brand = null) {
 
 function renderOffers() {
   const tbody = document.querySelector("#offers-tbody");
-  const totalPages = Math.max(1, Math.ceil(state.offers.length / tablePageSize));
-  state.offerPage = Math.min(Math.max(1, state.offerPage), totalPages);
-  const start = (state.offerPage - 1) * tablePageSize;
-  const visibleOffers = state.offers.slice(start, start + tablePageSize);
-  if (!state.offers.length) {
+  const stockSelect = document.querySelector("#offers-stock");
+  if (stockSelect) stockSelect.value = state.offerViewFilter;
+  const rows = state.offers.filter((offer) => {
+    if (state.offerViewFilter === "low-stock") return offer.status === "ACTIVE" && Number(offer.stock_qty) <= 10;
+    if (state.offerViewFilter === "pending") return offer.status !== "ACTIVE";
+    return true;
+  });
+  const model = renderPagination("offers", rows.length, state.offerPage, state.offerPageSize, (page, pageSize) => { state.offerPage = page; state.offerPageSize = pageSize; renderOffers(); });
+  state.offerPage = model.page;
+  const start = model.start ? model.start - 1 : 0;
+  const visibleOffers = rows.slice(start, start + model.pageSize);
+  if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="10" class="table-empty"><strong>暂无供应报价</strong>报价必须包含价格、MOQ、库存和交期。</td></tr>';
   } else {
     tbody.innerHTML = visibleOffers.map((offer) => `
@@ -345,12 +352,7 @@ function renderOffers() {
       </tr>
     `).join("");
   }
-  const visibleStart = state.offers.length ? start + 1 : 0;
-  const visibleEnd = state.offers.length ? start + visibleOffers.length : 0;
-  document.querySelector("#offers-count").textContent = `显示 ${visibleStart}–${visibleEnd} / 共 ${state.offers.length} 条`;
-  document.querySelector("#offers-page").textContent = `第 ${state.offerPage} / ${totalPages} 页`;
-  document.querySelector("#offers-prev-page").disabled = state.offerPage === 1;
-  document.querySelector("#offers-next-page").disabled = state.offerPage === totalPages;
+  document.querySelector("#offers-count").textContent = `显示 ${model.start}–${model.end} / 共 ${rows.length} 条`;
 }
 
 function fulfillmentLabel(value) {
@@ -889,9 +891,7 @@ function updateImportControls() {
   document.querySelector("#exclude-correction-rows").disabled = corrections === 0;
   document.querySelector("#restore-correction-rows").classList.toggle("hidden", !canRestoreCorrections);
   document.querySelector("#confirm-import").disabled = !ImportWorkbook.canImport(workbook.rows);
-  document.querySelector("#import-prev-page").disabled = workbook.page <= 1;
-  document.querySelector("#import-next-page").disabled = workbook.page >= totalPages;
-  document.querySelector("#import-page-status").textContent = `第 ${workbook.page} / ${totalPages} 页 · 当前筛选 ${filtered.length} 行`;
+  renderPagination("import", filtered.length, workbook.page, workbook.pageSize, (page, pageSize) => { workbook.page = page; workbook.pageSize = pageSize; renderImportRows(); });
 }
 
 function renderImportRows() {
@@ -1115,7 +1115,10 @@ async function saveProfile(event) {
 function bindEvents() {
   window.addEventListener("hashchange", () => renderRoute(currentRoute()));
   document.querySelectorAll(".nav-item[data-route]").forEach((item) => {
-    item.addEventListener("click", () => setRoute(item.dataset.route));
+    item.addEventListener("click", () => {
+      if (item.dataset.route === "offers") state.offerViewFilter = "";
+      setRoute(item.dataset.route);
+    });
   });
   document.querySelector("#mobile-menu").addEventListener("click", () => {
     document.querySelector("#sidebar").classList.toggle("open");
@@ -1139,22 +1142,7 @@ function bindEvents() {
   document.querySelector("#products-search").addEventListener("input", debounce((event) => loadProductsWithToast(event.target.value)));
   document.querySelector("#offers-search").addEventListener("input", debounce((event) => loadOffersWithToast(event.target.value)));
   document.querySelector("#offers-brand").addEventListener("change", (event) => loadOffersWithToast(null, event.target.value));
-  document.querySelector("#products-prev-page").addEventListener("click", () => {
-    state.productPage = Math.max(1, state.productPage - 1);
-    renderProducts();
-  });
-  document.querySelector("#products-next-page").addEventListener("click", () => {
-    state.productPage += 1;
-    renderProducts();
-  });
-  document.querySelector("#offers-prev-page").addEventListener("click", () => {
-    state.offerPage = Math.max(1, state.offerPage - 1);
-    renderOffers();
-  });
-  document.querySelector("#offers-next-page").addEventListener("click", () => {
-    state.offerPage += 1;
-    renderOffers();
-  });
+  document.querySelector("#offers-stock").addEventListener("change", (event) => { state.offerViewFilter = event.target.value; state.offerPage = 1; renderOffers(); });
 
   document.querySelector("#products-tbody").addEventListener("click", (event) => {
     const button = event.target.closest("[data-add-offer]");
@@ -1292,16 +1280,6 @@ function bindEvents() {
     if (!state.importWorkbook) return;
     ImportWorkbook.restoreExcludedCorrections(state.importWorkbook);
     state.importWorkbook.page = 1;
-    renderImportRows();
-  });
-  document.querySelector("#import-prev-page").addEventListener("click", () => {
-    if (!state.importWorkbook) return;
-    state.importWorkbook.page = Math.max(1, state.importWorkbook.page - 1);
-    renderImportRows();
-  });
-  document.querySelector("#import-next-page").addEventListener("click", () => {
-    if (!state.importWorkbook) return;
-    state.importWorkbook.page += 1;
     renderImportRows();
   });
   ["dragenter", "dragover"].forEach((type) => dropzone.addEventListener(type, (event) => {

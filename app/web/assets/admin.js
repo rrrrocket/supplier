@@ -5,11 +5,33 @@ const adminState = {
   brands: [],
   brandCooperations: [],
   integrationClients: [],
+  applicationPage: 1,
+  applicationPageSize: 50,
+  supplierPage: 1,
+  supplierPageSize: 50,
+  integrationPage: 1,
+  integrationPageSize: 50,
   selectedApplication: null,
   selectedSupplier: null,
   brandCooperationGeneration: 0,
   loadedBrandCooperationSupplierId: null,
 };
+
+function paginateAdmin(kind, rows) {
+  const pageKey = `${kind}Page`;
+  const sizeKey = `${kind}PageSize`;
+  const pageSize = adminState[sizeKey];
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  adminState[pageKey] = Math.min(Math.max(1, adminState[pageKey]), pages);
+  const page = adminState[pageKey];
+  const start = rows.length ? (page - 1) * pageSize + 1 : 0;
+  const end = rows.length ? Math.min(page * pageSize, rows.length) : 0;
+  const container = document.querySelector(`#${kind}-pagination`);
+  if (window.MatrixPagination && typeof container?.querySelector === "function") {
+    window.MatrixPagination.render(container, { total: rows.length, page, pageSize, onChange(nextPage, nextSize) { adminState[pageKey] = nextPage; adminState[sizeKey] = nextSize; ({ application: renderApplications, supplier: renderSuppliers, integration: renderIntegrationClients })[kind](); } });
+  }
+  return rows.slice(start ? start - 1 : 0, end);
+}
 
 const cooperationModeLabels = {
   SELF_PURCHASE: "模式 A · 自营采购",
@@ -74,13 +96,14 @@ function renderApplications() {
   const rows = adminState.applications.filter((item) => {
     return (!query || applicationSearchText(item).includes(query)) && (!status || item.status === status);
   });
+  const visibleRows = paginateAdmin("application", rows);
   const tbody = document.querySelector("#applications-tbody");
   document.querySelector("#applications-count").textContent = `显示 ${rows.length} 条 / 共 ${adminState.applications.length} 条`;
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="7" class="table-empty"><strong>没有符合条件的申请</strong>调整搜索或状态筛选后重试。</td></tr>';
     return;
   }
-  tbody.innerHTML = rows.map((item) => `
+  tbody.innerHTML = visibleRows.map((item) => `
     <tr>
       <td><div class="application-company"><strong>${Matrix.escapeHtml(item.company_name)}</strong><span>${Matrix.escapeHtml(item.application_no)}</span></div></td>
       <td><div class="table-primary">${Matrix.escapeHtml(item.company_type)}</div><div class="table-secondary">${Matrix.escapeHtml(item.province)} · ${Matrix.escapeHtml(item.city)}</div></td>
@@ -103,13 +126,14 @@ function supplierSearchText(item) {
 function renderSuppliers() {
   const query = document.querySelector("#suppliers-search").value.trim().toLowerCase();
   const rows = adminState.suppliers.filter((item) => !query || supplierSearchText(item).includes(query));
+  const visibleRows = paginateAdmin("supplier", rows);
   const tbody = document.querySelector("#suppliers-tbody");
   document.querySelector("#suppliers-count").textContent = `显示 ${rows.length} 家 / 共 ${adminState.suppliers.length} 家`;
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="8" class="table-empty"><strong>还没有符合条件的供应商</strong>审核通过申请后，组织会显示在这里。</td></tr>';
     return;
   }
-  tbody.innerHTML = rows.map((item) => `
+  tbody.innerHTML = visibleRows.map((item) => `
     <tr>
       <td><div class="table-primary">${Matrix.escapeHtml(item.organization_name)}</div><div class="table-secondary">${Matrix.escapeHtml(item.organization_code)} · ${Matrix.escapeHtml(item.legal_name)}</div></td>
       <td><div class="table-primary">${Matrix.escapeHtml(item.contact_name || "—")}</div><div class="table-secondary">${Matrix.escapeHtml(item.contact_email || "—")}</div></td>
@@ -142,12 +166,13 @@ function renderBrandCooperations() {
 
 function renderIntegrationClients() {
   const tbody = document.querySelector("#integration-clients-tbody");
+  const visibleRows = paginateAdmin("integration", adminState.integrationClients);
   document.querySelector("#integration-clients-count").textContent = `共 ${adminState.integrationClients.length} 个`;
   if (!adminState.integrationClients.length) {
     tbody.innerHTML = '<tr><td colspan="7" class="table-empty"><strong>还没有集成调用方</strong>创建后，明文令牌只会显示一次。</td></tr>';
     return;
   }
-  tbody.innerHTML = adminState.integrationClients.map((item) => {
+  tbody.innerHTML = visibleRows.map((item) => {
     const expired = item.expires_at && new Date(item.expires_at).getTime() <= Date.now();
     const usable = item.is_active && !expired;
     return `
@@ -508,9 +533,9 @@ async function bootAdmin() {
   document.querySelector("#refresh-applications").addEventListener("click", loadApplications);
   document.querySelector("#refresh-suppliers").addEventListener("click", loadSuppliers);
   document.querySelector("#refresh-integration-clients").addEventListener("click", loadIntegrationClients);
-  document.querySelector("#applications-search").addEventListener("input", renderApplications);
-  document.querySelector("#applications-status").addEventListener("change", renderApplications);
-  document.querySelector("#suppliers-search").addEventListener("input", renderSuppliers);
+  document.querySelector("#applications-search").addEventListener("input", () => { adminState.applicationPage = 1; renderApplications(); });
+  document.querySelector("#applications-status").addEventListener("change", () => { adminState.applicationPage = 1; renderApplications(); });
+  document.querySelector("#suppliers-search").addEventListener("input", () => { adminState.supplierPage = 1; renderSuppliers(); });
   document.querySelectorAll("[data-close-review]").forEach((button) => button.addEventListener("click", () => document.querySelector("#application-review-dialog").close()));
   document.querySelectorAll("[data-close-brand-cooperation]").forEach((button) => button.addEventListener("click", () => document.querySelector("#brand-cooperation-dialog").close()));
   bindIntegrationTokenDialog();

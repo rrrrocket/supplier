@@ -43,9 +43,10 @@ services:
         node --check app/web/assets/login.js &&
         node --check app/web/assets/apply.js &&
         node --check app/web/assets/import-workbook.js &&
+        node --check app/web/assets/pagination.js &&
         node --check app/web/assets/app.js &&
         node --check app/web/assets/admin.js &&
-        node --test tests/test_public_auth.js tests/test_import_workbook.js tests/test_admin_catalog.js tests/test_supplier_lists.js
+        node --test tests/test_public_auth.js tests/test_import_workbook.js tests/test_pagination.js tests/test_admin_catalog.js tests/test_supplier_lists.js
 
 volumes:
   supplier_test_postgres:

@@ -390,3 +390,17 @@ test("escape, native close, and close buttons all clear the one-time token", () 
   assert.equal(tokenValue.textContent, "");
   assert.equal(copyButton.onclick, null);
 });
+
+test("all admin tables render the first fifty rows through unified pagination", () => {
+  const harness = adminHarness(async () => []);
+  const applications = Array.from({ length: 120 }, (_, index) => ({ id: `a-${index}`, application_no: `A-${index}`, company_name: `申请 ${index}`, company_type: "企业", province: "上海", city: "上海", contact_name: "联系人", email: "a@example.com", categories: [], cooperation_modes: [], created_at: "2026-09-09", status: "PENDING" }));
+  const suppliers = Array.from({ length: 120 }, (_, index) => ({ organization_id: `s-${index}`, organization_code: `S-${index}`, organization_name: `供应商 ${index}`, legal_name: "公司", contact_name: "联系人", contact_email: "s@example.com", profile_completion: 100, product_count: 1, active_offer_count: 1, status: "ACTIVE", created_at: "2026-09-09" }));
+  const clients = Array.from({ length: 120 }, (_, index) => ({ id: `c-${index}`, name: `调用方 ${index}`, token_prefix: "m1i_test", scopes: [], is_active: true }));
+  harness.context.applicationsFixture = applications;
+  harness.context.suppliersFixture = suppliers;
+  harness.context.clientsFixture = clients;
+  vm.runInContext("adminState.applications = applicationsFixture; adminState.suppliers = suppliersFixture; adminState.integrationClients = clientsFixture; renderApplications(); renderSuppliers(); renderIntegrationClients();", harness.context);
+  assert.equal((harness.elements.get("#applications-tbody").innerHTML.match(/<tr>/g) || []).length, 50);
+  assert.equal((harness.elements.get("#suppliers-tbody").innerHTML.match(/<tr>/g) || []).length, 50);
+  assert.equal((harness.elements.get("#integration-clients-tbody").innerHTML.match(/<tr>/g) || []).length, 50);
+});

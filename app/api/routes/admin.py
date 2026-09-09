@@ -98,11 +98,16 @@ def list_applications(
     db: DbSession,
     _: PlatformAdmin,
     application_status: str | None = Query(default=None, alias="status"),
-    limit: int = Query(default=200, ge=1, le=1000),
+    limit: int | None = Query(default=None, ge=1, le=1000),
 ) -> list[ApplicationAdminView]:
-    stmt = select(SupplierApplication).order_by(SupplierApplication.created_at.desc()).limit(limit)
+    stmt = select(SupplierApplication).order_by(
+        SupplierApplication.created_at.desc(),
+        SupplierApplication.id.desc(),
+    )
     if application_status:
         stmt = stmt.where(SupplierApplication.status == application_status.upper())
+    if limit is not None:
+        stmt = stmt.limit(limit)
     return [application_view(item) for item in db.scalars(stmt).all()]
 
 

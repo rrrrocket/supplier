@@ -6,9 +6,10 @@
   <meta name="robots" content="noindex,nofollow">
   <title>供应网络管理 · Matrix One</title>
   <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/styles.css?v=20260909-integration-clients">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260909-pagination">
   <script src="/assets/common.js?v=20260909-integration-clients" defer></script>
-  <script src="/assets/admin.js?v=20260909-integration-clients" defer></script>
+  <script src="/assets/pagination.js?v=20260909-pagination" defer></script>
+  <script src="/assets/admin.js?v=20260909-pagination" defer></script>
 </head>
 <body class="app-body">
   <div class="app-shell">
@@ -91,7 +92,7 @@
                 <tbody id="applications-tbody"><tr><td colspan="7" class="table-empty">正在加载…</td></tr></tbody>
               </table>
             </div>
-            <footer class="table-footer"><span id="applications-count">共 0 条</span><span>审核通过后自动创建组织、企业档案和供应商账号</span></footer>
+            <footer class="table-footer"><span id="applications-count" class="sr-only">共 0 条</span><div id="application-pagination" class="unified-pagination"></div></footer>
           </section>
         </section>
 
@@ -111,7 +112,7 @@
                 <tbody id="suppliers-tbody"><tr><td colspan="8" class="table-empty">正在加载…</td></tr></tbody>
               </table>
             </div>
-            <footer class="table-footer"><span id="suppliers-count">共 0 家</span><span>综合评估履约、质量与合作贡献</span></footer>
+            <footer class="table-footer"><span id="suppliers-count" class="sr-only">共 0 家</span><div id="supplier-pagination" class="unified-pagination"></div></footer>
           </section>
         </section>
 
@@ -169,7 +170,7 @@
                 <tbody id="integration-clients-tbody"><tr><td colspan="7" class="table-empty">正在加载…</td></tr></tbody>
               </table>
             </div>
-            <footer class="table-footer"><span id="integration-clients-count">共 0 个</span><span>列表不会返回明文令牌或令牌哈希</span></footer>
+            <footer class="table-footer"><span id="integration-clients-count" class="sr-only">共 0 个</span><div id="integration-pagination" class="unified-pagination"></div></footer>
           </section>
         </section>
       </main>
