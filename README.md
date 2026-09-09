@@ -158,7 +158,7 @@ tests/           API、权限、安全与审核闭环测试
 - **Integration Client**：外部系统独立机器凭证；明文令牌只展示一次，数据库只保存哈希。
 - **Organization ID**：所有供应商业务数据按组织隔离，客户端不能自行指定数据归属。
 
-通用集成接口统一使用 `/api/integrations/v1`，提供六条供应商/品牌/Supplier SKU/成本路径。列表支持 `updated_since`、`cursor`、`include_inactive` 和 1..500 的 `limit`；批量成本接受 1..500 行并原样回传调用方的 `client_sku_id`。完整接入契约见 [通用系统接入指南](docs/integrations/system-integration-guide.md)。
+通用集成接口统一使用 `/api/integrations/v1`，提供六条供应商/品牌/Supplier SKU/成本路径。列表支持 `updated_since`、绑定查询条件与固定快照的 `cursor`、每页 `sync_watermark`、`include_inactive` 和 1..500 的 `limit`；批量成本接受 1..500 行并原样回传调用方的 `client_sku_id`。完整接入契约见 [通用系统接入指南](docs/integrations/system-integration-guide.md)。
 
 详细说明见 [文档索引](docs/README.md)、[系统架构](docs/architecture/overview.md) 和 [数据字典](docs/architecture/data-dictionary.md)。
 
@@ -168,11 +168,20 @@ tests/           API、权限、安全与审核闭环测试
 ./start.sh test
 ```
 
-Python 测试在独立的 PostgreSQL 16 服务和持久命名卷中执行，使用固定测试数据库与凭证，且不连接业务数据库；同一命令也会完成前端脚本语法检查和登录状态测试。每次运行只移除一次性的测试 runner，保留健康的 `test-db`、测试网络、命名卷和累积测试记录，供后续 `./start.sh test` 复用。测试 Compose 不开放 Web 或数据库宿主机端口。
+Python 测试在独立的 PostgreSQL 16 服务和持久命名卷中执行，使用固定测试数据库与凭证，且不连接业务数据库；同一命令也会完成前端脚本语法检查和登录状态测试。每次运行只移除一次性的测试 runner，保留健康的 `test-db`、测试网络和命名卷；测试会话在数据库名必须以 `_test` 结尾的硬保护下清空业务表，避免历史 fixture 累积。测试 Compose 不开放 Web 或数据库宿主机端口。
 
 ## 7. 数据库迁移
 
-`./start.sh` 和 `./start.sh restart` 都会在应用启动前自动执行现有 Alembic 升级，常规使用无需单独操作数据库迁移。当前 Alembic head 是 `cc83f7e534a1`；最终表只保留非空 `products.brand_id` 和 `supplier_offers.supplier_sku_id`，不再保留对应的历史文本列。
+`./start.sh` 和 `./start.sh restart` 都会在应用启动前自动执行现有 Alembic 升级。当前 Alembic head 是 `cc83f7e534a1`；最终表只保留非空 `products.brand_id` 和 `supplier_offers.supplier_sku_id`，不再保留对应的历史文本列。
+
+该迁移链只支持停机发布，不支持跨 `cc83f7e534a1` 的滚动升级：
+
+1. 停止并确认所有旧版应用、导入任务和其他数据库 writer 已退出；
+2. 创建可恢复的数据库备份，并在只读检查中确认 Offer 组织、Product owner/brand、Variant 和 Supplier SKU 的域关系一致；
+3. 在停写窗口执行 `alembic upgrade head`；任一 preflight 报错时保持旧版停机，修正或恢复数据后重试；
+4. 升级成功后只启动最终二进制，再执行健康检查和抽样校验。
+
+`cc83f7e534a1` 删除旧文本列后，不能直接回滚到旧二进制。回滚必须先执行经过验证的数据库 downgrade，或恢复发布前备份，再启动旧版。过渡期 reconciliation 只能收敛迁移执行前的迟到写入，不能替代上述停写窗口。
 
 ## 8. PostgreSQL 运行环境
 

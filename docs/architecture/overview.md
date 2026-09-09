@@ -44,7 +44,7 @@ SupplierApplication
 
 ### Product 与 Offer 分离
 
-`Product` 回答“这是什么商品”；`SupplierSku` 提供不会随成本、库存或交期变化的供应商货号身份；`SupplierOffer` 回答“当前能以什么条件提供”。`Product.brand_id` 关联规范化 `Brand`，`SupplierOffer.supplier_sku_id` 关联稳定 SKU。最终数据库不再包含历史 `products.brand` 或 `supplier_offers.supplier_sku` 列。
+`Product` 回答“这是什么商品”；`SupplierSku` 提供不会随成本、库存或交期变化的供应商货号身份；`SupplierOffer` 回答“当前能以什么条件提供”。`Product.brand_id` 关联规范化 `Brand`，`SupplierOffer.supplier_sku_id` 关联稳定 SKU。最终数据库不再包含历史 `products.brand` 或 `supplier_offers.supplier_sku` 列。数据库约束触发器持续保证 Supplier SKU 的 supplier/brand/product/variant 和 Offer 的 organization/product/variant 位于同一业务域，服务层读取成本时再次防御性校验。
 
 ### 品牌合作由平台确认
 
@@ -56,7 +56,7 @@ SupplierApplication
 
 平台管理员属于独立 PLATFORM 组织，仅通过受控管理 API 审核申请和查看组织级汇总；供应商账号无法访问管理 API。
 
-通用集成 API 使用独立 `IntegrationClient` Bearer 令牌和 scope，不复用网页 Session。令牌明文只在创建或轮换时展示一次；数据库只保存哈希。外部系统只能读取平台已确认的供应商、品牌、SKU 和模式 A 当前成本，并在自己的数据库保存 `supplier_network_supplier_id`、`supplier_network_sku_id` 及人工确认的映射。
+通用集成 API 使用独立 `IntegrationClient` Bearer 令牌和 scope，不复用网页 Session。令牌明文只在创建或轮换时展示一次；数据库只保存哈希。创建时不能指定已过去的到期时间，过期或撤销后不能轮换。外部系统只能读取平台已确认的供应商、品牌、SKU 和模式 A 当前成本，并在自己的数据库保存 `supplier_network_supplier_id`、`supplier_network_sku_id` 及人工确认的映射。
 
 ### Event Log 是审计与未来 AI 学习基础
 
@@ -155,7 +155,7 @@ Event Log
 外部系统同步
 ```
 
-供应商工作台用 `limit=500` 分块读取完整 Product/Offer 列表，在浏览器内每页渲染 50 行。导入预览的排除动作只切换行的 `included` 状态：需修正行可以批量排除和恢复，未包含行不参与重复校验或最终写入。
+供应商工作台保留原 plain-array Product/Offer 接口供兼容调用方使用，界面改用按不可变 ID 排序的专用 cursor page 接口逐页读取完整列表，再在浏览器内按更新时间排序并每页渲染 50 行。导入预览的排除动作只切换行的 `included` 状态：品牌与最终写入同为必填字段，编辑后重跑整行校验；需修正行可以批量排除和恢复，未包含行不参与重复校验或最终写入。
 
 ### 通用系统接入
 
@@ -171,7 +171,9 @@ Bearer 认证 + scope + 每客户端限流
 调用方保存稳定 ID 并完成人工映射
 ```
 
-列表使用 `updated_since + cursor + limit + include_inactive`；成本批量一次 1..500 行。默认限流为每个 Integration Client 每 60 秒 600 次，429 返回 `Retry-After`。当前单 Uvicorn worker 使用进程内限流；多 worker 或多实例部署必须提供共享限流器。
+列表使用 `updated_since + cursor + limit + include_inactive`；cursor 绑定资源、供应商、筛选条件与固定数据库快照，每页都返回可提交为下一轮水位的 `sync_watermark`。成本批量一次 1..500 行。默认限流为每个 Integration Client 每 60 秒 600 次，429 返回 `Retry-After`。当前单 Uvicorn worker 使用进程内限流；多 worker 或多实例部署必须提供共享限流器。
+
+目录 contract migration 只支持停机发布：停止所有 writer、备份并完成域预检、升级到最终 revision 后再启动最终二进制。跨最终删列 revision 的滚动升级/旧二进制直接回滚不受支持，回滚需先 downgrade 或恢复备份。
 
 ### 后续供应商评分
 

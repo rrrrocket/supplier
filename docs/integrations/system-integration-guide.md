@@ -180,11 +180,11 @@ supplier_network_supplier_id + supplier_network_sku_id
 | 参数 | 默认值/范围 | 说明 |
 |---|---|---|
 | `updated_since` | 可选，带时区时间 | 只返回有效更新时间严格晚于该水位的资源 |
-| `cursor` | 可选，不透明字符串 | 传入上一页 `next_cursor`；不得解析、修改或跨查询条件复用 |
+| `cursor` | 可选，不透明字符串 | 传入上一页 `next_cursor`；游标绑定资源、供应商、`updated_since`、`include_inactive` 和本轮服务端快照，不得解析、修改或跨查询条件复用 |
 | `limit` | 默认 100，范围 1..500 | 单页条数 |
 | `include_inactive` | 默认 `false` | 为 `true` 时同时返回 `INACTIVE` 资源，供失效映射对账 |
 
-每页都返回 `items` 和 `next_cursor`。必须拉到 `next_cursor=null` 才算完成一轮同步；同一轮翻页期间保持 `updated_since` 和 `include_inactive` 不变。
+每页（包括空页和最后一页）都返回相同的 `sync_watermark`，它是本轮固定的服务端快照上界。必须拉到 `next_cursor=null` 才算完成一轮同步；同一轮翻页期间保持 `updated_since` 和 `include_inactive` 不变，并在完成后把响应的 `sync_watermark` 持久化为下一轮 `updated_since`。翻页期间发生的新增或更新不会混入当前轮，而会在下一轮返回。
 
 ### 8.1 获取供应商列表
 
@@ -205,7 +205,8 @@ GET /suppliers?updated_since=2026-09-08T00:00:00Z&limit=100
       "updated_at": "2026-09-08T10:00:00Z"
     }
   ],
-  "next_cursor": null
+  "next_cursor": null,
+  "sync_watermark": "2026-09-08T10:05:00Z"
 }
 ```
 
@@ -237,7 +238,8 @@ GET /suppliers/{supplier_id}/brands
       "updated_at": "2026-09-08T10:00:00Z"
     }
   ],
-  "next_cursor": null
+  "next_cursor": null,
+  "sync_watermark": "2026-09-08T10:05:00Z"
 }
 ```
 
@@ -274,7 +276,8 @@ GET /suppliers/{supplier_id}/skus?updated_since=2026-09-08T00:00:00Z&limit=200
       "updated_at": "2026-09-08T10:00:00Z"
     }
   ],
-  "next_cursor": null
+  "next_cursor": null,
+  "sync_watermark": "2026-09-08T10:05:00Z"
 }
 ```
 
@@ -396,7 +399,7 @@ Content-Type: application/json
 
 - 每日或按业务需要调用 `updated_since` 增量同步。
 - 绑定供应商和进入匹配页面时立即刷新一次。
-- 使用 `next_cursor` 完成全部分页后再提交本次同步水位。
+- 使用 `next_cursor` 完成全部分页后，再把服务端返回的 `sync_watermark` 提交为下一轮 `updated_since`。
 - 如果同步中途失败，不更新水位，使用原水位重试。
 
 ### 10.2 成本

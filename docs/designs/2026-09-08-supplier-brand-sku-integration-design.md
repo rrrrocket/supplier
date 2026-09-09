@@ -201,7 +201,7 @@ GET  /api/integrations/v1/suppliers/{supplier_id}/skus/{supplier_sku_id}/cost
 POST /api/integrations/v1/sku-costs/query
 ```
 
-供应商、品牌合作和 Supplier SKU 列表都支持 `updated_since`、不透明 `cursor`、`include_inactive` 和 `limit`。默认 `limit=100`，范围 1..500。`include_inactive=true` 时，缺少当前合作关系的孤儿 Supplier SKU 以 `status=INACTIVE`、`commercial_mode=null` 返回；正常有效行的模式仍只能是三种正式模式之一。
+供应商、品牌合作和 Supplier SKU 列表都支持 `updated_since`、不透明 `cursor`、`include_inactive` 和 `limit`。默认 `limit=100`，范围 1..500。首请求获取数据库服务端时间作为固定快照上界；游标绑定资源、供应商、筛选条件和该快照，每页（包括空页与最后一页）都返回同一 `sync_watermark`。调用方拉到 `next_cursor=null` 后，使用该服务端水位开始下一轮，页间新增或更新不会混入当前轮。`include_inactive=true` 时，缺少当前合作关系的孤儿 Supplier SKU 以 `status=INACTIVE`、`commercial_mode=null` 返回；正常有效行的模式仍只能是三种正式模式之一。
 
 ### 8.1 批量成本查询
 
@@ -284,7 +284,7 @@ POST /api/integrations/v1/sku-costs/query
 - 令牌仅在创建时展示一次，数据库只保存哈希。
 - 每个调用方使用独立令牌和最小权限范围。
 - 成本接口必须具有 `supplier-costs:read`。
-- 管理端支持创建、到期、轮换和停用；轮换或停用后旧令牌立即失效。
+- 管理端支持创建、到期、轮换和停用；创建时到期时间必须晚于当前时间，已撤销或过期凭证不能轮换，管理界面明确显示 `EXPIRED`。成功轮换或停用后旧令牌立即失效。
 - 调用方可以发送 `X-Request-ID`；成本请求在成功及可识别调用方的 400/403/404/409/429/5xx 结果上各写一条聚合审计事件。
 - 审计记录包含调用方 ID、请求 ID、接口、结果数量、错误数量和时间，不记录完整令牌、成本值或 `client_sku_id`。
 - 日志不得输出成本批量响应正文。
@@ -295,7 +295,7 @@ POST /api/integrations/v1/sku-costs/query
 
 第一阶段不实现推送：
 
-- 调用方定时使用 `updated_since` 增量获取供应商和 Supplier SKU。
+- 调用方定时使用 `updated_since` 增量获取供应商和 Supplier SKU；每轮持久化服务端返回的 `sync_watermark`，失败时保留原水位重试。
 - 调用方在绑定或重新匹配时拉取指定供应商的品牌和 SKU。
 - 调用方在需要使用成本时实时调用成本接口。
 - 成本变更不影响已经确认的 SKU 映射。
@@ -308,9 +308,10 @@ POST /api/integrations/v1/sku-costs/query
 3. 从每条既有 `SupplierOffer` 创建稳定 `SupplierSku`，并保留原 Offer ID、价格、库存、MOQ、交期和库存快照关系。
 4. 过渡期 catch-up 迁移再次协调迟到写入，之后把 `products.brand_id` 和 `supplier_offers.supplier_sku_id` 收紧为非空。
 5. 最终迁移 `cc83f7e534a1` 删除历史 `products.brand` 和 `supplier_offers.supplier_sku` 列；当前 Alembic head 为 `cc83f7e534a1`。
-6. 空品牌、重复身份或缺失外键会在收紧前显式失败，不静默合并或截断；外部调用方映射仍由调用方保存。
+6. 空品牌、重复身份、跨租户/非供应商 owner、Product/Brand/Variant 不一致或缺失外键会在任何新目录行写入前显式失败，不静默合并或截断。
+7. 最终数据库用约束触发器持续校验 Supplier SKU 的 supplier/brand/product/variant，以及 Offer 的 organization/product/variant 与 SKU 域关系；成本读取仍执行防御性对齐校验。外部调用方映射仍由调用方保存。
 
-迁移链已在全新 PostgreSQL 测试数据库及历史夹具上验证，应用不以运行时自动建表替代 Alembic。真实业务库备份与迁移仍需在部署窗口单独授权执行。
+迁移链已在全新 PostgreSQL 测试数据库及历史、非法域夹具上验证，应用不以运行时自动建表替代 Alembic。生产只支持停机发布：停止全部 writer、备份并预检、升级到 contract revision、再启动最终二进制。跨 `cc83f7e534a1` 的滚动升级和直接回滚旧二进制不受支持；回滚必须先执行已验证的 downgrade 或恢复发布前备份。真实业务库备份与迁移仍需在部署窗口单独授权执行。
 
 ## 13. 界面调整
 
@@ -319,8 +320,8 @@ Supplier 工作台：
 - 商品和报价页面显示稳定的 Supplier SKU ID 与供应商货号。
 - 模式 A SKU 的现有价格字段在界面中明确显示为“成本价”。
 - 供应商可以更新成本价，但不能自行修改平台确认的品牌合作模式。
-- 商品和报价 API 按最多 500 行分块拉取完整结果，浏览器表格每页渲染 50 行；筛选、编辑和 Offer 商品选项基于完整客户端列表。
-- 导入预览可筛选需修正行，批量排除后仍保留原行并允许一键恢复；只有 `included` 行参与重复校验和最终导入。
+- legacy 商品和报价列表仍返回 plain array；工作台改用按不可变 ID 排序的专用 cursor page API，逐页拉取完整结果后再按更新时间展示。浏览器表格每页渲染 50 行，筛选、编辑和 Offer 商品选项基于完整客户端列表。
+- 导入预览把品牌与最终写入一致地视为必填字段；每次编辑都重跑确定性整行校验。需修正行可批量排除，排除后仍保留原行并允许一键恢复；只有 `included` 且有效的行参与重复校验和最终导入。
 
 平台管理端：
 
@@ -340,4 +341,6 @@ Supplier 工作台：
 - 停用供应商、合作关系或 SKU 后，成本接口返回相应错误。
 - 批量查询单行失败不影响其他行。
 - 不同 Integration Client 的凭证、权限和审计记录相互隔离。
+- Product/Offer 工作台在 1,792 行分页期间更新较早返回行时仍完整收集所有既有行。
+- 并发创建同一 Supplier SKU 返回同一稳定 ID；首次品牌合作并发写入串行化且始终只有一条有效关系。
 - 调用方保存确认映射后，成本变化不要求重新匹配。
