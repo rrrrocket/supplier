@@ -231,7 +231,11 @@ def approve_operator_application(
         password_hash=hash_password(temporary_password),
     )
     db.add(user)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="运营商邮箱或统一社会信用代码已存在") from error
     application.status = SupplierStatus.APPROVED.value
     application.review_notes = (payload.notes or "").strip() or None
     application.approved_organization_id = organization.id
