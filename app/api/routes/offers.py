@@ -20,7 +20,7 @@ from app.services.events import record_event
 from app.services.list_pagination import decode_list_cursor, encode_list_cursor
 
 
-router = APIRouter(prefix="/offers", tags=["供应报价"])
+router = APIRouter(prefix="/offers", tags=["商品报价"])
 
 
 def offer_view(

@@ -340,24 +340,6 @@ test("offer search catches the current debounced load failure without an unhandl
 });
 
 
-test("product search catches the current debounced load failure without an unhandled rejection", async () => {
-  const harness = supplierListsHarness(async (requestPath) => {
-    if (requestPath.startsWith("/api/products/page?")) throw new Error("current product search failure");
-    return [];
-  });
-  harness.evaluate("bindEvents()");
-  const search = harness.evaluate('document.querySelector("#products-search")');
-  search.value = "needle";
-
-  search.dispatch("input");
-  await new Promise((resolve) => setTimeout(resolve, 320));
-
-  assert.equal(harness.toasts.length, 1);
-  assert.match(harness.toasts[0].join(" "), /商品加载失败/);
-  assert.match(harness.toasts[0].join(" "), /current product search failure/);
-});
-
-
 test("stale offer filter rejection stays silent while only the latest failure toasts", async () => {
   const staleRequest = deferred();
   const currentRequest = deferred();
@@ -471,11 +453,74 @@ test("dashboard metrics link products, active, low-stock, and pending offers wit
     { key: "pending", label: "待处理数据", value: "1", hint: "" , tone: "orange"},
   ], checklist: [], recent_events: [], supplier_status: "ACTIVE", profile_completion: 100 }; renderDashboard()`);
   const html = harness.elements.get("#dashboard-root").innerHTML;
-  assert.match(html, /data-dashboard-route="products"/);
+  assert.equal((html.match(/data-dashboard-route="offers"/g) || []).length, 4);
   assert.match(html, /data-dashboard-route="offers"/);
   assert.match(html, /data-dashboard-route="offers" data-dashboard-filter="low-stock"/);
   assert.match(html, /data-dashboard-route="offers" data-dashboard-filter="pending"/);
   assert.doesNotMatch(html, /供应网络接入进度/);
+});
+
+test("supplier renders and saves commercial modes only for its assigned brands", async () => {
+  const requests = [];
+  const cooperations = [{
+    brand_id: "own-brand",
+    brand_code: "OWN",
+    brand_name: "自有品牌",
+    commercial_mode: null,
+    status: "ACTIVE",
+  }];
+  const harness = supplierListsHarness(async (requestPath, options = {}) => {
+    requests.push({ requestPath, options });
+    if (options.method === "PUT") return { ...cooperations[0], commercial_mode: "B2B" };
+    if (requestPath === "/api/supplier-catalog/brand-cooperations") {
+      return [{ ...cooperations[0], commercial_mode: "B2B" }];
+    }
+    if (requestPath.startsWith("/api/offers/page?")) {
+      return { items: [{ ...rows("更新后报价", 1)[0], commercial_mode: "B2B" }], next_cursor: null };
+    }
+    return [];
+  });
+  harness.evaluate(`state.brandCooperations = ${JSON.stringify(cooperations)}; renderBrandCommercialModes()`);
+  const html = harness.elements.get("#brand-commercial-mode-list").innerHTML;
+  assert.match(html, /自有品牌/);
+  assert.match(html, /data-brand-commercial-mode="own-brand"/);
+  harness.evaluate('document.querySelector(\'[data-brand-commercial-mode="own-brand"]\')');
+  harness.elements.get('[data-brand-commercial-mode="own-brand"]').value = "B2B";
+
+  await harness.evaluate("saveBrandCommercialMode('own-brand')");
+
+  assert.deepEqual(JSON.parse(JSON.stringify(requests)), [
+    {
+      requestPath: "/api/supplier-catalog/brand-cooperations/own-brand",
+      options: { method: "PUT", body: { commercial_mode: "B2B" } },
+    },
+    { requestPath: "/api/supplier-catalog/brand-cooperations", options: {} },
+    { requestPath: "/api/offers/page?limit=500", options: {} },
+  ]);
+  assert.match(harness.elements.get("#offers-tbody").innerHTML, /供货价/);
+  assert.deepEqual(harness.toasts.at(-1), ["合作模式已保存", "商品报价将使用最新品牌合作模式。", "success"]);
+});
+
+test("editing an offer prefers the latest supplier brand mode over stale offer data", async () => {
+  const harness = supplierListsHarness(async (requestPath) => {
+    if (requestPath === "/api/supplier-catalog/brand-cooperations") {
+      return [{ brand_id: "brand-1", brand_name: "品牌一", commercial_mode: "B2B", status: "ACTIVE" }];
+    }
+    return [];
+  });
+  harness.evaluate(`
+    state.products = [{ id: "product-1", brand_id: "brand-1", name: "商品一" }];
+    document.querySelector("#offer-form").elements = Object.fromEntries(
+      ["product_id", "supplier_sku_code", "price", "currency", "moq", "stock_qty", "lead_time_days", "fulfillment_mode", "status", "notes"]
+        .map((name) => [name, { disabled: false, value: "" }]),
+    );
+  `);
+  await harness.evaluate(`openOfferDialog("", {
+    id: "offer-1", product_id: "product-1", supplier_sku_id: "sku-id", supplier_sku_code: "SKU-1",
+    commercial_mode: "SELF_PURCHASE", price: "10", currency: "CNY", moq: 1, stock_qty: 2,
+    lead_time_days: 3, fulfillment_mode: "PURCHASE", status: "ACTIVE", notes: ""
+  })`);
+  assert.equal(harness.elements.get("#offer-price-label").textContent, "供货价");
 });
 
 test("low-stock dashboard filter shows only offers at or below ten units", () => {

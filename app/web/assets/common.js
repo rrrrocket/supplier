@@ -21,7 +21,7 @@
     INTEGRATION_SKU_COSTS_QUERIED: ["查询 SKU 成本", "集成调用方已查询当前成本"],
     OFFER_CREATED: ["新建报价", "报价已进入供应网络"],
     OFFER_UPDATED: ["更新报价", "价格、库存或交期发生更新"],
-    PRODUCT_CREATED: ["新建商品", "商品主数据已创建"],
+    PRODUCT_CREATED: ["新建商品", "商品已创建"],
     PRODUCT_OFFERS_IMPORTED: ["批量导入", "商品与报价数据已处理"],
     SUPPLIER_APPROVED: ["供应商审核通过", "供应能力档案已激活"],
     SUPPLIER_APPLICATION_APPROVED: ["入驻申请通过", "供应商组织与供应商账号已创建"],

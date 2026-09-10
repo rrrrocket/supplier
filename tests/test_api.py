@@ -1486,6 +1486,82 @@ def test_supplier_catalog_lists_only_active_assigned_brands(
     assert by_code["TEST-BRAND-ALT"]["commercial_mode"] == "B2B"
 
 
+def test_supplier_updates_only_its_own_brand_commercial_mode(
+    authenticated_client: TestClient,
+) -> None:
+    with SessionLocal() as db:
+        supplier = db.scalar(
+            select(Organization).where(Organization.code == "TEST-SUPPLIER")
+        )
+        assert supplier is not None
+        own_brand = Brand(
+            code=f"MODE-OWN-{uuid4().hex[:8]}",
+            name=f"自有模式品牌-{uuid4().hex[:8]}",
+            normalized_name=f"own-{uuid4().hex}",
+            aliases=[],
+            status=CatalogStatus.ACTIVE.value,
+        )
+        other_supplier = Organization(
+            code=f"MODE-OTHER-{uuid4().hex[:8]}",
+            name="模式隔离供应商",
+            organization_type=OrganizationType.SUPPLIER.value,
+        )
+        other_brand = Brand(
+            code=f"MODE-BRAND-{uuid4().hex[:8]}",
+            name=f"其他供应商品牌-{uuid4().hex[:8]}",
+            normalized_name=f"other-{uuid4().hex}",
+            aliases=[],
+            status=CatalogStatus.ACTIVE.value,
+        )
+        db.add_all([own_brand, other_supplier, other_brand])
+        db.flush()
+        db.add_all([
+            SupplierBrandCooperation(
+                supplier_id=supplier.id,
+                brand_id=own_brand.id,
+                commercial_mode=None,
+                status=CatalogStatus.ACTIVE.value,
+            ),
+            SupplierBrandCooperation(
+                supplier_id=other_supplier.id,
+                brand_id=other_brand.id,
+                commercial_mode=None,
+                status=CatalogStatus.ACTIVE.value,
+            ),
+        ])
+        db.commit()
+        own_brand_id = own_brand.id
+        other_brand_id = other_brand.id
+
+    updated = authenticated_client.put(
+        f"/api/supplier-catalog/brand-cooperations/{own_brand_id}",
+        json={"commercial_mode": "JOINT_OPERATION"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["brand_id"] == own_brand_id
+    assert updated.json()["commercial_mode"] == "JOINT_OPERATION"
+
+    forbidden = authenticated_client.put(
+        f"/api/supplier-catalog/brand-cooperations/{other_brand_id}",
+        json={"commercial_mode": "B2B"},
+    )
+    assert forbidden.status_code == 404
+
+
+def test_supplier_workbench_consolidates_products_into_product_offers(
+    authenticated_client: TestClient,
+) -> None:
+    page = authenticated_client.get("/app")
+
+    assert page.status_code == 200
+    assert 'data-route="products"' not in page.text
+    assert 'data-view="products"' not in page.text
+    assert "商品主数据" not in page.text
+    assert "供应报价" not in page.text
+    assert "商品报价" in page.text
+    assert 'id="brand-commercial-mode-list"' in page.text
+
+
 def test_reimporting_supplier_sku_code_reuses_stable_id(
     authenticated_client: TestClient,
 ) -> None:

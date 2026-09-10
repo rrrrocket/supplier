@@ -564,6 +564,14 @@ img, svg { display: block; }
 .import-error-summary strong { color: #9a3412; white-space: normal; }
 .import-error-summary p { margin: 6px 0 0; font-size: 10px; line-height: 1.6; }
 .import-retry-action { font-size: 11px; }
+.brand-mode-panel { margin-bottom: 16px; }
+.brand-mode-list { display: grid; }
+.brand-mode-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, 260px) auto; gap: 12px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--line); }
+.brand-mode-item strong, .brand-mode-item span { display: block; }
+.brand-mode-item strong { font-size: 12px; }
+.brand-mode-item span { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.brand-mode-help { margin: 0; padding: 0 16px 14px; color: var(--muted); font-size: 10px; }
+@media (max-width: 720px) { .brand-mode-item { grid-template-columns: 1fr; } }
 
 .placeholder-card { min-height: 370px; display: grid; place-items: center; text-align: center; background: #fff; border: 1px solid var(--line); border-radius: 16px; }
 .placeholder-inner { max-width: 470px; padding: 38px; }

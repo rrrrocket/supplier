@@ -10,8 +10,8 @@
 - 供应商账号登录与组织数据隔离
 - 企业供应能力档案
 - 统一商品主数据（Product）
-- 规范化品牌、平台确认的供应商—品牌合作模式
-- 稳定 Supplier SKU 身份与独立供应报价（Supplier Offer）
+- 规范化品牌、供应商配置的品牌合作模式
+- 稳定 Supplier SKU 身份与独立商品报价（Supplier Offer）
 - 价格、MOQ、库存、交期与履约方式
 - CSV / XLSX / XLS / PDF 智能表格导入、字段匹配、预览校验与 Upsert
 - 库存快照
@@ -150,7 +150,7 @@ tests/           API、权限、安全与审核闭环测试
 - **Supplier Application**：未入驻企业的公开申请；审核通过后关联新组织。
 - **Organization**：平台或供应商的数据隔离边界。
 - **Product**：描述商品是什么；不直接存供应商价格和库存。
-- **Brand / Supplier Brand Cooperation**：规范化品牌，以及由平台确认的当前/历史正式合作模式。
+- **Brand / Supplier Brand Cooperation**：规范化品牌，以及由供应商配置的当前/历史正式合作模式。
 - **Supplier SKU**：供应商货号的稳定身份；成本、库存和交期变化不改变 ID。
 - **Supplier Offer**：描述一个 Supplier SKU 当前能以什么价格、MOQ、库存和交期供货。
 - **Inventory Snapshot**：保留库存变化事实。

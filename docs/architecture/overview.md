@@ -46,9 +46,9 @@ SupplierApplication
 
 `Product` 回答“这是什么商品”；`SupplierSku` 提供不会随成本、库存或交期变化的供应商货号身份；`SupplierOffer` 回答“当前能以什么条件提供”。`Product.brand_id` 关联规范化 `Brand`，`SupplierOffer.supplier_sku_id` 关联稳定 SKU。最终数据库不再包含历史 `products.brand` 或 `supplier_offers.supplier_sku` 列。数据库约束触发器持续保证 Supplier SKU 的 supplier/brand/product/variant 和 Offer 的 organization/product/variant 位于同一业务域，服务层读取成本时再次防御性校验。
 
-### 品牌合作由平台确认
+### 品牌合作模式由供应商配置
 
-`SupplierBrandCooperation` 记录一个供应商与一个品牌的正式 `SELF_PURCHASE`、`JOINT_OPERATION` 或 `B2B` 模式，并保留失效历史。同一供应商和品牌同时最多一条有效关系。供应商申请里的合作方式只是意向；供应商可以查看正式关系，但只有平台管理员可以变更。
+`SupplierBrandCooperation` 记录一个供应商与一个品牌的正式 `SELF_PURCHASE`、`JOINT_OPERATION` 或 `B2B` 模式，并保留失效历史。同一供应商和品牌同时最多一条有效关系。供应商资料里的合作方式只是总体意向；正式模式由该供应商配置，平台管理员只查看、不变更。
 
 ### Organization 是第一层隔离边界
 

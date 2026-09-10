@@ -194,7 +194,7 @@ def test_supplier_workspace_uses_only_unified_pagination_controls(client: TestCl
     assert response.status_code == 200
 
     html = response.text
-    assert 'id="products-pagination"' in html
+    assert 'id="products-pagination"' not in html
     assert 'id="offers-pagination"' in html
     assert 'id="import-pagination"' in html
     for obsolete_id in (

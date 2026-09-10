@@ -53,8 +53,7 @@ const importFields = [
 
 const routes = {
   dashboard: ["供应概览", "中国供应网络 / 工作台"],
-  products: ["商品主数据", "中国供应网络 / 商品主数据"],
-  offers: ["供应报价", "中国供应网络 / 供应报价"],
+  offers: ["商品报价", "中国供应网络 / 商品报价"],
   imports: ["批量导入", "中国供应网络 / 数据接入"],
   documents: ["资质文件", "中国供应网络 / 资质文件"],
   orders: ["分发订单", "全球分发 / 订单协同"],
@@ -107,10 +106,12 @@ async function renderRoute(route) {
 
   try {
     if (route === "dashboard") await loadDashboard();
-    if (route === "products") await loadProducts();
     if (route === "offers") {
       const brandsLoaded = await loadOfferBrands(offerRouteRevision);
       if (!brandsLoaded || state.offerRouteRevision !== offerRouteRevision) return;
+      const cooperations = await loadBrandCooperations();
+      if (cooperations === null) return;
+      renderBrandCommercialModes();
       await loadOffers();
     }
     if (route === "imports") await loadImports();
@@ -135,7 +136,7 @@ async function loadDashboard() {
 
 function renderDashboard() {
   const data = state.dashboard;
-  const metricRoutes = { products: "products", active_offers: "offers", low_stock: "offers", pending: "offers" };
+  const metricRoutes = { products: "offers", active_offers: "offers", low_stock: "offers", pending: "offers" };
   const metricFilters = { low_stock: "low-stock", pending: "pending" };
   const metrics = data.metrics.map((metric) => `
     <article class="metric-card metric-card-link" data-tone="${Matrix.escapeHtml(metric.tone)}" data-dashboard-route="${metricRoutes[metric.key] || "dashboard"}"${metricFilters[metric.key] ? ` data-dashboard-filter="${metricFilters[metric.key]}"` : ""} role="button" tabindex="0">
@@ -226,7 +227,9 @@ async function fetchAllListRows(path, params, isCurrent) {
 
 async function loadProducts(query = null) {
   const revision = ++state.productRequestRevision;
-  const searchValue = query === null ? document.querySelector("#products-search").value.trim() : query.trim();
+  const searchValue = query === null
+    ? (document.querySelector("#products-search")?.value || "").trim()
+    : query.trim();
   if (query !== null) state.productPage = 1;
   const params = new URLSearchParams();
   if (searchValue) params.set("q", searchValue);
@@ -251,6 +254,7 @@ async function loadProductsWithToast(query = null) {
 
 function renderProducts() {
   const tbody = document.querySelector("#products-tbody");
+  if (!tbody) return;
   const model = renderPagination("products", state.products.length, state.productPage, state.productPageSize, (page, pageSize) => { state.productPage = page; state.productPageSize = pageSize; renderProducts(); });
   state.productPage = model.page;
   const start = model.start ? model.start - 1 : 0;
@@ -340,7 +344,7 @@ function renderOffers() {
   const start = model.start ? model.start - 1 : 0;
   const visibleOffers = rows.slice(start, start + model.pageSize);
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="table-empty"><strong>暂无供应报价</strong>报价必须包含价格、MOQ、库存和交期。</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="table-empty"><strong>暂无商品报价</strong>报价必须包含价格、MOQ、库存和交期。</td></tr>';
   } else {
     tbody.innerHTML = visibleOffers.map((offer) => `
       <tr>
@@ -492,6 +496,49 @@ async function loadBrandCooperations() {
   return state.brandCooperations;
 }
 
+function renderBrandCommercialModes() {
+  const root = document.querySelector("#brand-commercial-mode-list");
+  if (!root) return;
+  if (!state.brandCooperations.length) {
+    root.innerHTML = '<div class="table-empty"><strong>暂无品牌</strong>批量导入或新增商品后，品牌会显示在这里。</div>';
+    return;
+  }
+  root.innerHTML = state.brandCooperations.map((item) => `
+    <div class="brand-mode-item">
+      <div><strong>${Matrix.escapeHtml(item.brand_name)}</strong><span>${Matrix.escapeHtml(item.brand_code)}</span></div>
+      <select class="select" data-brand-commercial-mode="${Matrix.escapeHtml(item.brand_id)}" aria-label="${Matrix.escapeHtml(item.brand_name)}合作模式">
+        <option value="" ${item.commercial_mode ? "" : "selected"}>未配置</option>
+        <option value="SELF_PURCHASE" ${item.commercial_mode === "SELF_PURCHASE" ? "selected" : ""}>A 模式（自营采购）</option>
+        <option value="JOINT_OPERATION" ${item.commercial_mode === "JOINT_OPERATION" ? "selected" : ""}>B 模式（联营）</option>
+        <option value="B2B" ${item.commercial_mode === "B2B" ? "selected" : ""}>C 模式（B2B）</option>
+      </select>
+      <button class="btn btn-secondary btn-sm" type="button" data-save-brand-mode="${Matrix.escapeHtml(item.brand_id)}">保存</button>
+    </div>
+  `).join("");
+}
+
+async function saveBrandCommercialMode(brandId, button = null) {
+  const select = document.querySelector(`[data-brand-commercial-mode="${brandId}"]`);
+  if (!select?.value) {
+    Matrix.toast("请选择合作模式", "请选择 A、B 或 C 模式后保存。", "error");
+    return;
+  }
+  if (button) button.disabled = true;
+  try {
+    await Matrix.api(`/api/supplier-catalog/brand-cooperations/${brandId}`, {
+      method: "PUT",
+      body: { commercial_mode: select.value },
+    });
+    await loadBrandCooperations();
+    await loadOffers();
+    renderBrandCommercialModes();
+    Matrix.toast("合作模式已保存", "商品报价将使用最新品牌合作模式。", "success");
+  } catch (error) {
+    Matrix.toast("合作模式保存失败", error.message, "error");
+    if (button) button.disabled = false;
+  }
+}
+
 function refreshProductBrandOptions() {
   const select = document.querySelector("#product-brand");
   select.innerHTML = '<option value="">请选择已分配品牌</option>' + state.brandCooperations.map((cooperation) => `
@@ -505,7 +552,7 @@ function refreshOfferPriceLabel(productId, commercialMode = null) {
     ? state.brandCooperations.find((item) => item.brand_id === product.brand_id)
     : null;
   document.querySelector("#offer-price-label").textContent = offerPriceLabel(
-    commercialMode || cooperation?.commercial_mode,
+    cooperation?.commercial_mode || commercialMode,
   );
 }
 
@@ -551,7 +598,7 @@ async function openOfferDialog(productId = "", offer = null) {
     ? `稳定 ID：${offer.supplier_sku_id}`
     : "稳定 ID 将在创建后生成";
   refreshOfferPriceLabel(productId || offer?.product_id || "", offer?.commercial_mode);
-  document.querySelector("#offer-dialog-title").textContent = offer ? "编辑供应报价" : "新增供应报价";
+  document.querySelector("#offer-dialog-title").textContent = offer ? "编辑商品报价" : "新增商品报价";
   document.querySelector("#offer-dialog-submit").textContent = offer ? "保存修改" : "创建报价";
   if (offer) {
     ["supplier_sku_code", "price", "currency", "moq", "stock_qty", "lead_time_days", "fulfillment_mode", "status", "notes"].forEach((name) => {
@@ -581,7 +628,7 @@ async function submitProduct(event) {
       },
     });
     document.querySelector("#product-dialog").close();
-    Matrix.toast("商品已创建", "下一步请为商品维护供应报价。", "success");
+    Matrix.toast("商品已创建", "下一步请为商品维护商品报价。", "success");
     await loadProducts();
   } catch (error) {
     Matrix.toast("创建失败", error.message, "error");
@@ -1159,6 +1206,10 @@ async function saveProfile(event) {
 }
 
 function bindEvents() {
+  document.querySelector("#brand-commercial-mode-list")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-save-brand-mode]");
+    if (button) saveBrandCommercialMode(button.dataset.saveBrandMode, button);
+  });
   document.querySelector("#import-job-list").addEventListener("click", (event) => {
     const retryButton = event.target.closest("[data-retry-import]");
     if (retryButton) {
@@ -1194,15 +1245,10 @@ function bindEvents() {
     button.addEventListener("click", () => button.closest("dialog").close());
   });
 
-  document.querySelector("#products-search").addEventListener("input", debounce((event) => loadProductsWithToast(event.target.value)));
   document.querySelector("#offers-search").addEventListener("input", debounce((event) => loadOffersWithToast(event.target.value)));
   document.querySelector("#offers-brand").addEventListener("change", (event) => loadOffersWithToast(null, event.target.value));
   document.querySelector("#offers-stock").addEventListener("change", (event) => { state.offerViewFilter = event.target.value; state.offerPage = 1; renderOffers(); });
 
-  document.querySelector("#products-tbody").addEventListener("click", (event) => {
-    const button = event.target.closest("[data-add-offer]");
-    if (button) openOfferDialog(button.dataset.addOffer);
-  });
   document.querySelector("#offers-tbody").addEventListener("click", (event) => {
     const button = event.target.closest("[data-edit-offer]");
     if (!button) return;

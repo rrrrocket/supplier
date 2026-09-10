@@ -7,7 +7,7 @@
 | `supplier_profiles` | 企业主体与供应能力 | 每个供应商组织一条 |
 | `supplier_applications` | 未入驻企业的公开申请与审核结果 | `application_no` 唯一；通过后关联组织与审核人 |
 | `brands` | 规范化品牌主数据 | `code`、`normalized_name` 分别唯一；名称最长 160 个 Unicode 字符 |
-| `supplier_brand_cooperations` | 平台确认的供应商—品牌正式合作关系 | 同一供应商 + 品牌同时最多一条 `ACTIVE`；保留历史模式 |
+| `supplier_brand_cooperations` | 供应商配置的供应商—品牌正式合作关系 | 同一供应商 + 品牌同时最多一条 `ACTIVE`；保留历史模式 |
 | `supplier_skus` | 不随成本、库存和交期变化的供应商货号身份 | 供应商 + `supplier_sku_code` 唯一；关联 Brand、Product 和可选 Variant |
 | `products` | 商品是什么 | 创建组织 + `brand_id` + 型号 + 名称唯一；品牌展示名来自 Brand |
 | `product_variants` | 商品规格/变体 | 属于 Product |
@@ -73,5 +73,5 @@
 6. 临时密码只返回一次，数据库仅存密码哈希；
 7. AI 只能提出建议，关键业务动作由确定性服务执行并写审计事件；
 8. 认证、出口资质和产品参数必须有来源，不得由模型补造。
-9. 正式品牌合作模式由平台管理；供应商申报的 `cooperation_modes` 仅表示意向。
+9. 正式品牌合作模式由供应商按自己的品牌关系配置；供应商资料中的 `cooperation_modes` 仅表示总体意向。
 10. 外部系统在自身数据库保存 `supplier_network_supplier_id`、`supplier_network_sku_id` 和人工确认映射；Supplier Network 不保存调用方 SKU 主数据。

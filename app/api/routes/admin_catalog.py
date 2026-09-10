@@ -17,13 +17,13 @@ from app.models.entities import (
     OrganizationType,
     SupplierBrandCooperation,
 )
-from app.schemas.catalog import BrandCreate, BrandView, CooperationUpdate, CooperationView
+from app.schemas.catalog import BrandCreate, BrandView, CooperationView
 from app.schemas.integration import (
     IntegrationClientCreate,
     IntegrationClientCredential,
     IntegrationClientView,
 )
-from app.services.catalog import normalize_brand_name, replace_active_cooperation, resolve_brand
+from app.services.catalog import normalize_brand_name, resolve_brand
 from app.services.events import record_event
 from app.services.integration_clients import (
     create_client_with_unique_token,
@@ -330,31 +330,3 @@ def list_supplier_brand_cooperations(
         .order_by(Brand.name, Brand.id)
     ).all()
     return [cooperation_view(cooperation, brand) for cooperation, brand in rows]
-
-
-@router.put(
-    "/suppliers/{supplier_id}/brands/{brand_id}/cooperation",
-    response_model=CooperationView,
-)
-def update_supplier_brand_cooperation(
-    supplier_id: str,
-    brand_id: str,
-    payload: CooperationUpdate,
-    db: DbSession,
-    admin: PlatformAdmin,
-) -> CooperationView:
-    require_supplier(db, supplier_id)
-    brand = db.get(Brand, brand_id)
-    if brand is None:
-        raise HTTPException(status_code=404, detail="品牌不存在")
-
-    cooperation = replace_active_cooperation(
-        db,
-        supplier_id=supplier_id,
-        brand_id=brand_id,
-        commercial_mode=payload.commercial_mode,
-        actor_id=admin.id,
-    )
-    db.commit()
-    db.refresh(cooperation)
-    return cooperation_view(cooperation, brand)

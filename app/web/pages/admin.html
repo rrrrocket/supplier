@@ -115,8 +115,8 @@
             </div>
             <div class="table-wrap">
               <table class="data-table">
-                <thead><tr><th>供应商组织</th><th>联系人</th><th>资料完整度</th><th>商品数</th><th>有效报价</th><th>状态</th><th>接入时间</th><th></th></tr></thead>
-                <tbody id="suppliers-tbody"><tr><td colspan="8" class="table-empty">正在加载…</td></tr></tbody>
+                <thead><tr><th>供应商组织</th><th>联系人</th><th>资料完整度</th><th>商品数</th><th>有效报价</th><th>状态</th><th>接入时间</th></tr></thead>
+                <tbody id="suppliers-tbody"><tr><td colspan="7" class="table-empty">正在加载…</td></tr></tbody>
               </table>
             </div>
             <footer class="table-footer"><span id="suppliers-count" class="table-result-count">共 0 家</span><div id="supplier-pagination" class="unified-pagination"></div></footer>
@@ -141,7 +141,7 @@
               <div class="system-layer"><strong>全程操作审计</strong><span>登录、审核、资料、商品、报价和导入操作均保留审计记录。</span></div>
             </div></section>
           </div>
-          <section class="panel" style="margin-top:16px"><header class="panel-head"><div><h2>核心业务流程</h2><p>真实供给数据贯穿供应商接入、商品维护、报价更新和履约协同。</p></div></header><div class="panel-body"><div class="quote-box" style="margin-top:0">供应商申请 → 平台审核 → 组织开户 → 企业档案 → 商品主数据 → 供应报价 → 库存记录 → 交易结果</div></div></section>
+          <section class="panel" style="margin-top:16px"><header class="panel-head"><div><h2>核心业务流程</h2><p>真实供给数据贯穿供应商接入、商品维护、报价更新和履约协同。</p></div></header><div class="panel-body"><div class="quote-box" style="margin-top:0">供应商申请 → 平台审核 → 组织开户 → 企业档案 → 商品报价 → 库存记录 → 交易结果</div></div></section>
         </section>
 
         <section class="app-view" data-view="integrations">
@@ -224,33 +224,6 @@
     <footer class="dialog-actions review-actions">
       <button id="reject-application" class="btn btn-danger" type="button">驳回申请</button>
       <div class="row"><button class="btn btn-secondary" type="button" data-close-review>关闭</button><button id="approve-application" class="btn btn-primary" type="button">通过并创建账号</button></div>
-    </footer>
-  </dialog>
-
-  <dialog id="brand-cooperation-dialog">
-    <header class="dialog-head">
-      <div><h2 id="brand-cooperation-dialog-title">管理品牌合作</h2><p id="brand-cooperation-dialog-subtitle">查看并更新平台确认的供应商品牌合作模式。</p></div>
-      <button class="icon-btn" type="button" data-close-brand-cooperation aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
-    </header>
-    <div class="dialog-body">
-      <section aria-labelledby="brand-cooperation-current-title">
-        <h3 id="brand-cooperation-current-title" class="dialog-section-title">当前品牌合作</h3>
-        <div id="brand-cooperation-list" class="cooperation-list"><div class="cooperation-empty">正在加载品牌合作…</div></div>
-      </section>
-      <form id="brand-cooperation-form" class="cooperation-form">
-        <label class="form-group"><span class="form-label">品牌</span><select id="brand-cooperation-brand" class="select" required aria-label="合作品牌"></select></label>
-        <label class="form-group"><span class="form-label">合作模式</span><select id="brand-cooperation-mode" class="select" required aria-label="合作模式">
-          <option value="" disabled>请选择合作模式</option>
-          <option value="SELF_PURCHASE">模式 A · 自营采购</option>
-          <option value="JOINT_OPERATION">模式 B · 联营</option>
-          <option value="B2B">模式 C · ToB 合作</option>
-        </select></label>
-        <div id="brand-cooperation-current" class="cooperation-current">当前合作：尚未配置</div>
-      </form>
-    </div>
-    <footer class="dialog-actions">
-      <button class="btn btn-secondary" type="button" data-close-brand-cooperation>关闭</button>
-      <button id="save-brand-cooperation" class="btn btn-primary" type="submit" form="brand-cooperation-form">保存合作模式</button>
     </footer>
   </dialog>
 

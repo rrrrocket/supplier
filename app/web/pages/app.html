@@ -6,12 +6,12 @@
   <meta name="robots" content="noindex,nofollow">
   <title>供应商工作台 · Matrix One</title>
   <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/styles.css?v=20260910-supplier-erp">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260910-brand-mode">
   <script src="/assets/common.js?v=20260908-supplier-role" defer></script>
   <script src="/assets/import-workbook.js?v=20260909-pagination" defer></script>
   <script src="/assets/pagination.js?v=20260909-pagination" defer></script>
   <script src="/assets/supplier-integration.js?v=20260910-write-race" defer></script>
-  <script src="/assets/app.js?v=20260910-supplier-erp" defer></script>
+  <script src="/assets/app.js?v=20260910-brand-mode" defer></script>
   <script src="/assets/supplier-operator.js?v=20260910-binding-copy" defer></script>
 </head>
 <body class="app-body">
@@ -21,8 +21,7 @@
       <nav class="sidebar-nav" aria-label="供应商工作台导航">
         <span class="nav-section-label">供应网络</span>
         <button class="nav-item active" data-route="dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>供应概览</button>
-        <button class="nav-item" data-route="products"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 8 9 5 9-5M3 13l9 5 9-5"/></svg>商品主数据</button>
-        <button class="nav-item" data-route="offers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>供应报价</button>
+        <button class="nav-item" data-route="offers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>商品报价</button>
         <button class="nav-item" data-route="imports"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 14v5h14v-5"/></svg>批量导入</button>
         <button class="nav-item" data-route="documents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>资质文件</button>
         <button class="nav-item" data-route="operator-cooperations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 12h8M6 8l-3 4 3 4M18 8l3 4-3 4"/></svg>运营商合作</button>
@@ -59,17 +58,13 @@
           <div id="dashboard-root"></div>
         </section>
 
-        <section class="app-view" data-view="products">
-          <div class="view-heading"><div><h1>商品主数据</h1><p>Product 是内部统一商品实体，供应商 SKU 和供货条件由报价单独维护。</p></div><div class="view-actions"><a class="btn btn-secondary" href="#imports">批量导入</a><button class="btn btn-primary" data-open-product>新增商品</button></div></div>
-          <section class="data-card">
-            <div class="toolbar"><div class="toolbar-left"><label class="search-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="products-search" class="input" maxlength="240" placeholder="搜索名称、品牌、型号或类目"></label></div><div class="toolbar-right"><span class="muted" style="font-size:11px">统一商品标识不随销售渠道变化</span></div></div>
-            <div class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>品牌</th><th>型号</th><th>类目</th><th>状态</th><th>报价数</th><th></th></tr></thead><tbody id="products-tbody"><tr><td colspan="7" class="table-empty">正在加载…</td></tr></tbody></table></div>
-            <footer class="table-footer"><span id="products-count" class="sr-only">显示 0–0 / 共 0 条</span><div id="products-pagination" class="unified-pagination"></div></footer>
-          </section>
-        </section>
-
         <section class="app-view" data-view="offers">
-          <div class="view-heading"><div><h1>供应报价</h1><p>报价用于描述某个供应商在特定时间能够提供的价格、库存、MOQ 和交期。</p></div><div class="view-actions"><a class="btn btn-secondary" href="#imports">批量导入</a><button class="btn btn-primary" data-open-offer>新增报价</button></div></div>
+          <div class="view-heading"><div><h1>商品报价</h1><p>集中维护商品、品牌合作模式、价格、库存、MOQ 和交期。</p></div><div class="view-actions"><a class="btn btn-secondary" href="#imports">批量导入</a><button class="btn btn-secondary" data-open-product>新增商品</button><button class="btn btn-primary" data-open-offer>新增报价</button></div></div>
+          <section class="panel brand-mode-panel">
+            <header class="panel-head"><div><h2>品牌合作模式</h2><p>仅显示当前供应商已导入或维护的品牌，由供应商自行配置。</p></div></header>
+            <div id="brand-commercial-mode-list" class="brand-mode-list"><div class="table-empty">正在加载品牌…</div></div>
+            <p class="brand-mode-help">A 模式（自营采购） · B 模式（联营） · C 模式（B2B）</p>
+          </section>
           <section class="data-card">
             <div class="toolbar"><div class="toolbar-left"><label class="search-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="offers-search" class="input" maxlength="240" placeholder="搜索商品、SKU、品牌或型号"></label><select id="offers-brand" class="select toolbar-filter" aria-label="按品牌筛选"><option value="">全部品牌</option></select><select id="offers-stock" class="select toolbar-filter" aria-label="按报价状态筛选"><option value="">全部报价</option><option value="low-stock">低库存（≤ 10）</option><option value="pending">待处理（非有效）</option></select></div><div class="toolbar-right"><span class="badge badge-active">库存 ≤ 10 自动提醒</span></div></div>
             <div class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>供应商 SKU</th><th>价格</th><th>MOQ</th><th>库存</th><th>交期</th><th>履约</th><th>状态</th><th>更新时间</th><th></th></tr></thead><tbody id="offers-tbody"><tr><td colspan="10" class="table-empty">正在加载…</td></tr></tbody></table></div>
@@ -175,7 +170,7 @@
                   <label class="form-group"><span class="form-label">联系邮箱</span><input class="input" type="email" name="contact_email"></label>
                   <label class="form-group"><span class="form-label">企业网站</span><input class="input" name="website" placeholder="https://"></label>
                   <label class="form-group full"><span class="form-label">主营类目</span><input class="input" name="categories" placeholder="工业自动化、户外用品、汽摩用品"></label>
-                  <label class="form-group full"><span class="form-label">合作意向（非平台确认模式）</span><input class="input" name="cooperation_modes" placeholder="可接受采购合作、可配合联合运营、支持企业客户供货"><span class="form-hint">此处仅用于声明合作能力与意向；每个品牌的正式合作模式由平台确认。</span></label>
+                  <label class="form-group full"><span class="form-label">合作意向（非正式品牌模式）</span><input class="input" name="cooperation_modes" placeholder="可接受采购合作、可配合联合运营、支持企业客户供货"><span class="form-hint">此处仅用于声明合作能力与意向；每个品牌的正式合作模式由供应商在商品报价页面配置。</span></label>
                   <label class="form-group full"><span class="form-label">已有或目标出口市场</span><input class="input" name="export_markets" placeholder="俄罗斯、中亚、中东"></label>
                   <div class="full stack" style="margin-top:4px"><label class="checkbox-row"><input type="checkbox" name="supports_dropshipping"><span>支持一件代发</span></label><label class="checkbox-row"><input type="checkbox" name="supports_oem"><span>支持 OEM / 定制</span></label><label class="checkbox-row"><input type="checkbox" name="has_export_experience"><span>已有出口经验</span></label></div>
                 </form>
@@ -240,10 +235,10 @@
 
   <dialog id="product-dialog">
     <form id="product-form">
-      <header class="dialog-head"><div><h2>新增商品主数据</h2><p>商品实体与供应报价分开维护。</p></div><button class="icon-btn" type="button" data-close-dialog aria-label="关闭">×</button></header>
+      <header class="dialog-head"><div><h2>新增商品</h2><p>创建后可继续维护商品报价。</p></div><button class="icon-btn" type="button" data-close-dialog aria-label="关闭">×</button></header>
       <div class="dialog-body form-grid">
         <label class="form-group full"><span class="form-label">商品名称 *</span><input class="input" name="name" minlength="2" maxlength="240" required></label>
-        <label class="form-group"><span class="form-label">品牌 *</span><select id="product-brand" class="select" name="brand" required><option value="">请选择已分配品牌</option></select><span class="form-hint">合作模式由平台确认，仅供查看。</span></label>
+        <label class="form-group"><span class="form-label">品牌 *</span><select id="product-brand" class="select" name="brand" required><option value="">请选择当前供应商品牌</option></select><span class="form-hint">品牌合作模式可在商品报价页面配置。</span></label>
         <label class="form-group"><span class="form-label">型号</span><input class="input" name="model" maxlength="120"></label>
         <label class="form-group full"><span class="form-label">标准类目 *</span><input class="input" name="category" minlength="2" maxlength="160" required placeholder="例如：工业自动化/接近传感器"></label>
         <label class="form-group"><span class="form-label">状态</span><select class="select" name="status"><option value="DRAFT">草稿</option><option value="ACTIVE">有效</option></select></label>
@@ -257,7 +252,7 @@
 
   <dialog id="offer-dialog">
     <form id="offer-form">
-      <header class="dialog-head"><div><h2 id="offer-dialog-title">新增供应报价</h2><p>报价变化会保留库存快照与操作事件。</p></div><button class="icon-btn" type="button" data-close-dialog aria-label="关闭">×</button></header>
+      <header class="dialog-head"><div><h2 id="offer-dialog-title">新增商品报价</h2><p>报价变化会保留库存快照与操作事件。</p></div><button class="icon-btn" type="button" data-close-dialog aria-label="关闭">×</button></header>
       <div class="dialog-body form-grid">
         <label class="form-group full"><span class="form-label">对应商品 *</span><select id="offer-product-id" class="select" name="product_id" required><option value="">请选择商品</option></select></label>
         <label class="form-group"><span class="form-label">供应商 SKU *</span><input class="input" name="supplier_sku_code" maxlength="120" required><span id="offer-supplier-sku-id" class="form-hint">稳定 ID 将在创建后生成</span></label>

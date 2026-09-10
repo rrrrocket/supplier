@@ -60,14 +60,14 @@ def build_dashboard(db: Session, organization_id: str, organization_name: str) -
         ),
         ChecklistItem(
             key="products",
-            label="建立商品主数据",
+            label="建立商品报价",
             description="至少录入 10 个可实际供货的商品。",
             completed=total_products >= 10,
-            action_hash="#products",
+            action_hash="#offers",
         ),
         ChecklistItem(
             key="offers",
-            label="激活供应报价",
+            label="激活商品报价",
             description="为商品维护成本、MOQ、库存和交期。",
             completed=active_offers >= 10,
             action_hash="#offers",
@@ -91,7 +91,7 @@ def build_dashboard(db: Session, organization_id: str, organization_name: str) -
     metrics = [
         MetricCard(
             key="products",
-            label="商品主数据",
+            label="商品数量",
             value=total_products,
             hint="已进入供应网络",
             tone="blue",
