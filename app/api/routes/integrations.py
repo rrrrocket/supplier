@@ -41,7 +41,9 @@ from app.models.entities import (
     Organization,
     OrganizationType,
     Product,
+    OfferStatus,
     SupplierBrandCooperation,
+    SupplierOffer,
     SupplierProfile,
     SupplierSku,
     SupplierStatus,
@@ -668,6 +670,7 @@ def list_supplier_skus(
         Brand.updated_at,
         Product.updated_at,
         current.c.cooperation_updated_at,
+        func.coalesce(SupplierOffer.updated_at, SupplierSku.updated_at),
     ).label("effective_updated_at")
     active_condition = and_(
         is_supplier_active(supplier, profile),
@@ -679,6 +682,11 @@ def list_supplier_skus(
         (active_condition, ACTIVE),
         else_=INACTIVE,
     ).label("resource_status")
+    cost_available = and_(
+        active_condition,
+        current.c.commercial_mode == "SELF_PURCHASE",
+        SupplierOffer.status == OfferStatus.ACTIVE.value,
+    )
     statement = (
         select(
             SupplierSku,
@@ -688,6 +696,9 @@ def list_supplier_skus(
             effective_updated_at,
             resource_status,
             SupplierSku.id.label("entity_id"),
+            case((cost_available, SupplierOffer.price), else_=None).label("cost_price"),
+            case((cost_available, SupplierOffer.currency), else_=None).label("currency"),
+            case((cost_available, SupplierOffer.updated_at), else_=None).label("cost_updated_at"),
         )
         .join(Brand, Brand.id == SupplierSku.brand_id)
         .join(
@@ -702,6 +713,15 @@ def list_supplier_skus(
             and_(
                 current.c.brand_id == SupplierSku.brand_id,
                 current.c.cooperation_rank == 1,
+            ),
+        )
+        .outerjoin(
+            SupplierOffer,
+            and_(
+                SupplierOffer.supplier_sku_id == SupplierSku.id,
+                SupplierOffer.organization_id == supplier_id,
+                SupplierOffer.product_id == SupplierSku.product_id,
+                SupplierOffer.variant_id.is_not_distinct_from(SupplierSku.variant_id),
             ),
         )
         .where(SupplierSku.supplier_id == supplier_id)
@@ -741,6 +761,9 @@ def list_supplier_skus(
                 manufacturer_part_number=row[0].manufacturer_part_number,
                 barcode=row[0].barcode,
                 commercial_mode=row[3],
+                cost_price=row[7],
+                currency=row[8],
+                cost_updated_at=row[9],
                 status=row[5],
                 updated_at=row[4],
             )

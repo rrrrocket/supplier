@@ -1173,10 +1173,16 @@ def test_sku_list_derives_active_cooperation_and_include_inactive_snapshot(
         "manufacturer_part_number",
         "barcode",
         "commercial_mode",
+        "cost_price",
+        "currency",
+        "cost_updated_at",
         "status",
         "updated_at",
     }
     assert active["commercial_mode"] == "SELF_PURCHASE"
+    assert active["cost_price"] is None
+    assert active["currency"] is None
+    assert active["cost_updated_at"] is None
     assert active["status"] == "ACTIVE"
     assert "client_sku_id" not in active
 
@@ -1191,6 +1197,27 @@ def test_sku_list_derives_active_cooperation_and_include_inactive_snapshot(
     assert cooperation_inactive["status"] == "INACTIVE"
     assert cooperation_inactive["commercial_mode"] == "B2B"
     assert integration_catalog["other_sku_id"] not in inactive_items
+
+
+def test_sku_directory_includes_current_self_purchase_cost(
+    client: TestClient,
+    integration_client: dict[str, Any],
+    cost_catalog: dict[str, Any],
+) -> None:
+    response = client.get(
+        f"{BASE_PATH}/suppliers/{cost_catalog['first_supplier_id']}/skus",
+        headers=auth_headers(integration_client),
+    )
+
+    assert response.status_code == 200
+    item_by_id = {
+        item["supplier_sku_id"]: item for item in response.json()["items"]
+    }
+    active = item_by_id[cost_catalog["active_sku_id"]]
+    assert active["cost_price"] == "28.5000"
+    assert active["currency"] == "CNY"
+    assert datetime.fromisoformat(active["cost_updated_at"]) == cost_catalog["cost_updated_at"]
+    assert item_by_id[cost_catalog["missing_offer_sku_id"]]["cost_price"] is None
 
 
 def test_sku_updated_since_cursor_is_duplicate_free_with_database_timestamps(

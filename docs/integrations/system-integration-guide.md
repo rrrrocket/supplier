@@ -286,6 +286,9 @@ GET /suppliers/{supplier_id}/skus?updated_since=2026-09-08T00:00:00Z&limit=200
       "manufacturer_part_number": "MPN-100",
       "barcode": "6900000000001",
       "commercial_mode": "SELF_PURCHASE",
+      "cost_price": "28.5000",
+      "currency": "CNY",
+      "cost_updated_at": "2026-09-08T10:00:00Z",
       "status": "ACTIVE",
       "updated_at": "2026-09-08T10:00:00Z"
     }
@@ -295,7 +298,7 @@ GET /suppliers/{supplier_id}/skus?updated_since=2026-09-08T00:00:00Z&limit=200
 }
 ```
 
-调用方使用这些字段生成本地匹配候选。调用方不应根据一次模糊匹配直接确认关系。
+调用方使用这些字段生成本地匹配候选，并在同一轮目录同步中保存成本价。成本报价变化会推进 SKU 的 `updated_at`，因此增量目录同步也会返回价格变化；`cost_price=null` 表示当前无可用自营采购成本。映射确认只保存关系，不应额外调用成本接口。
 
 默认列表只返回有效供应商、有效 SKU、有效品牌及有效合作关系的交集。`include_inactive=true` 会返回停用资源；如果 Supplier SKU 结构上缺少当前品牌合作关系，它仍以 `status=INACTIVE` 返回，且 `commercial_mode=null`。调用方必须允许该字段在这种失效/孤儿记录上为空，不能虚构合作模式。
 

@@ -97,6 +97,9 @@ class SupplierSkuIntegrationView(BaseModel):
     manufacturer_part_number: str | None
     barcode: str | None
     commercial_mode: str | None
+    cost_price: Decimal | None
+    currency: str | None
+    cost_updated_at: datetime | None
     status: str
     updated_at: datetime
 
