@@ -1851,6 +1851,7 @@ def test_can_delete_all_brand_data_for_selected_brand(
     assert deleted.json()["deleted_products"] == 1
     assert deleted.json()["deleted_supplier_skus"] == 1
     assert deleted.json()["deleted_cooperations"] == 1
+    assert deleted.json()["deleted_brands"] == 1
 
     assert authenticated_client.get(
         "/api/offers", params={"brand": f"DELETE-{suffix}"}
@@ -1866,6 +1867,9 @@ def test_can_delete_all_brand_data_for_selected_brand(
             select(InventorySnapshot.id).where(
                 InventorySnapshot.offer_id == created[0][1]["id"]
             )
+        ) is None
+        assert db.scalar(
+            select(Brand.id).where(Brand.name == f"DELETE-{suffix}")
         ) is None
 
 

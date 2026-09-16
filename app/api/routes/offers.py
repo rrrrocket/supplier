@@ -245,13 +245,9 @@ def delete_brand_offers(
     product_count = len(product_ids)
     if product_ids:
         db.execute(delete(Product).where(Product.id.in_(product_ids)))
-    cooperation_filter = (
-        select(SupplierBrandCooperation.id)
-        .join(Brand, Brand.id == SupplierBrandCooperation.brand_id)
-        .where(
-            SupplierBrandCooperation.supplier_id == user.organization_id,
-            Brand.name == brand_name,
-        )
+    brand_filter = select(Brand.id).where(Brand.name == brand_name)
+    cooperation_filter = select(SupplierBrandCooperation.id).where(
+        SupplierBrandCooperation.brand_id.in_(brand_filter)
     )
     cooperation_count = db.scalar(
         select(func.count()).select_from(SupplierBrandCooperation).where(
@@ -260,6 +256,23 @@ def delete_brand_offers(
     ) or 0
     if cooperation_count:
         db.execute(delete(SupplierBrandCooperation).where(SupplierBrandCooperation.id.in_(cooperation_filter)))
+    # Remove the brand master record once this deletion leaves no products or
+    # cooperation rows behind. This prevents an apparently deleted brand from
+    # remaining selectable in the backend. Shared brand records are retained
+    # until their remaining references are removed.
+    brand_ids = list(db.scalars(brand_filter).all())
+    deletable_brand_ids = [
+        brand_id
+        for brand_id in brand_ids
+        if db.scalar(select(func.count()).select_from(Product).where(Product.brand_id == brand_id)) == 0
+        and db.scalar(
+            select(func.count())
+            .select_from(SupplierBrandCooperation)
+            .where(SupplierBrandCooperation.brand_id == brand_id)
+        ) == 0
+    ]
+    if deletable_brand_ids:
+        db.execute(delete(Brand).where(Brand.id.in_(deletable_brand_ids)))
     record_event(
         db,
         event_type="OFFERS_DELETED_BY_BRAND",
@@ -274,6 +287,7 @@ def delete_brand_offers(
             "deleted_products": product_count,
             "deleted_supplier_skus": int(sku_count),
             "deleted_cooperations": int(cooperation_count),
+            "deleted_brands": len(deletable_brand_ids),
         },
     )
     db.commit()
@@ -283,6 +297,7 @@ def delete_brand_offers(
         "deleted_products": product_count,
         "deleted_supplier_skus": int(sku_count),
         "deleted_cooperations": int(cooperation_count),
+        "deleted_brands": len(deletable_brand_ids),
     }
 
 
