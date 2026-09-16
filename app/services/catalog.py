@@ -243,19 +243,9 @@ def ensure_supplier_sku(
         )
     )
     assert supplier_sku is not None
-    # SKU codes are the supplier's mutable identifiers. When an import maps an
-    # existing code to a different catalog item, overwrite the binding instead
-    # of rejecting the row. The offer import path updates its product link in
-    # the same transaction, keeping the SKU and offer consistent.
-    if (supplier_sku.brand_id, supplier_sku.product_id, supplier_sku.variant_id) != (
-        brand_id,
-        product_id,
-        variant_id,
-    ):
-        supplier_sku.brand_id = brand_id
-        supplier_sku.product_id = product_id
-        supplier_sku.variant_id = variant_id
-        supplier_sku.updated_at = timestamp
+    identity = (supplier_sku.brand_id, supplier_sku.product_id, supplier_sku.variant_id)
+    if identity != (brand_id, product_id, variant_id):
+        raise ValueError("supplier SKU code is already bound")
     for field, value in (
         ("manufacturer_part_number", manufacturer_part_number),
         ("barcode", barcode),
