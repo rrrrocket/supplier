@@ -389,7 +389,8 @@ class SupplierSku(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "supplier_skus"
     __table_args__ = (
         UniqueConstraint(
-            "supplier_id", "supplier_sku_code", name="uq_supplier_sku_code"
+            "supplier_id", "brand_id", "supplier_sku_code",
+            name="uq_supplier_brand_sku_code",
         ),
     )
 

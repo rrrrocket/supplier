@@ -233,12 +233,13 @@ def ensure_supplier_sku(
             created_at=timestamp,
             updated_at=timestamp,
         )
-        .on_conflict_do_nothing(constraint="uq_supplier_sku_code")
+        .on_conflict_do_nothing(constraint="uq_supplier_brand_sku_code")
         .returning(SupplierSku.id)
     )
     supplier_sku = db.get(SupplierSku, inserted_id) if inserted_id else db.scalar(
         select(SupplierSku).where(
             SupplierSku.supplier_id == supplier_id,
+            SupplierSku.brand_id == brand_id,
             SupplierSku.supplier_sku_code == code,
         )
     )
