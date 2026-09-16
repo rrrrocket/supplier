@@ -3,6 +3,7 @@ const state = {
   dashboard: null,
   products: [],
   offers: [],
+  offerDataLoaded: false,
   productPage: 1,
   offerPage: 1,
   productPageSize: 50,
@@ -111,8 +112,8 @@ async function renderRoute(route) {
       if (!brandsLoaded || state.offerRouteRevision !== offerRouteRevision) return;
       const cooperations = await loadBrandCooperations();
       if (cooperations === null) return;
-      renderBrandCommercialModes();
       await loadOffers();
+      renderBrandCommercialModes();
     }
     if (route === "imports") await loadImports();
     if (route === "settings") await loadProfile();
@@ -300,7 +301,36 @@ async function loadOfferBrands(expectedRouteRevision = state.offerRouteRevision)
     <option value="${Matrix.escapeHtml(brand)}">${Matrix.escapeHtml(brand)}</option>
   `).join("");
   if (state.offerBrands.includes(selected)) select.value = selected;
+  syncDeleteBrandOffersButton();
   return true;
+}
+
+function syncDeleteBrandOffersButton() {
+  const button = document.querySelector("#delete-brand-offers");
+  const select = document.querySelector("#offers-brand");
+  if (button) button.disabled = !select?.value;
+}
+
+async function deleteBrandOffers() {
+  const select = document.querySelector("#offers-brand");
+  const button = document.querySelector("#delete-brand-offers");
+  const brand = select?.value?.trim();
+  if (!brand) return;
+  const accepted = typeof window.confirm === "function"
+    ? window.confirm(`确认删除品牌“${brand}”下的全部数据？报价、库存、商品、供应商 SKU 和品牌合作关系都会删除。`)
+    : true;
+  if (!accepted) return;
+  if (button) button.disabled = true;
+  try {
+    const result = await Matrix.api(`/api/offers/brand?${new URLSearchParams({ brand })}`, { method: "DELETE" });
+    Matrix.toast("品牌数据已删除", `已删除“${brand}”的报价、商品及合作关系。共删除 ${result.deleted_count} 条报价。`, "success");
+    await loadOfferBrands();
+    await loadOffersWithToast(null, "");
+    renderBrandCommercialModes();
+  } catch (error) {
+    Matrix.toast("删除品牌报价失败", error.message, "error");
+    syncDeleteBrandOffersButton();
+  }
 }
 
 async function loadOffers(query = null, brand = null) {
@@ -319,6 +349,7 @@ async function loadOffers(query = null, brand = null) {
   );
   if (offers === null) return;
   state.offers = offers;
+  state.offerDataLoaded = true;
   renderOffers();
 }
 
@@ -499,16 +530,18 @@ async function loadBrandCooperations() {
 function renderBrandCommercialModes() {
   const root = document.querySelector("#brand-commercial-mode-list");
   if (!root) return;
-  if (!state.brandCooperations.length) {
-    root.innerHTML = '<div class="table-empty"><strong>暂无品牌</strong>批量导入或新增商品后，品牌会显示在这里。</div>';
+  const cooperations = state.offerDataLoaded
+    ? state.brandCooperations.filter((item) => state.offers.some((offer) => offer.brand_id === item.brand_id))
+    : state.brandCooperations;
+  if (!cooperations.length) {
+    root.innerHTML = '<div class="table-empty"><strong>暂无有报价品牌</strong>批量导入或新增商品报价后，品牌会显示在这里。</div>';
     return;
   }
-  root.innerHTML = state.brandCooperations.map((item) => `
+  root.innerHTML = cooperations.map((item) => `
     <div class="brand-mode-item">
       <div><strong>${Matrix.escapeHtml(item.brand_name)}</strong><span>${Matrix.escapeHtml(item.brand_code)}</span></div>
       <select class="select" data-brand-commercial-mode="${Matrix.escapeHtml(item.brand_id)}" aria-label="${Matrix.escapeHtml(item.brand_name)}合作模式">
-        <option value="" ${item.commercial_mode ? "" : "selected"}>未配置</option>
-        <option value="SELF_PURCHASE" ${item.commercial_mode === "SELF_PURCHASE" ? "selected" : ""}>A 模式（自营采购）</option>
+        <option value="SELF_PURCHASE" ${!item.commercial_mode || item.commercial_mode === "SELF_PURCHASE" ? "selected" : ""}>A 模式（自营采购）</option>
         <option value="JOINT_OPERATION" ${item.commercial_mode === "JOINT_OPERATION" ? "selected" : ""}>B 模式（联营）</option>
         <option value="B2B" ${item.commercial_mode === "B2B" ? "selected" : ""}>C 模式（B2B）</option>
       </select>
@@ -1246,8 +1279,9 @@ function bindEvents() {
   });
 
   document.querySelector("#offers-search").addEventListener("input", debounce((event) => loadOffersWithToast(event.target.value)));
-  document.querySelector("#offers-brand").addEventListener("change", (event) => loadOffersWithToast(null, event.target.value));
+  document.querySelector("#offers-brand").addEventListener("change", (event) => { syncDeleteBrandOffersButton(); return loadOffersWithToast(null, event.target.value); });
   document.querySelector("#offers-stock").addEventListener("change", (event) => { state.offerViewFilter = event.target.value; state.offerPage = 1; renderOffers(); });
+  document.querySelector("#delete-brand-offers").addEventListener("click", deleteBrandOffers);
 
   document.querySelector("#offers-tbody").addEventListener("click", (event) => {
     const button = event.target.closest("[data-edit-offer]");

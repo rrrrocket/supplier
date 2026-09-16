@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import DbSession, SupplierUser
@@ -191,6 +191,99 @@ def list_offer_brands(db: DbSession, user: SupplierUser) -> list[str]:
             .order_by(Brand.name)
         ).all()
     )
+
+
+@router.delete("/brand")
+def delete_brand_offers(
+    db: DbSession,
+    user: SupplierUser,
+    brand: str = Query(min_length=1, max_length=160),
+) -> dict[str, int | str]:
+    """Delete all supplier-owned data for one brand dimension."""
+    brand_name = brand.strip()
+    if not brand_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="品牌不能为空",
+        )
+    product_filter = (
+        select(Product.id)
+        .join(Brand, Brand.id == Product.brand_id)
+        .where(
+            Product.created_by_organization_id == user.organization_id,
+            Brand.name == brand_name,
+        )
+    )
+    offer_filter = select(SupplierOffer.id).where(
+        SupplierOffer.organization_id == user.organization_id,
+        SupplierOffer.product_id.in_(product_filter),
+    )
+    offer_count = db.scalar(
+        select(func.count()).select_from(SupplierOffer).where(SupplierOffer.id.in_(offer_filter))
+    ) or 0
+    product_ids = list(db.scalars(product_filter).all())
+    sku_filter = select(SupplierSku.id).where(
+        SupplierSku.supplier_id == user.organization_id,
+        SupplierSku.product_id.in_(product_ids),
+    ) if product_ids else None
+    sku_count = db.scalar(
+        select(func.count()).select_from(SupplierSku).where(SupplierSku.id.in_(sku_filter))
+    ) if sku_filter is not None else 0
+    if offer_count:
+        db.execute(
+            delete(InventorySnapshot).where(
+                InventorySnapshot.offer_id.in_(offer_filter)
+            )
+        )
+        db.execute(
+            delete(SupplierOffer).where(
+                SupplierOffer.id.in_(offer_filter)
+            )
+        )
+    if sku_filter is not None and sku_count:
+        db.execute(delete(SupplierSku).where(SupplierSku.id.in_(sku_filter)))
+    product_count = len(product_ids)
+    if product_ids:
+        db.execute(delete(Product).where(Product.id.in_(product_ids)))
+    cooperation_filter = (
+        select(SupplierBrandCooperation.id)
+        .join(Brand, Brand.id == SupplierBrandCooperation.brand_id)
+        .where(
+            SupplierBrandCooperation.supplier_id == user.organization_id,
+            Brand.name == brand_name,
+        )
+    )
+    cooperation_count = db.scalar(
+        select(func.count()).select_from(SupplierBrandCooperation).where(
+            SupplierBrandCooperation.id.in_(cooperation_filter)
+        )
+    ) or 0
+    if cooperation_count:
+        db.execute(delete(SupplierBrandCooperation).where(SupplierBrandCooperation.id.in_(cooperation_filter)))
+    record_event(
+        db,
+        event_type="OFFERS_DELETED_BY_BRAND",
+        entity_type="SupplierOfferBrand",
+        entity_id=None,
+        organization_id=user.organization_id,
+        actor_type="USER",
+        actor_id=user.id,
+        payload={
+            "brand": brand_name,
+            "deleted_count": int(offer_count),
+            "deleted_products": product_count,
+            "deleted_supplier_skus": int(sku_count),
+            "deleted_cooperations": int(cooperation_count),
+        },
+    )
+    db.commit()
+    return {
+        "brand": brand_name,
+        "deleted_count": int(offer_count),
+        "deleted_products": product_count,
+        "deleted_supplier_skus": int(sku_count),
+        "deleted_cooperations": int(cooperation_count),
+    }
 
 
 @router.post("", response_model=OfferView, status_code=status.HTTP_201_CREATED)

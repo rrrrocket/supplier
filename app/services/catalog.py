@@ -117,7 +117,7 @@ def resolve_import_brand(db: Session, supplier_id: str, name: str) -> Brand:
             SupplierBrandCooperation(
                 supplier_id=supplier_id,
                 brand_id=brand.id,
-                commercial_mode=None,
+                commercial_mode=CommercialMode.SELF_PURCHASE.value,
                 status=CatalogStatus.ACTIVE.value,
             )
         )

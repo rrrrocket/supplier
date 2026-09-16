@@ -11,7 +11,7 @@
   <script src="/assets/import-workbook.js?v=20260909-pagination" defer></script>
   <script src="/assets/pagination.js?v=20260909-pagination" defer></script>
   <script src="/assets/supplier-integration.js?v=20260910-write-race" defer></script>
-  <script src="/assets/app.js?v=20260910-brand-mode" defer></script>
+  <script src="/assets/app.js?v=20260917-delete-brand-data-v3" defer></script>
   <script src="/assets/supplier-operator.js?v=20260910-binding-copy" defer></script>
 </head>
 <body class="app-body">
@@ -66,7 +66,7 @@
             <p class="brand-mode-help">A 模式（自营采购） · B 模式（联营） · C 模式（B2B）</p>
           </section>
           <section class="data-card">
-            <div class="toolbar"><div class="toolbar-left"><label class="search-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="offers-search" class="input" maxlength="240" placeholder="搜索商品、SKU、品牌或型号"></label><select id="offers-brand" class="select toolbar-filter" aria-label="按品牌筛选"><option value="">全部品牌</option></select><select id="offers-stock" class="select toolbar-filter" aria-label="按报价状态筛选"><option value="">全部报价</option><option value="low-stock">低库存（≤ 10）</option><option value="pending">待处理（非有效）</option></select></div><div class="toolbar-right"><span class="badge badge-active">库存 ≤ 10 自动提醒</span></div></div>
+            <div class="toolbar"><div class="toolbar-left"><label class="search-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="offers-search" class="input" maxlength="240" placeholder="搜索商品、SKU、品牌或型号"></label><select id="offers-brand" class="select toolbar-filter" aria-label="按品牌筛选"><option value="">全部品牌</option></select><select id="offers-stock" class="select toolbar-filter" aria-label="按报价状态筛选"><option value="">全部报价</option><option value="low-stock">低库存（≤ 10）</option><option value="pending">待处理（非有效）</option></select></div><div class="toolbar-right"><button id="delete-brand-offers" class="btn btn-danger btn-sm" type="button" disabled>删除该品牌全部数据</button><span class="badge badge-active">库存 ≤ 10 自动提醒</span></div></div>
             <div class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>供应商 SKU</th><th>价格</th><th>MOQ</th><th>库存</th><th>交期</th><th>履约</th><th>状态</th><th>更新时间</th><th></th></tr></thead><tbody id="offers-tbody"><tr><td colspan="10" class="table-empty">正在加载…</td></tr></tbody></table></div>
             <footer class="table-footer"><span id="offers-count" class="sr-only">显示 0–0 / 共 0 条</span><div id="offers-pagination" class="unified-pagination"></div></footer>
           </section>

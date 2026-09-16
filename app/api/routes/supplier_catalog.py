@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
 from app.api.deps import DbSession, SupplierUser
-from app.models.entities import Brand, CatalogStatus, SupplierBrandCooperation
+from app.models.entities import Brand, CatalogStatus, CommercialMode, SupplierBrandCooperation
 from app.schemas.catalog import CooperationUpdate, SupplierBrandCooperationView
 from app.services.catalog import replace_active_cooperation
 
@@ -34,7 +34,7 @@ def list_brand_cooperations(
             brand_id=brand.id,
             brand_code=brand.code,
             brand_name=brand.name,
-            commercial_mode=cooperation.commercial_mode,
+            commercial_mode=cooperation.commercial_mode or CommercialMode.SELF_PURCHASE.value,
             status=cooperation.status,
         )
         for cooperation, brand in rows

@@ -27,6 +27,7 @@ from app.models.entities import (
     CommercialMode,
     ImportJob,
     ImportStatus,
+    InventorySnapshot,
     Organization,
     OrganizationType,
     Product,
@@ -1596,7 +1597,7 @@ def test_reimporting_supplier_sku_code_reuses_stable_id(
     assert second_offer["price"] == "12.5000"
 
 
-def test_import_auto_links_unassigned_brand_without_commercial_mode(
+def test_import_auto_links_unassigned_brand_with_default_a_mode(
     authenticated_client: TestClient,
 ) -> None:
     suffix = uuid4().hex[:8]
@@ -1636,7 +1637,7 @@ def test_import_auto_links_unassigned_brand_without_commercial_mode(
             )
         )
         assert cooperation is not None
-        assert cooperation.commercial_mode is None
+        assert cooperation.commercial_mode == CommercialMode.SELF_PURCHASE.value
 
 
 def test_import_history_persists_complete_grouped_failure_counts(
@@ -1808,6 +1809,64 @@ def test_offers_can_filter_by_brand(authenticated_client: TestClient) -> None:
     assert filtered.status_code == 200
     assert len(filtered.json()) == 1
     assert filtered.json()[0]["brand"] == brands[0]
+
+
+def test_can_delete_all_brand_data_for_selected_brand(
+    authenticated_client: TestClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    created = []
+    for index, brand in enumerate((f"DELETE-{suffix}", f"KEEP-{suffix}"), start=1):
+        product = authenticated_client.post(
+            "/api/products",
+            json={
+                "name": f"品牌批量删除商品-{index}-{suffix}",
+                "brand": brand,
+                "model": f"MODEL-{index}-{suffix}",
+                "category": "工业自动化",
+                "status": "ACTIVE",
+            },
+        ).json()
+        offer = authenticated_client.post(
+            "/api/offers",
+            json={
+                "product_id": product["id"],
+                "supplier_sku_code": f"DELETE-BRAND-{index}-{suffix}",
+                "price": 20 + index,
+                "currency": "CNY",
+                "moq": 1,
+                "stock_qty": 5,
+                "lead_time_days": 3,
+                "fulfillment_mode": "PURCHASE",
+                "status": "ACTIVE",
+            },
+        ).json()
+        created.append((product, offer))
+
+    deleted = authenticated_client.delete(
+        "/api/offers/brand", params={"brand": f"DELETE-{suffix}"}
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted_count"] == 1
+    assert deleted.json()["deleted_products"] == 1
+    assert deleted.json()["deleted_supplier_skus"] == 1
+    assert deleted.json()["deleted_cooperations"] == 1
+
+    assert authenticated_client.get(
+        "/api/offers", params={"brand": f"DELETE-{suffix}"}
+    ).json() == []
+    kept = authenticated_client.get(
+        "/api/offers", params={"brand": f"KEEP-{suffix}"}
+    ).json()
+    assert len(kept) == 1
+    with SessionLocal() as db:
+        assert db.get(Product, created[0][0]["id"]) is None
+        assert db.get(SupplierOffer, created[0][1]["id"]) is None
+        assert db.scalar(
+            select(InventorySnapshot.id).where(
+                InventorySnapshot.offer_id == created[0][1]["id"]
+            )
+        ) is None
 
 
 def test_csv_import_supports_partial_success(authenticated_client: TestClient) -> None:

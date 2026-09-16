@@ -371,4 +371,4 @@ def test_import_brand_auto_link_is_safe_under_concurrent_writes(
         ).all()
         assert len(active) == 2
         assert {item.supplier_id for item in active} == set(supplier_ids)
-        assert all(item.commercial_mode is None for item in active)
+        assert all(item.commercial_mode == CommercialMode.SELF_PURCHASE.value for item in active)
